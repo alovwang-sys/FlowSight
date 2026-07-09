@@ -49,7 +49,9 @@ Create the smallest Python package shape that exposes `FlowSight` and makes `Flo
 
 ## Allowed Files
 
-- `flowsight/**`
+- `flowsight/__init__.py`
+- `flowsight/py.typed`
+- `flowsight/sdk/**`
 - `examples/**`
 - `tests/**`
 - `pyproject.toml`
