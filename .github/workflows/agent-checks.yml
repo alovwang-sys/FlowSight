@@ -20,13 +20,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: .node-version
+          cache: npm
+      - name: Select pinned npm
+        if: ${{ hashFiles('package-lock.json') != '' }}
+        run: |
+          npm install --global npm@10.9.8
+          test "$(npm --version)" = "10.9.8"
       - name: Install frontend dependencies
         if: ${{ hashFiles('package-lock.json') != '' }}
         run: npm ci
-      - name: Build frontend for editable install
+      - name: Verify bundled frontend is current
         if: ${{ hashFiles('package-lock.json') != '' }}
-        run: npm run build
+        run: npm run build:check
       - name: Install product development dependencies
         if: ${{ hashFiles('pyproject.toml') != '' }}
         run: python -m pip install -e ".[dev]"

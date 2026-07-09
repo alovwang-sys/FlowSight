@@ -27,19 +27,29 @@ check-product:
 		fi; \
 		if [ "$$has_frontend" -eq 1 ]; then \
 			test -d ui && test -f package.json && test -f package-lock.json || { echo "frontend scaffold requires ui/, package.json, and package-lock.json" >&2; exit 1; }; \
-			npm run check && npm test && npm run build; \
+			npm run check && npm test && npm run build:check; \
 		fi; \
 		if [ "$$has_python" -eq 1 ]; then $(PYTHON) -m pytest; fi; \
 		if [ "$$has_python" -eq 1 ] && [ "$$has_frontend" -eq 1 ]; then \
 			test -f tests/packaging/test_wheel_ui.py || { echo "frontend scaffold requires clean-wheel UI test" >&2; exit 1; }; \
 			workspace=$$(pwd); wheel_tmp=$$(mktemp -d); trap 'rm -rf "$$wheel_tmp"' EXIT; \
-			$(PYTHON) -m build --wheel --outdir "$$wheel_tmp/dist"; \
+			mkdir -p "$$wheel_tmp/src"; \
+			cp pyproject.toml "$$wheel_tmp/src/pyproject.toml"; \
+			cp -R flowsight "$$wheel_tmp/src/flowsight"; \
+			$(PYTHON) -m build --wheel --outdir "$$wheel_tmp/dist" "$$wheel_tmp/src"; \
 			$(PYTHON) -m venv "$$wheel_tmp/venv"; \
 			wheel=$$(find "$$wheel_tmp/dist" -name '*.whl' -print -quit); \
 			"$$wheel_tmp/venv/bin/python" -m pip install "$$wheel" pytest; \
 			mkdir -p "$$wheel_tmp/test"; \
 			cp "$$workspace/tests/packaging/test_wheel_ui.py" "$$wheel_tmp/test/test_wheel_ui.py"; \
-			(cd "$$wheel_tmp" && PYTHONPATH= PYTHONNOUSERSITE=1 "$$wheel_tmp/venv/bin/python" -m pytest --rootdir="$$wheel_tmp" --import-mode=importlib "$$wheel_tmp/test/test_wheel_ui.py"); \
+			site_packages=$$("$$wheel_tmp/venv/bin/python" -c 'import site; print(site.getsitepackages()[0])'); \
+			(cd "$$wheel_tmp" && \
+				PATH="$$wheel_tmp/venv/bin:/usr/bin:/bin" \
+				PYTHONPATH= PYTHONNOUSERSITE=1 \
+				FLOWSIGHT_EXPECTED_SITE_PACKAGES="$$site_packages" \
+				FLOWSIGHT_WORKSPACE_ROOT="$$workspace" \
+				FLOWSIGHT_EXPECT_NO_NODE=1 \
+				"$$wheel_tmp/venv/bin/python" -m pytest --rootdir="$$wheel_tmp" --import-mode=importlib "$$wheel_tmp/test/test_wheel_ui.py"); \
 		fi; \
 		if [ "$$has_python" -eq 0 ] || [ "$$has_frontend" -eq 0 ]; then echo "[partial-scaffold] verified present side only; this is NOT Phase 0 evidence"; fi; \
 	fi
