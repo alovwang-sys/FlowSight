@@ -6,7 +6,7 @@
 task_id: PROTO-UI-001
 release: v1
 task_type: implementation
-status: planned
+status: in_progress
 primary_phase: phase0
 impacted_phases: [phase1, phase2, phase3, phase4, phase5]
 depends_on: [TRIAL-001]
