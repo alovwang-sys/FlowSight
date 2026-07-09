@@ -20,8 +20,9 @@ check-product:
 		if [ -e ui ] || [ -e package.json ] || [ -e package-lock.json ]; then has_frontend=1; fi; \
 		if [ "$$has_python" -eq 1 ]; then \
 			test -d flowsight && test -d tests && test -f pyproject.toml || { echo "partial Python scaffold: flowsight/, tests/, and pyproject.toml are all required" >&2; exit 1; }; \
-			$(PYTHON) -m ruff format --check .; \
-			$(PYTHON) -m ruff check .; \
+			test -d examples || { echo "Python scaffold requires examples/" >&2; exit 1; }; \
+			$(PYTHON) -m ruff format --check flowsight examples tests; \
+			$(PYTHON) -m ruff check flowsight examples tests; \
 			$(PYTHON) -m mypy flowsight; \
 		fi; \
 		if [ "$$has_frontend" -eq 1 ]; then \
@@ -49,8 +50,9 @@ check-product-fast:
 	else \
 		if [ -e tests ] || [ -e pyproject.toml ] || find flowsight -type f -name '*.py' -print -quit 2>/dev/null | grep -q .; then \
 			test -d flowsight && test -d tests && test -f pyproject.toml || { echo "partial Python scaffold: flowsight/, tests/, and pyproject.toml are all required" >&2; exit 1; }; \
-			$(PYTHON) -m ruff format --check .; \
-			$(PYTHON) -m ruff check .; \
+			test -d examples || { echo "Python scaffold requires examples/" >&2; exit 1; }; \
+			$(PYTHON) -m ruff format --check flowsight examples tests; \
+			$(PYTHON) -m ruff check flowsight examples tests; \
 			$(PYTHON) -m mypy flowsight; \
 		fi; \
 		if [ -e ui ] || [ -e package.json ] || [ -e package-lock.json ]; then \
