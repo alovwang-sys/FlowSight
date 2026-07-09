@@ -6,7 +6,7 @@
 task_id: PROTO-UI-001
 release: v1
 task_type: implementation
-status: review
+status: complete
 primary_phase: phase0
 impacted_phases: [phase1, phase2, phase3, phase4, phase5]
 depends_on: [TRIAL-001]
@@ -160,7 +160,7 @@ Quality Governor:
 
 - Command: exact `git checkout-index` snapshot followed by `npm ci`, `npm run check`, `npm test`, `npm run build:check`, and `make check`
 - Result: PASS
-- Notes: Independent verifier froze staged tree `201ba07226fd30ebfdeaa13482359953e714eae2` with 32 implementation paths. npm installed 257 packages with 0 vulnerabilities; Prettier, both TypeScript configs, ESLint, Vitest 7/7, deterministic Vite output, guard 107/43, formatter 4/4, allowlist 23/23, validator 11/11, Ruff, mypy, Python 4/4, and clean-wheel UI probe 1/1 passed. The wheel probe imported from an isolated site-packages with empty `PYTHONPATH`, no Node, complete relative assets, no sourcemaps, and `127.0.0.1:0` only. Local Node 26.4.0/npm 11.17.0 produced the expected engine warning against pinned 22.23.1/10.9.8; exact-version GitHub Actions remains the final closure evidence. Output explicitly states prototype/packaging evidence opens no runtime phase gate.
+- Notes: Independent verifier froze staged tree `201ba07226fd30ebfdeaa13482359953e714eae2` with 32 implementation paths. npm installed 257 packages with 0 vulnerabilities; Prettier, both TypeScript configs, ESLint, Vitest 7/7, deterministic Vite output, guard 107/43, formatter 4/4, allowlist 23/23, validator 11/11, Ruff, mypy, Python 4/4, and clean-wheel UI probe 1/1 passed. The wheel probe imported from an isolated site-packages with empty `PYTHONPATH`, no Node, complete relative assets, no sourcemaps, and `127.0.0.1:0` only. Local Node 26.4.0/npm 11.17.0 produced the expected engine warning against pinned 22.23.1/10.9.8. GitHub Actions run 29056593134 then passed all four Ubuntu/macOS × CPython 3.12/3.13 jobs for commit `5ed48a2988307bddbfd502fe1cfecb60cdfe634e`, including exact Node/npm selection. Output explicitly states prototype/packaging evidence opens no runtime phase gate.
 
 ## Failure Queue Items
 
