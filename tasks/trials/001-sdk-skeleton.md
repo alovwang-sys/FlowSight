@@ -6,7 +6,7 @@
 task_id: TRIAL-001
 release: v1
 task_type: implementation
-status: review
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: []
@@ -133,9 +133,9 @@ Quality Governor:
 
 ## Verifier Evidence
 
-- Command: `git checkout-index` exact snapshot followed by `make check`, isolated wheel build, and clean-venv `python -I` import plus repeated `FlowSight().init_app(FastAPI())`
+- Command: `git checkout-index` exact snapshot followed by `make check`, isolated wheel build, clean-venv `python -I` import plus repeated `FlowSight().init_app(FastAPI())`, and GitHub Actions run 29054809916
 - Result: PASS
-- Notes: Independent verifier checked index tree `d3fcd0e6671023fbfaa17b9b9e651df9a6b90cc7` with 10 staged records. Guard 107/43, formatter 4, allowlist 23, validator 11, Ruff, mypy, and SDK pytest 4/4 passed; the 8-file wheel contained no UI/static files and clean CPython 3.13.5 imported FlowSight 0.1.0a0/FastAPI 0.139.0 from site-packages. Local output explicitly said partial scaffold, not Phase 0 evidence. Python 3.12 remains a required CI-matrix check before the task closure commit.
+- Notes: Independent verifier checked index tree `d3fcd0e6671023fbfaa17b9b9e651df9a6b90cc7` with 10 staged records. Guard 107/43, formatter 4, allowlist 23, validator 11, Ruff, mypy, and SDK pytest 4/4 passed; the 8-file wheel contained no UI/static files and clean CPython 3.13.5 imported FlowSight 0.1.0a0/FastAPI 0.139.0 from site-packages. Local output explicitly said partial scaffold, not Phase 0 evidence. GitHub Actions run 29054809916 passed all four macOS/Linux × CPython 3.12/3.13 jobs for commit `8bc29cf33658ab575244e167c1e63b81a03f20c4`.
 
 ## Failure Queue Items
 
