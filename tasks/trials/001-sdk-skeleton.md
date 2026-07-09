@@ -54,14 +54,19 @@ Create the smallest Python package shape that exposes `FlowSight` and makes `Flo
 - `tests/**`
 - `pyproject.toml`
 - `Makefile`
+- `.gitignore`
 
 ## Expected Changed Files
 
 - `flowsight/__init__.py`
+- `flowsight/py.typed`
 - `flowsight/sdk/__init__.py`
 - `flowsight/sdk/lifecycle.py`
 - `examples/fastapi_demo.py`
 - `tests/test_sdk_skeleton.py`
+- `pyproject.toml`
+- `Makefile`
+- `.gitignore`
 
 ## Forbidden
 
