@@ -6,7 +6,7 @@
 task_id: TOOL-001
 release: v1
 task_type: tooling
-status: review
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: []
@@ -138,8 +138,8 @@ Quality Governor:
 ## Verifier Evidence
 
 - Command: `python3 scripts/agent/test_pre_bash_guard.py && python3 scripts/agent/test_check_staged_files.py && make check`
-- Result: PASS on the exact staged implementation snapshot; independent verifier also ran the versioned pre-commit hook and `git diff --cached --check` successfully.
-- Notes: Snapshot `0e3cec88ec4630d9c592b188792733dc0ee18338` contained 14 staged path records and no UI/package/static files. Full checks passed 107 deny + 43 allow guard cases, 4 formatter tests, 23 staged-file tests, and 11 validator tests; the allowlist suite includes real task-activation and scoped `git commit` transactions. Pre-commit passed its 12 deny + 5 allow smoke set in 1.91 seconds. This evidence-only task-card edit followed verification and does not change the verified implementation files.
+- Result: PASS
+- Notes: The independent verifier ran the versioned pre-commit hook and `git diff --cached --check` successfully. Snapshot `0e3cec88ec4630d9c592b188792733dc0ee18338` contained 14 staged path records and no UI/package/static files. Full checks passed 107 deny + 43 allow guard cases, 4 formatter tests, 23 staged-file tests, and 11 validator tests; the allowlist suite includes real task-activation and scoped `git commit` transactions. Pre-commit passed its 12 deny + 5 allow smoke set in 1.91 seconds. This evidence-only task-card edit followed verification and does not change the verified implementation files.
 
 ## Failure Queue Items
 
