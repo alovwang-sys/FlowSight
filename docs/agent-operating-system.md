@@ -60,6 +60,10 @@ Every coding task should begin as a task card. A good task card contains:
 
 The current task card itself and its verifier evidence are control-plane records. They may be updated without being part of the product-code allowlist; all other code and docs remain constrained by `Allowed Files`.
 
+The local pre-commit boundary reads task cards and changed paths from the **Git index**, never from unstaged working-tree edits. A commit containing product or task-scoped control-plane changes must have exactly one indexed task with `status: in_progress` or `status: review`; every staged add, modification, deletion, and both sides of a rename must match that card's `Allowed Files`. The active card itself is always permitted so status, role output, and verifier evidence can be recorded. Multiple active cards fail closed. With no active card, only `tasks/**` and `queue/**` records may be committed; governance rules, hooks, scripts, Make targets, product source/design, dependency manifests, and frontend files all require an active task.
+
+Keep the implementation commit in `in_progress` or `review`. Moving the card to `complete` is a later control-plane-only evidence commit, after verification, so the indexed task boundary remains unambiguous while product files are committed. An unstaged edit cannot activate a task or expand its allowlist. A new active task, task identity/path change, or `Allowed Files` change must first land as its own task-record commit; it cannot authorize scoped files in the same commit.
+
 Task status normally moves `planned -> in_progress -> review -> complete`; use `blocked` only with a recorded blocker. A task cannot enter `in_progress`, `review`, or `complete` while a dependency is incomplete. `complete` requires checked acceptance criteria, filled role outputs, passing verifier evidence, and no `TBD`. Gates are evaluated separately from ordinary `make check` so planned future work does not create vacuous green phase evidence.
 
 `requires_gates` contains gates that must already be open before a downstream task starts. `opens_gates` is membership in a fixed, version-controlled gate opener set. Direct task prerequisites belong in `depends_on`.
@@ -287,6 +291,17 @@ Pre-command guards should deny:
 - `rm -rf` forms that can wipe the workspace.
 - Servers binding to `0.0.0.0` or public interfaces.
 - Commands known to bypass the project's verification path.
+
+The shared pre-commit hook materializes a temporary `git checkout-index` snapshot and runs both the staged-file boundary and `make check-fast` from that snapshot. Unstaged rewrites therefore cannot make unsafe indexed content appear safe. The hook may symlink the current repository's `.venv` and `node_modules` into the temporary snapshot as dependency caches, but those links are added only after the snapshot has become its own temporary Git repository and are not validation inputs. The fast target covers canonical validation, guard/formatter smoke tests, and cheap product static checks, but deliberately excludes staged-checker integration fixtures, full Python/frontend tests, frontend builds, and clean-wheel probes. Developers still run the task card's targeted verification; protected-branch CI runs the full `make check` before merge.
+
+The pre-command guard is deliberately a conservative static filter, not a
+general shell sandbox. It fails closed for known opaque shell execution,
+destructive Git/filesystem forms, and non-loopback binds on recognized servers,
+but arbitrary interpreters or build tools can still run code. Use the
+stdin-driven `printf '%s\n' '<command>' | make guard` helper for manual checks;
+do not interpolate a candidate command into a Make variable or JSON string.
+
+Local hooks are bypassable by a human with direct Git access and are not a security boundary. `--no-verify`, changing `core.hooksPath`, or pushing a commit created elsewhere can skip them. Repository policy must therefore require the CI check on a protected branch; review must reject commits that bypassed task scoping even when the full test suite passes.
 
 Post-edit hooks should:
 

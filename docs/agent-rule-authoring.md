@@ -20,7 +20,8 @@ folder, the tools are no longer equivalent.
 2. Is it a forbidden shell command (destructive, unsafe bind, etc.)?
    -> Add the logic to `scripts/agent/pre_bash_guard.py` ONLY.
       - Claude Code already calls it via `.claude/hooks/pre-bash-guard.py`.
-      - Anyone can test it with `make guard CMD='...'`.
+      - Anyone can test it without shell re-evaluation via
+        `printf '%s\n' '<command>' | make guard`.
       - Add a case to `scripts/agent/test_pre_bash_guard.py` so `make check`
         proves the new denial works.
 
@@ -35,6 +36,14 @@ folder, the tools are no longer equivalent.
 
 5. Is it a per-task boundary?
    -> Put it in the task card (`tasks/`), not in global config.
+      - `scripts/agent/check_staged_files.py` enforces `Allowed Files` against
+        the Git index at pre-commit time.
+      - Add a real temporary-repository case to
+        `scripts/agent/test_check_staged_files.py` when boundary semantics change.
+      - Keep product commits at `in_progress`/`review`; record `complete` in the
+        later control-plane-only evidence commit.
+      - Task identity/path and allowlist edits must be task-record-only commits;
+        they cannot authorize scoped files in the same commit.
 
 ## The parity rule of thumb
 
@@ -55,6 +64,11 @@ pre-scaffold `make check` deliberately reports that it is not product evidence.
   that delegate to `scripts/agent/*`.
 - Do not let `.claude/commands/*` drift from `docs/workflows/*`. They must stay
   name-for-name mirrors (the validator enforces this).
+- Do not make the staged-file checker read the working tree for task status or
+  changed paths. Its decision must come from the index, including deletions and
+  both sides of renames.
+- Do not run commit-time checks against the mutable working tree. Materialize a
+  temporary index snapshot first; tests must cover staged-unsafe/worktree-safe.
 - When you add a new workflow, add BOTH `docs/workflows/<name>.md` (canonical)
   and a matching `.claude/commands/<name>.md` pointer, or `make check` fails.
 - After adding any command guard, add a matching test, or the guard is unproven.

@@ -30,13 +30,34 @@ Layer A is already tool-neutral. It is equivalent by construction.
 
 ### Layer B - Neutral merge choke points
 
-- `.githooks/pre-commit`          - runs `make check` on every commit (enable with `make init`)
+- `.githooks/pre-commit`          - checks indexed paths against the active task, then runs `make check-fast` (enable with `make init`)
 - `.github/workflows/agent-checks.yml` - runs `make check` on push / PR
 
-Both run the SAME `scripts/agent/*` and `make check` regardless of agent. This is
-where tested repository invariants are enforced before merge. These checks do not
-undo destructive commands, recover untracked files, or prove a phase gate whose
-task cards are still planned.
+Both use the same tool-neutral scripts and Make targets regardless of agent, but
+at intentionally different depths. Pre-commit stays fast so it remains usable:
+canonical validation, guard/formatter smoke tests, and cheap static checks run
+locally, while integration tests, full product tests, frontend builds, and
+clean-wheel verification remain in CI's `make check`. These checks do
+not undo destructive commands, recover untracked files, or prove a phase gate
+whose task cards are still planned.
+
+`scripts/agent/check_staged_files.py` reads only the Git index. With one indexed
+`in_progress`/`review` task, it checks every staged add/modify/delete and both
+sides of a rename against that task's `Allowed Files`, while always allowing the
+active card itself. Multiple active cards fail. With no active card, only
+`tasks/**` and `queue/**` records are permitted; governance enforcement needs an
+active tooling/docs task just like product work needs an implementation task.
+An unstaged task edit cannot change the decision. A new active task, task
+identity/path change, or `Allowed Files` change must be committed separately before
+it can authorize scoped files, preventing a commit from replacing or expanding
+its own boundary.
+
+The hook materializes the index with `git checkout-index` and runs both the
+boundary checker and `make check-fast` from that temporary snapshot. It creates
+an independent temporary Git repository before running tests, so child Git
+fixtures do not inherit the real repository's `GIT_DIR`/`GIT_WORK_TREE`.
+Only local dependency caches (`.venv` and `node_modules`) may be symlinked in
+afterward; staged source, deletions, and renames always come from the index.
 
 ### Layer C - Per-tool adapters (convenience / early feedback only)
 
@@ -67,7 +88,7 @@ Because enforcement lives in Layers A + B, switching is close to zero-cost:
 2. Claude Code auto-loads `.claude/`. Codex auto-loads `AGENTS.md`; apply
    `codex.config.example.toml` once.
 3. Run `make init` once per clone so git hooks are active for whoever commits.
-4. CI already enforces `make check` for everyone.
+4. Require the `make check` CI job on the protected branch for everyone.
 
 ## Per-rule placement cheat sheet
 
@@ -76,12 +97,26 @@ Because enforcement lives in Layers A + B, switching is close to zero-cost:
 | Product / scope / v1 boundary               | `AGENTS.md`, `docs/agent-facts.tsv`    | review + CI          |
 | Machine-checkable invariant                 | a test + `docs/agent-facts.tsv`        | `make check` (Layer B) |
 | Phase readiness                             | fixed gate opener map + task metadata  | `make gate-phase0/1/4` |
-| Forbidden shell command                     | `scripts/agent/pre_bash_guard.py`      | Claude hook + `make guard` + Codex sandbox |
+| Forbidden shell command                     | `scripts/agent/pre_bash_guard.py`      | Claude hook + stdin-driven `make guard` + Codex sandbox |
 | Forbidden code pattern (e.g. 0.0.0.0 bind)  | a test/linter run by `make check`      | Layer B              |
 | Role workflow / SOP                         | `docs/workflows/*.md`                  | both tools read it   |
-| Task boundary (allowed/forbidden files)     | the task card in `tasks/`              | review + governor    |
+| Task boundary (allowed/forbidden files)     | the task card in `tasks/`              | indexed pre-commit check + review |
 
 A pre-scaffold `make check` validates only this agent system and must say so in its output. It does not open a phase gate. Each gate target first runs `make check`, then requires its canonical opener tasks, positive spike decisions, `command:` fact verification, and existing test paths; it intentionally fails while any of those remain planned.
+
+The local hook remains bypassable (`--no-verify`, a different hooks path, or a
+commit created elsewhere). It is commit-time feedback, not the remote merge
+guarantee. Protected-branch CI is the merge verification boundary; until CI also
+evaluates per-commit task diffs, reviewers must reject an allowlist-bypassing
+commit even if its full `make check` is green.
+
+The command guard is a conservative static filter for direct shell commands,
+not a general shell sandbox. It rejects known destructive forms, opaque shell
+evaluation, dynamic Git commands, and non-loopback binds for recognized local
+servers. Arbitrary interpreters and build tools can still execute code, so task
+allowlists, review, sandboxing where available, and protected-branch CI remain
+independent controls. To inspect a literal command without shell re-quoting, use
+`printf '%s\n' '<command>' | make guard`.
 
 See `docs/agent-rule-authoring.md` for the step-by-step protocol when adding a
 new rule.

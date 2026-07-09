@@ -139,7 +139,8 @@ Shared agent guard logic belongs in `scripts/agent/`. Tool-specific directories 
 
 ## Git and Workspace Rules
 
-- Do not run `git reset --hard`, `git clean`, `git checkout --`, `git restore --source`, or `git stash` unless the user explicitly asks.
+- Do not run `git reset --hard`, `git clean`, destructive `git checkout`/`git restore`/`git switch --discard-changes`, or `git stash` unless the user explicitly asks.
+- Never bypass repository hooks with `git commit --no-verify`, `git commit -n`, a substituted hooks path, or privilege escalation.
 - Do not revert user changes.
 - Do not edit unrelated files.
 - Do not delete or weaken tests to make a task pass.
@@ -166,9 +167,8 @@ on neutral choke points, not inside any one tool:
 
 - Shared rules live in `AGENTS.md`, `docs/`, `docs/workflows/`, `tasks/`,
   `scripts/agent/`, and the `Makefile`.
-- The repository-merge guarantee is `make check`, run on every commit by
-  `.githooks/pre-commit` (enable once per clone with `make init`) and on every
-  push/PR by `.github/workflows/agent-checks.yml`. It validates committed-state invariants; it cannot retroactively prevent or repair destructive commands against uncommitted files.
+- `.githooks/pre-commit` (enable once per clone with `make init`) checks staged paths against the indexed active task and runs the fast `make check-fast` subset. The full repository verification is `make check`, run by `.github/workflows/agent-checks.yml` on every push/PR.
+- Local hooks are deliberately fast and remain bypassable by a human with direct Git access. Protected-branch CI is the merge guarantee; neither hooks nor CI can retroactively prevent or repair destructive commands against uncommitted files.
 - Tool adapters are thin: `.claude/` for Claude Code, `codex.config.example.toml`
   for Codex. They must only call the shared logic, never contain rules of their
   own.

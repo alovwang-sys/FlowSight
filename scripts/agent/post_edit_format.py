@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +35,24 @@ def run_quiet(args: list[str], cwd: Path) -> None:
         pass
 
 
+def formatter_command(project_dir: Path, file_path: Path) -> list[str] | None:
+    ext = file_path.suffix.lower()
+
+    if ext in PYTHON_EXTS:
+        if not any((project_dir / name).exists() for name in ("pyproject.toml", "ruff.toml", ".ruff.toml")):
+            return None
+        venv_python = project_dir / ".venv" / "bin" / "python"
+        if venv_python.is_file():
+            return [str(venv_python), "-m", "ruff", "format", str(file_path)]
+        return None
+
+    if ext in PRETTIER_EXTS:
+        prettier = project_dir / "node_modules" / ".bin" / "prettier"
+        if prettier.is_file():
+            return [str(prettier), "--write", str(file_path)]
+    return None
+
+
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
@@ -58,20 +75,9 @@ def main() -> None:
     if not file_path.exists() or not file_path.is_file():
         return
 
-    ext = file_path.suffix.lower()
-
-    if ext in PYTHON_EXTS:
-        if not any((project_dir / name).exists() for name in ("pyproject.toml", "ruff.toml", ".ruff.toml")):
-            return
-        ruff = shutil.which("ruff")
-        if ruff:
-            run_quiet([ruff, "format", str(file_path)], project_dir)
-        return
-
-    if ext in PRETTIER_EXTS:
-        prettier = project_dir / "node_modules" / ".bin" / "prettier"
-        if prettier.exists():
-            run_quiet([str(prettier), "--write", str(file_path)], project_dir)
+    command = formatter_command(project_dir, file_path)
+    if command:
+        run_quiet(command, project_dir)
 
 
 if __name__ == "__main__":
