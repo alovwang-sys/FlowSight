@@ -1,0 +1,34 @@
+# FlowSight recommended Codex settings.
+#
+# Purpose: give Codex the closest achievable equivalent of the Claude Code
+# pre-bash guard, by constraining what Codex may do WITHOUT approval and by
+# keeping network off (matches FlowSight's 127.0.0.1-only rule).
+#
+# How to use:
+#   - Copy the relevant keys into your Codex config (commonly ~/.codex/config.toml,
+#     or your Codex project config if your Codex version supports one).
+#   - Confirm the exact key names against the current Codex docs before relying on
+#     them: Codex settings evolve and this file is a documented recommendation,
+#     not an auto-loaded config.
+#
+# Note on parity: Codex has no in-loop "block this command before it runs" hook
+# like Claude Code. The real, tool-neutral guarantee therefore lives in
+# .githooks/pre-commit and .github/workflows/agent-checks.yml (both run
+# `make check`). These settings only reduce how much damage Codex can do before
+# that commit/CI gate catches it.
+
+# Ask before risky / non-obvious actions instead of acting autonomously.
+approval_policy = "on-request"
+
+# Limit writes to the workspace; no system-wide changes.
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+# FlowSight v1 is local-only; agents should not need the network to implement it.
+network_access = false
+
+# Reminders (Codex reads AGENTS.md natively, so the hard rules live there):
+#   - Run `make check` before declaring any task done.
+#   - Destructive git (reset --hard, clean, stash, checkout --) and broad `rm -rf`
+#     are forbidden by AGENTS.md and blocked at commit time by .githooks/pre-commit.
+#   - Never bind servers to 0.0.0.0; bind 127.0.0.1 only.
