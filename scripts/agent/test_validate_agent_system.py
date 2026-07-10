@@ -64,11 +64,21 @@ Quality Governor:
             {task_id for task_id in cards if task_id.startswith("TRIAL-")},
         )
 
-    def test_planned_tasks_keep_phase_gate_closed(self) -> None:
-        cards = MODULE.validate_task_cards()
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                MODULE.validate_gate("phase0-sustained", cards)
+    def test_planned_opener_keeps_isolated_gate_closed(self) -> None:
+        cards = {
+            "TASK-1": (
+                Path("task.md"),
+                "",
+                {"opens_gates": ["demo-gate"], "status": "planned"},
+            )
+        }
+        MODULE.GATE_OPENERS["demo-gate"] = {"TASK-1"}
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    MODULE.validate_gate("demo-gate", cards)
+        finally:
+            del MODULE.GATE_OPENERS["demo-gate"]
 
     def test_complete_gate_can_pass(self) -> None:
         cards = {
@@ -228,7 +238,10 @@ Quality Governor:
             del MODULE.GATE_OPENERS["demo-gate"]
             del MODULE.GATE_FACTS["demo-gate"]
 
-    def test_cli_reports_closed_gate(self) -> None:
+    def test_cli_reports_current_gate_state(self) -> None:
+        cards = MODULE.validate_task_cards()
+        facts = MODULE.validate_facts()
+        blockers = MODULE.gate_blockers("phase4-tracepoint", cards, facts)
         result = subprocess.run(
             [sys.executable, str(VALIDATOR), "--gate", "phase4-tracepoint"],
             cwd=ROOT,
@@ -236,8 +249,12 @@ Quality Governor:
             text=True,
             check=False,
         )
-        self.assertEqual(1, result.returncode)
-        self.assertIn("gate 'phase4-tracepoint' is closed", result.stderr)
+        if blockers:
+            self.assertEqual(1, result.returncode)
+            self.assertIn("gate 'phase4-tracepoint' is closed", result.stderr)
+        else:
+            self.assertEqual(0, result.returncode)
+            self.assertIn("gate phase4-tracepoint passed", result.stdout)
 
 
 if __name__ == "__main__":

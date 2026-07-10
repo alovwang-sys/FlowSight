@@ -6,7 +6,7 @@
 task_id: TOOL-004
 release: v1
 task_type: tooling
-status: in_progress
+status: review
 primary_phase: phase0
 impacted_phases: [phase1, phase4]
 depends_on: [TOOL-003]
@@ -33,6 +33,8 @@ real gate can open without invalidating a test that assumes it remains closed.
 
 - `test_planned_tasks_keep_phase_gate_closed` currently loads the real task
   graph and asserts that `phase0-sustained` is closed.
+- `test_cli_reports_closed_gate` likewise assumes the live
+  `phase4-tracepoint` gate can never open.
 - TRIAL-004 must eventually complete and promote the remaining Phase 0 facts,
   at which point that assertion becomes false even though validator behavior is
   correct.
@@ -63,11 +65,11 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] No validator unit test requires the live `phase0-sustained` gate to remain closed.
-- [ ] A synthetic planned opener proves an incomplete task keeps its isolated gate closed.
-- [ ] A synthetic completed opener with command-backed existing-test evidence proves the same isolated gate can open.
-- [ ] Every temporary global/root override is restored even if an assertion fails.
-- [ ] The validator suite and full `make check` pass without changing production validator code.
+- [x] No validator unit test requires a live Phase 0 or Phase 4 gate to remain closed.
+- [x] A synthetic planned opener proves an incomplete task keeps its isolated gate closed.
+- [x] A synthetic completed opener with command-backed existing-test evidence proves the same isolated gate can open.
+- [x] Every temporary global/root override is restored even if an assertion fails.
+- [x] The validator suite and full `make check` pass without changing production validator code.
 
 ## No-Test Reason
 
@@ -92,6 +94,8 @@ validator tests remain green whether the repository's real gates are open or clo
 
 - A synthetic fixture may accidentally mutate class/module globals for later tests.
 - Replacing the live-state assertion could silently remove closed-gate coverage.
+- A CLI smoke test that accepts both outcomes could miss output/exit-code drift
+  unless it first computes the authoritative live blockers.
 - A broad refactor could change validator behavior instead of only its tests.
 
 ## Reviewer Focus
@@ -103,23 +107,38 @@ validator tests remain green whether the repository's real gates are open or clo
 ## Role Outputs
 
 Implementer:
-- TBD
+- Replaced the live Phase 0 closed-state assumption with a synthetic planned
+  opener and made the Phase 4 CLI smoke compare its subprocess result with the
+  authoritative current blockers, without changing production validator code.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: no P0/P1/P2 findings; synthetic planned-opener isolation
+  preserves closed/open, no-go, fact-evidence, and downstream-gate coverage,
+  restores all temporary globals under forced failures, and the state-agnostic
+  CLI wiring smoke matches authoritative live blockers.
+- Reviewer 2: waived: one test-only fixture-isolation correction with an
+  independent Quality Governor, full validator coverage, and no production
+  validator diff
 
 Fixer:
-- TBD
+- Accepted the review watch on the identical Phase 4 live-closed assumption and
+  extended the correction to the CLI smoke; no other findings required changes.
 
 Quality Governor:
-- TBD
+- No process drift: only the allowlisted test and task card changed, the
+  production validator matches HEAD byte-for-byte, synthetic closed/open
+  coverage remains deterministic, the CLI smoke checks live blockers without
+  assuming either gate stays closed, and all overrides remain finally-restored.
 
 ## Verifier Evidence
 
 - Command: `python3 scripts/agent/test_validate_agent_system.py && make check`
-- Result: TBD
-- Notes: task boundary activation only; implementation not yet started
+- Result: passed
+- Notes: Validator tests passed 11/11; adversarial focused gate tests passed
+  6/6 and forced-failure probes restored `GATE_OPENERS`, `GATE_FACTS`, and
+  `ROOT`; `make check` passed all agent/static checks and 186 Python tests in
+  39.37s. `scripts/validate_agent_system.py` remained byte-for-byte identical
+  to HEAD at blob `9533e99d2fab036b4f82e71ff59f1fb40acbc77f`.
 
 ## Failure Queue Items
 
