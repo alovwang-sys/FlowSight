@@ -12,7 +12,7 @@ FRONTEND_PRESENT = test -e package.json || test -e package-lock.json || { \
 	fi; \
 }
 
-.PHONY: check check-fast check-agent check-product check-product-fast check-staged-files test test-agent test-product validate-agent-system test-hooks test-hooks-fast test-formatter test-allowlist test-product-detection test-validator gate-phase0 gate-phase1 gate-phase4 init guard
+.PHONY: check check-fast check-agent check-product check-product-fast check-staged-files test test-agent test-product test-trial004 validate-agent-system test-hooks test-hooks-fast test-formatter test-allowlist test-product-detection test-validator gate-phase0 gate-phase1 gate-phase4 init guard
 
 check: check-agent check-product
 
@@ -33,9 +33,9 @@ check-product:
 		if [ "$$has_python" -eq 1 ]; then \
 			test -d flowsight && test -d tests && test -f pyproject.toml || { echo "partial Python scaffold: flowsight/, tests/, and pyproject.toml are all required" >&2; exit 1; }; \
 			test -d examples || { echo "Python scaffold requires examples/" >&2; exit 1; }; \
-			$(PYTHON) -m ruff format --check flowsight examples tests; \
-			$(PYTHON) -m ruff check flowsight examples tests; \
-			$(PYTHON) -m mypy flowsight; \
+			$(PYTHON) -m ruff format --check flowsight examples tests spikes/sidecar_otel; \
+			$(PYTHON) -m ruff check flowsight examples tests spikes/sidecar_otel; \
+			$(PYTHON) -m mypy flowsight spikes/sidecar_otel; \
 		fi; \
 		if [ "$$has_frontend" -eq 1 ]; then \
 			test -d ui && test -f package.json && test -f package-lock.json || { echo "frontend scaffold requires ui/, package.json, and package-lock.json" >&2; exit 1; }; \
@@ -63,9 +63,9 @@ check-product-fast:
 		if [ -e tests ] || [ -e pyproject.toml ] || find flowsight -type f -name '*.py' -print -quit 2>/dev/null | grep -q .; then \
 			test -d flowsight && test -d tests && test -f pyproject.toml || { echo "partial Python scaffold: flowsight/, tests/, and pyproject.toml are all required" >&2; exit 1; }; \
 			test -d examples || { echo "Python scaffold requires examples/" >&2; exit 1; }; \
-			$(PYTHON) -m ruff format --check flowsight examples tests; \
-			$(PYTHON) -m ruff check flowsight examples tests; \
-			$(PYTHON) -m mypy flowsight; \
+			$(PYTHON) -m ruff format --check flowsight examples tests spikes/sidecar_otel; \
+			$(PYTHON) -m ruff check flowsight examples tests spikes/sidecar_otel; \
+			$(PYTHON) -m mypy flowsight spikes/sidecar_otel; \
 		fi; \
 		if { $(FRONTEND_PRESENT); }; then \
 			test -d ui && test -f package.json && test -f package-lock.json || { echo "frontend scaffold requires ui/, package.json, and package-lock.json" >&2; exit 1; }; \
@@ -93,6 +93,9 @@ test-product:
 			npm test; \
 		fi; \
 	fi
+
+test-trial004:
+	$(PYTHON) -m pytest tests/spikes/test_sidecar_otel_lifecycle.py
 
 validate-agent-system:
 	$(PYTHON) scripts/validate_agent_system.py

@@ -15,11 +15,16 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "asgiref==3.11.1",
   "build==1.5.1",
   "mypy==2.2.0",
+  "opentelemetry-api==1.43.0",
+  "opentelemetry-instrumentation-fastapi==0.64b0",
+  "opentelemetry-sdk==1.43.0",
   "pytest==9.1.1",
   "ruff==0.15.21",
   "uvicorn==0.51.0",
+  "wrapt==2.2.2",
 ]
 
 [tool.setuptools.packages.find]
@@ -35,7 +40,7 @@ testpaths = ["tests"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["flowsight"]
+files = ["flowsight", "spikes/sidecar_otel"]
 
 [tool.ruff]
 target-version = "py312"

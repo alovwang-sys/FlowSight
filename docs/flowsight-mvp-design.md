@@ -223,13 +223,14 @@ SDK 与 sidecar 使用 loopback HTTP + UTF-8 JSON 的私有版本化协议。v1 
 
 ```http
 POST /internal/v1/hello
+POST /internal/v1/renew
 POST /internal/v1/events
 POST /internal/v1/flush
 POST /internal/v1/goodbye
 GET  /internal/v1/tracepoints?since_revision=N
 ```
 
-`hello` 建立单 producer lease，并携带 project/protocol/SDK/Python version 与能力；第二个同时存活的 producer 被明确拒绝为 `MULTI_WORKER_UNSUPPORTED`。reload 新 worker 可以在有界时间内等待旧 lease 通过 goodbye、连接失效或短 TTL 释放。
+`hello` 建立单 producer lease，并携带 project/protocol/SDK/Python version 与能力；第二个同时存活的 producer 被明确拒绝为 `MULTI_WORKER_UNSUPPORTED`。`renew` 仅在 `(producer_id, lease_id)` 与当前 lease 精确匹配时延长同一 lease 的 TTL；它不会创建、替换或重新获取 lease。`renew` 响应丢失后，使用同一对 ID 重试对 lease 身份和所有权是幂等且安全的：重试只会再次延长同一个 lease。过期或不匹配的 lease 返回 `INVALID_LEASE`，重新获取必须调用 `hello` 并继续服从单 producer 规则。reload 新 worker 可以在有界时间内等待旧 lease 通过 `goodbye` 或续租停止后的短 TTL 到期释放。
 
 事件 batch 至少包含 `protocol_version`、`project_id`、`producer_id`、`lease_id`、`batch_id`。每个事件包含唯一 `event_id`、单调 `producer_seq`、`type`、`schema_version`、时间戳和安全 payload；request-scoped 事件还携带 `request_trace_id`、`otel_trace_id`。v1 事件类型保持最少：`route_catalog.replaced`、`span.ended`、`span.enrichment`、`snapshot.captured` 和 `trace.drop_notice`。
 
