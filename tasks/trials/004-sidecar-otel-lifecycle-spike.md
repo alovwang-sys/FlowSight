@@ -6,7 +6,7 @@
 task_id: TRIAL-004
 release: v1
 task_type: spike
-status: in_progress
+status: blocked
 primary_phase: phase0
 impacted_phases: [phase1, phase3]
 depends_on: [TRIAL-001, TRIAL-002, TRIAL-003]
@@ -166,7 +166,9 @@ Quality Governor:
 ## Failure Queue Items
 
 - `TRIAL-004-CI`: commit the reviewed candidate, run the required macOS/Linux ×
-  CPython 3.12/3.13 matrix for that SHA, and record the run URL/ID.
+  CPython 3.12/3.13 matrix for that SHA, and record the run URL/ID. The local
+  candidate is committed at `d6abe973f7fc29da70345bb0713688520fd2a00e`;
+  remote-branch push is blocked pending explicit user authorization.
 - `AGENT-VALIDATOR-GATE-DECOUPLING`: complete the separate tooling correction
   that prevents the validator's own test from standing in for the real
   `phase0-sustained` gate before either dependent gate opens.
