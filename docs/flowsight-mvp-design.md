@@ -537,6 +537,8 @@ OpenTelemetry FastAPI instrumentation 是 OTel trace/span identity 的唯一来�
 
 请求边界读取当前 recording server span，按 5.3 派生 `request_trace_id`，并把 `request_trace_id/root_span_id` 放进请求级 `contextvars`。`FlowSightSpanProcessor.on_start` 只把该关联复制进有界的 span-association map，`on_end` 再生成事件；关联缺失的 span 只能在 SDK 的有界 TTL buffer 中按完整 parent chain 等待，绝不能只按 `otel_trace_id` 猜归属，也不能把 scope 外的 orphan 发送给 sidecar。TRIAL-004 必须验证 async、线程池、嵌套 server spans、scope 外 spans 和两个共享上游 trace 的并发请求不会串线；若所选 FastAPI/OTel 版本拿不到 recording server span，初始化必须明确失败或显示 unsupported，不能偷偷创建第二个 root。
 
+**TRIAL-004 最终结论（2026-07-11）：** `go`，无范围收缩。采用一个 project-scoped 本地 Python sidecar 独占 loopback UI/API/SQLite，SDK 通过有界 authenticated private sender 发送预先安全化事件；复用用户 `TracerProvider` 并只注册一个可停用/复用的 `FlowSightSpanProcessor`，不替换 provider、不创建第二个 root。普通启动、真实 Uvicorn reload、producer lease、失败/重试、OTel ownership、sync/async/thread-pool 归属和 bounded shutdown 已由 commit `d6abe973f7fc29da70345bb0713688520fd2a00e` 证明；GitHub Actions run `29114712575` 已通过 Ubuntu/macOS × CPython 3.12/3.13。生产 Phase 0/1 必须按 `spikes/sidecar_otel/RESULT.md` 的 promotion requirements 分阶段迁移，不能直接发布 spike package。
+
 需要记录：
 
 - method

@@ -2,11 +2,9 @@
 
 ## Decision Status
 
-Final decision: **pending the required GitHub Actions matrix**.
+Final decision: **go**.
 
-Local candidate decision: **go**.
-
-Scope reductions: **none proposed**. The code in this directory is executable
+Scope reductions: **none**. The code in this directory is executable
 architecture evidence, not production Phase 0/1 code.
 
 ## What the Spike Proves
@@ -58,7 +56,7 @@ architecture evidence, not production Phase 0/1 code.
 
 ## Local Evidence
 
-The final local candidate working tree passed on macOS on 2026-07-10:
+The reviewed candidate passed locally on macOS on 2026-07-10:
 
 - CPython 3.13.5: `89 passed in 58.52s` in the lifecycle harness.
 - Isolated CPython 3.12.11: `89 passed in 62.30s` in the same harness.
@@ -72,6 +70,11 @@ The final local candidate working tree passed on macOS on 2026-07-10:
 The harness includes separate ordinary Uvicorn and real `--reload` process
 tests, plus a finished server-span test that reaches SQLite through the entire
 private path and becomes queryable in under one second.
+
+GitHub Actions run `29114712575` passed the full repository suite on Ubuntu and
+macOS with CPython 3.12 and 3.13. Its head
+`d5893e3d09ccb9a9a9c3399fa649129664d38c3f` contains the reviewed lifecycle
+implementation commit `d6abe973f7fc29da70345bb0713688520fd2a00e`.
 
 ## Review Findings Incorporated
 
@@ -142,14 +145,10 @@ the approved v1 scope:
 - Keep Windows, free-threaded CPython, multi-worker aggregation, generic OTLP
   ingest, and cross-service tracing outside v1 as already documented.
 
-## Final Evidence Still Required
+## Final Matrix Evidence
 
-Before changing the decision to `go` and completing TRIAL-004:
-
-1. Commit the reviewed implementation and record its immutable SHA.
-2. Pass GitHub Actions on macOS and Linux with CPython 3.12 and 3.13 for that
-   SHA; record the run URL/ID.
-3. Rerun `make check` for the immutable SHA and promote the planned TRIAL-004
-   fact evidence to command-backed evidence only after the matrix passes.
-4. Complete the separate tooling correction that decouples the validator test
-   from the real `phase0-sustained` gate before opening Phase 0/1 gates.
+- Run: `https://github.com/alovwang-sys/FlowSight/actions/runs/29114712575`
+- Ubuntu 3.12: success, job `86435155825`
+- macOS 3.12: success, job `86435155866`
+- Ubuntu 3.13: success, job `86435155872`
+- macOS 3.13: success, job `86435155880`

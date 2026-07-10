@@ -6,14 +6,14 @@
 task_id: TRIAL-004
 release: v1
 task_type: spike
-status: in_progress
+status: review
 primary_phase: phase0
 impacted_phases: [phase1, phase3]
 depends_on: [TRIAL-001, TRIAL-002, TRIAL-003]
 requires_gates: []
 opens_gates: [phase0-sustained, phase1-runtime-ingest]
-spike_decision: pending
-scope_reductions: pending
+spike_decision: go
+scope_reductions: none
 scope_override: none
 scope_override_approved_by: none
 ```
@@ -93,8 +93,8 @@ The current task card and its verifier evidence are always writable control-plan
 - [x] Request `contextvars` plus the bounded span-association map preserve ownership across sync, async, and thread-pool child spans; two concurrent local server spans sharing one upstream OTel trace remain separate `request_trace_id` records and never merge completion/drop state.
 - [x] Startup/manual/background spans without a local server ancestor expire from a bounded orphan buffer into `unscoped_span_count` without creating or damaging a Trace; nested local server spans use the nearest-server boundary.
 - [x] Safe private event delivery, ACK-after-commit, bounded flush, explicit stop/idle shutdown, queue/storage failure, and one-second query visibility are measured.
-- [ ] The lifecycle harness passes the repository's macOS/Linux × CPython 3.12/3.13 CI matrix.
-- [ ] Result is exactly `go`, `go with listed scope reductions`, or `no-go`, and the design/facts are updated accordingly.
+- [x] The lifecycle harness passes the repository's macOS/Linux × CPython 3.12/3.13 CI matrix.
+- [x] Result is exactly `go`, `go with listed scope reductions`, or `no-go`, and the design/facts are updated accordingly.
 
 ## No-Test Reason
 
@@ -149,26 +149,19 @@ Quality Governor:
 - Independent review found all non-ignored changes within the allowlist, the
   isolated Phase 0 spike phase- and scope-compliant, and local criteria 1–9
   supported by the recorded evidence. No P0/P1 blocks the implementation
-  commit; CI, immutable-SHA evidence, command-backed facts, and validator
-  gate-decoupling remain required before completion or gate opening.
+  commit. TOOL-004 later completed validator gate-fixture isolation, and the
+  immutable matrix plus command-backed facts now satisfy finalization.
 
 ## Verifier Evidence
 
-- Command: `.venv/bin/python -m pytest -q tests/spikes/test_sidecar_otel_lifecycle.py`; `/tmp/flowsight-trial004-py312/bin/python -m pytest -q tests/spikes/test_sidecar_otel_lifecycle.py`; `make check`
+- Command: `.venv/bin/python -m pytest -q tests/spikes/test_sidecar_otel_lifecycle.py`; `/tmp/flowsight-trial004-py312/bin/python -m pytest -q tests/spikes/test_sidecar_otel_lifecycle.py`; `make check`; GitHub Actions run `29114712575`
 - Result: passed
-- Notes: CPython 3.13.5 passed 89 tests in 58.52s; CPython 3.12.11 passed the
-  same 89 tests in 62.30s; `make check` passed agent validation, Ruff, strict
-  mypy, and 186 tests in 48.30s. The local candidate is go, while immutable
-  commit SHA, GitHub macOS/Linux × CPython 3.12/3.13 matrix, and validator
-  gate-decoupling remain pending. The `make check` partial-scaffold warning
-  means it is not Phase 0 acceptance.
+- Notes: local CPython 3.13.5 and 3.12.11 each passed 89 focused tests; the
+  reviewed implementation is commit `d6abe973f7fc29da70345bb0713688520fd2a00e`.
+  GitHub Actions run `29114712575` passed Ubuntu/macOS × CPython 3.12/3.13 on
+  `d5893e3d09ccb9a9a9c3399fa649129664d38c3f`, including all 217 repository
+  tests. The final spike decision is `go` with no scope reductions.
 
 ## Failure Queue Items
 
-- `TRIAL-004-CI`: commit the reviewed candidate, run the required macOS/Linux ×
-  CPython 3.12/3.13 matrix for that SHA, and record the run URL/ID. The local
-  candidate is committed at `d6abe973f7fc29da70345bb0713688520fd2a00e`;
-  remote-branch push is blocked pending explicit user authorization.
-- `AGENT-VALIDATOR-GATE-DECOUPLING`: complete the separate tooling correction
-  that prevents the validator's own test from standing in for the real
-  `phase0-sustained` gate before either dependent gate opens.
+- none
