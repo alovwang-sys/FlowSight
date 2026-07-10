@@ -170,10 +170,11 @@ These reductions do not affect ordinary OTel spans or explicit
 - Added closure free-variable/cell-variable evidence and narrowed coexistence
   claims to the synthetic mechanisms actually tested.
 
-The implementation and local result still require independent review, the full
-repository `make check`, an immutable commit, and the repository's
-macOS/Linux × CPython 3.12/3.13 GitHub Actions matrix before the task can be
-completed or the `phase4-tracepoint` gate can open.
+The reviewed implementation is committed at
+`9f195d33ba77f11bde103b91ba94fe5872c73591`. An independent verifier confirmed
+both focused runtimes and immutable `make check` (`217 passed`). The task still
+requires explicit scope approval and the repository's macOS/Linux × CPython
+3.12/3.13 GitHub Actions matrix before completion or gate opening.
 
 ## Promotion Requirements
 
@@ -195,11 +196,9 @@ completed or the `phase4-tracepoint` gate can open.
 
 ## Final Evidence Still Required
 
-1. Run an independent verifier against the reviewed immutable local commit.
-2. Obtain explicit user approval for the five listed scope reductions and
+1. Obtain explicit user approval for the five listed scope reductions and
    record it in the task metadata.
-3. Commit the reviewed implementation and record its immutable SHA.
-4. Pass GitHub Actions on macOS and Linux with CPython 3.12 and 3.13 for that
+2. Pass GitHub Actions on macOS and Linux with CPython 3.12 and 3.13 for that
    SHA; record the run URL/ID.
-5. Run `make check` for the immutable SHA, promote command-backed facts, and
+3. Promote command-backed facts, record the final decision, and
    complete the task/gate evidence only after the matrix passes.
