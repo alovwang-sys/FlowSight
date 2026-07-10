@@ -6,7 +6,7 @@
 task_id: TOOL-003
 release: v1
 task_type: tooling
-status: in_progress
+status: review
 primary_phase: phase0
 impacted_phases: []
 depends_on: [TOOL-002]
@@ -58,10 +58,10 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] Every `TemporaryGitRepository` disables `maintenance.auto` and legacy `gc.auto` before creating commits.
-- [ ] A regression test proves both fixture-local settings are present.
-- [ ] The allowlist suite and full `make check` pass without suppressing cleanup failures.
-- [ ] Git configuration is scoped to temporary fixture repositories only.
+- [x] Every `TemporaryGitRepository` disables `maintenance.auto` and legacy `gc.auto` before creating commits.
+- [x] A regression test proves both fixture-local settings are present.
+- [x] The allowlist suite and full `make check` pass without suppressing cleanup failures.
+- [x] Git configuration is scoped to temporary fixture repositories only.
 
 ## No-Test Reason
 
@@ -95,23 +95,23 @@ temporary Git fixtures cannot launch detached auto-maintenance; all shared check
 ## Role Outputs
 
 Implementer:
-- TBD
+- Disabled modern Git auto-maintenance and legacy auto-GC immediately after each temporary repository is initialized, and added local-scope assertions without weakening strict cleanup.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
+- Reviewer 1: Confirmed the CI traceback matches a detached Git maintenance cleanup race, required `--local` assertions to avoid inherited-config false confidence, and reported PASS after the correction with 24/24 tests.
 - Reviewer 2: waived: one-file deterministic test-fixture correction after exact CI traceback and official Git configuration confirmation
 
 Fixer:
-- TBD
+- Tightened both configuration assertions to `git config --local --get`; no retries, sleeps, cleanup suppression, or production checker changes were accepted.
 
 Quality Governor:
-- TBD
+- PASS: verified the one-file allowlist, fixture-only config writes before any commit, valid reviewer waiver, strict cleanup, 24/24 tests, and absence of product, gate, or checker behavior changes.
 
 ## Verifier Evidence
 
 - Command: `python3 scripts/agent/test_check_staged_files.py && make check`
-- Result: TBD
-- Notes: TBD
+- Result: PASS
+- Notes: Independent verifier reproduced Git-index tree `02c74370b056887aa8e29a5614962383474674d8` with exactly one staged path. The allowlist suite passed 24/24 in 10.45s; `make check` passed in about 27s with guard 158/80, formatter 4/4, product detection 5/5, validator 11/11, Ruff, mypy, and Python 4/4. The real index-snapshot pre-commit passed in about 6s with smoke guard 17/7. Static inspection proved both settings are written after fixture init and before any commit, asserted with `--local --get`, while strict `TemporaryDirectory` cleanup remains unchanged. Output explicitly remained partial-scaffold evidence and opened no gate.
 
 ## Failure Queue Items
 

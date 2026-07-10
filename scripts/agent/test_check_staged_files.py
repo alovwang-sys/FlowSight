@@ -41,6 +41,8 @@ class TemporaryGitRepository:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.git("init", "-q")
+        self.git("config", "maintenance.auto", "false")
+        self.git("config", "gc.auto", "0")
         self.git("config", "user.name", "FlowSight Test")
         self.git("config", "user.email", "flowsight@example.invalid")
 
@@ -90,6 +92,16 @@ class TemporaryGitRepository:
 class StagedFileCheckerTests(unittest.TestCase):
     def make_repo(self, temp_dir: str) -> TemporaryGitRepository:
         return TemporaryGitRepository(Path(temp_dir))
+
+    def test_fixture_disables_background_git_maintenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = self.make_repo(temp_dir)
+
+            maintenance = repo.git("config", "--local", "--get", "maintenance.auto")
+            legacy_gc = repo.git("config", "--local", "--get", "gc.auto")
+
+            self.assertEqual("false", maintenance.stdout.strip())
+            self.assertEqual("0", legacy_gc.stdout.strip())
 
     def test_no_active_task_allows_task_record_update(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
