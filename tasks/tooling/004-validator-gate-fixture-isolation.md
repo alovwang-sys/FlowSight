@@ -6,7 +6,7 @@
 task_id: TOOL-004
 release: v1
 task_type: tooling
-status: review
+status: complete
 primary_phase: phase0
 impacted_phases: [phase1, phase4]
 depends_on: [TOOL-003]
