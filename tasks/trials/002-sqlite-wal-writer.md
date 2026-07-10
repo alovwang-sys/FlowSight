@@ -55,6 +55,7 @@ Implement a small single-writer SQLite queue for fake events so FlowSight has a 
 ## Expected Changed Files
 
 - `flowsight/store/writer.py`
+- `flowsight/store/__init__.py`
 - `tests/store/test_wal_writer.py`
 - `docs/agent-facts.tsv`
 
@@ -69,7 +70,7 @@ Implement a small single-writer SQLite queue for fake events so FlowSight has a 
 
 - [ ] SQLite WAL mode is enabled.
 - [ ] SQLite schema versioning exists and rejects databases newer than this writer.
-- [ ] Writes go through one bounded serialized queue with one proven writer identity.
+- [ ] Within one writer instance, writes go through one bounded serialized queue with one proven writer identity; project-scoped singleton ownership remains TRIAL-004 scope.
 - [ ] Concurrent producers can queue and flush 100 fake events with no loss or duplicate.
 - [ ] Close/enqueue races and shutdown flush are covered without sleeps.
 - [ ] Queue-full and injected storage errors are visible to callers and health state, not swallowed.
@@ -97,6 +98,7 @@ targeted WAL writer test and shared checks passed
 
 - Queue tests may pass without proving serialization.
 - Shutdown behavior can be flaky if tests rely on sleeps.
+- This trial proves one connection/thread per writer instance; TRIAL-004 proves only one project-scoped sidecar creates that writer.
 
 ## Reviewer Focus
 
