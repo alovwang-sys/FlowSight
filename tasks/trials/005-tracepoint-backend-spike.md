@@ -6,7 +6,7 @@
 task_id: TRIAL-005
 release: v1
 task_type: spike
-status: planned
+status: in_progress
 primary_phase: phase4
 impacted_phases: []
 depends_on: [TRIAL-003]
