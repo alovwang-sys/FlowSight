@@ -6,7 +6,7 @@
 task_id: TRIAL-003
 release: v1
 task_type: safety
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: [phase1, phase3, phase4]
 depends_on: [TRIAL-001]
@@ -74,12 +74,12 @@ Implement the shared pre-queue safe summary and redaction primitive for every fu
 
 ## Acceptance Criteria
 
-- [ ] Secret-like names/paths cover password/passwd/pwd, token/access_token/refresh_token, secret/key/api_key, cookie/session, and auth/credential shapes; string contents cover bearer/JWT and the MVP-design PII patterns.
-- [ ] Query, header, SQL, exception, args, return, span-event, and snapshot payload shapes all pass through the same pre-queue primitive in tests.
-- [ ] Depth, element-count, per-value, per-summary and total payload limits are deterministic.
-- [ ] Exact built-in primitives/containers are supported; subclasses and unknown objects produce a type-only placeholder.
-- [ ] Malicious `__repr__`, property, iterator, `__getattribute__`, and custom serializer fixtures prove user code is not called.
-- [ ] Raw objects and unredacted originals do not remain in the returned result or retained state.
+- [x] Secret-like names/paths cover password/passwd/pwd, token/access_token/refresh_token, secret/key/api_key, cookie/session, and auth/credential shapes; string contents cover bearer/JWT and the MVP-design PII patterns.
+- [x] Query, header, SQL, exception, args, return, span-event, and snapshot payload shapes all pass through the same pre-queue primitive in tests.
+- [x] Depth, element-count, per-value, per-summary and total payload limits are deterministic.
+- [x] Exact built-in primitives/containers are supported; subclasses and unknown objects produce a type-only placeholder.
+- [x] Malicious `__repr__`, property, iterator, `__getattribute__`, and custom serializer fixtures prove user code is not called.
+- [x] Raw objects and unredacted originals do not remain in the returned result or retained state.
 
 ## No-Test Reason
 
@@ -111,26 +111,32 @@ targeted safe-summary test and shared checks passed
 - Does it call properties or methods with side effects?
 - Does it overstate tracepoint support?
 
+## Safety Result
+
+- Decision: go.
+- Supported boundary: an exact built-in payload dict is converted to an immutable, size-bounded JSON envelope; only exact built-ins are expanded, unknown/subclass values are type-only, and no payload or reachable-object protocol is dispatched.
+- This result does not implement or claim OTel ingest, persistence integration, or tracepoints.
+
 ## Role Outputs
 
 Implementer:
-- TBD
+- Added the shared pre-queue JSON envelope with name/path/content redaction, exact-built-in traversal, fail-open fixed placeholders, cycle handling, and test-frozen limits of depth 3, 50 items per container, 200 total items, 1KB per value, 4KB per top-level summary, and 16KB total.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: Reproduced hostile metaclass descriptor execution, sensitive key/type metadata leaks, unbounded type-label allocation, audited `id()` calls, and concurrent-mutation exceptions; all were fixed with cached built-in descriptors, sanitized metadata, identity reference stacks, and fixed fail-open envelopes.
+- Reviewer 2: Found empty-signature JWT/JWE and secret-like type-name false negatives plus coupled limit assertions; dedicated compact-token patterns, type-name checks, and isolated exact-boundary tests closed every finding. Re-review approved 78 targeted tests.
 
 Fixer:
-- TBD
+- Applied all accepted findings without broadening scope, made content matches redact whole strings, bounded every report and serialized envelope, removed raw references in `finally`, and added regression tests for every discovered attack path.
 
 Quality Governor:
-- TBD
+- Approved the four-path Phase 0 safety slice after both blocker fixes: allowed paths only, no OTel/tracepoint/storage integration, command-backed FS-018/FS-019/FS-021/FS-029 evidence, and no new global rule or failure-queue item required.
 
 ## Verifier Evidence
 
-- Command: `make check`
-- Result: TBD
-- Notes: TBD
+- Command: `python -m pytest tests/security/test_safe_summary.py`; `make check`
+- Result: PASS
+- Notes: Independent verification of commit `01beb2c5191abb045f180563192b02c6f4181976` passed 78 targeted tests and 97 full product tests on CPython 3.13.5; formatting, lint, mypy, and all agent checks passed. Output correctly remained partial-scaffold rather than Phase 0 evidence; phase1 and phase4 gates still require TRIAL-004/TRIAL-005 decisions and their remaining facts.
 
 ## Failure Queue Items
 
