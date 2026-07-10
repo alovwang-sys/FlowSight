@@ -6,7 +6,7 @@
 task_id: TOOL-003
 release: v1
 task_type: tooling
-status: review
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [TOOL-002]
@@ -111,7 +111,7 @@ Quality Governor:
 
 - Command: `python3 scripts/agent/test_check_staged_files.py && make check`
 - Result: PASS
-- Notes: Independent verifier reproduced Git-index tree `02c74370b056887aa8e29a5614962383474674d8` with exactly one staged path. The allowlist suite passed 24/24 in 10.45s; `make check` passed in about 27s with guard 158/80, formatter 4/4, product detection 5/5, validator 11/11, Ruff, mypy, and Python 4/4. The real index-snapshot pre-commit passed in about 6s with smoke guard 17/7. Static inspection proved both settings are written after fixture init and before any commit, asserted with `--local --get`, while strict `TemporaryDirectory` cleanup remains unchanged. Output explicitly remained partial-scaffold evidence and opened no gate.
+- Notes: Independent verifier reproduced Git-index tree `02c74370b056887aa8e29a5614962383474674d8` with exactly one staged path. The allowlist suite passed 24/24 in 10.45s; `make check` passed in about 27s with guard 158/80, formatter 4/4, product detection 5/5, validator 11/11, Ruff, mypy, and Python 4/4. The real index-snapshot pre-commit passed in about 6s with smoke guard 17/7. Static inspection proved both settings are written after fixture init and before any commit, asserted with `--local --get`, while strict `TemporaryDirectory` cleanup remains unchanged. GitHub Actions run 29062640572 passed all four Ubuntu/macOS × CPython 3.12/3.13 jobs for implementation commit `0e899f3e5783310c9109c46b4196d6413ca77251`, including the Ubuntu/Python 3.12 combination that exposed the cleanup race. Output explicitly remained partial-scaffold evidence and opened no gate.
 
 ## Failure Queue Items
 
