@@ -2,10 +2,12 @@
 
 ## Decision Status
 
-Final decision: **pending explicit approval of the proposed v1 scope reductions and
-the immutable GitHub Actions matrix**.
+Final decision: **pending the immutable GitHub Actions matrix**.
 
 Local candidate decision: **go with scope reductions**.
+
+Scope approval: **the user explicitly approved all five reductions on
+2026-07-11**.
 
 Candidate backend: **`sys.monitoring` per-code `LINE` events only**. There is no
 `sys.settrace` fallback and no interpreter-wide event mask.
@@ -122,9 +124,9 @@ independently.
 - Snapshot publication and request-scope retirement share a lock, preventing a
   late callback from publishing after request exit.
 
-## Proposed Scope Reductions
+## Approved Scope Reductions
 
-Approval is required before these become the v1 contract:
+The user approved these as the candidate v1 contract on 2026-07-11:
 
 1. Use `sys.monitoring` only; provide no `sys.settrace` fallback.
 2. Support exact non-generator Python sync/coroutine functions and bound Python
@@ -196,9 +198,7 @@ requires explicit scope approval and the repository's macOS/Linux × CPython
 
 ## Final Evidence Still Required
 
-1. Obtain explicit user approval for the five listed scope reductions and
-   record it in the task metadata.
-2. Pass GitHub Actions on macOS and Linux with CPython 3.12 and 3.13 for that
+1. Pass GitHub Actions on macOS and Linux with CPython 3.12 and 3.13 for that
    SHA; record the run URL/ID.
-3. Promote command-backed facts, record the final decision, and
+2. Promote command-backed facts, record the final decision, and
    complete the task/gate evidence only after the matrix passes.

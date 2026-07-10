@@ -13,9 +13,9 @@ depends_on: [TRIAL-003]
 requires_gates: []
 opens_gates: [phase4-tracepoint]
 spike_decision: pending
-scope_reductions: pending
-scope_override: none
-scope_override_approved_by: none
+scope_reductions: sys.monitoring only; exact non-generator sync/coroutine functions and methods; explicitly context-propagated thread-pool work; standard GIL CPython 3.12/3.13 with safe tool ID and frame self-probe; real debugpy/coverage unsupported
+scope_override: v1 tracepoints are limited to the five approved TRIAL-005 reductions recorded in spikes/tracepoint_backend/RESULT.md
+scope_override_approved_by: user on 2026-07-11
 ```
 
 ## Task ID
@@ -156,8 +156,6 @@ Quality Governor:
 
 ## Failure Queue Items
 
-- `TRIAL-005-SCOPE-APPROVAL`: obtain explicit approval for the five reductions
-  listed in `spikes/tracepoint_backend/RESULT.md` and record the approver.
 - `TRIAL-005-CI`: push the immutable candidate only after explicit authorization,
   pass macOS/Linux × CPython 3.12/3.13, and record the run URL/ID.
 - `TRIAL-005-FACT-PROMOTION`: after approval and CI, promote the five Phase 4
