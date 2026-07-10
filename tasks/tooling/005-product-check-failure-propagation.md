@@ -6,7 +6,7 @@
 task_id: TOOL-005
 release: v1
 task_type: tooling
-status: in_progress
+status: review
 primary_phase: phase0
 impacted_phases: [phase1, phase4]
 depends_on: [TOOL-004]
@@ -65,10 +65,10 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] `check-product` returns nonzero when its late Python test command fails.
-- [ ] `check-product-fast` returns nonzero when a Python static command fails.
-- [ ] `test-product` returns nonzero when its Python test command fails.
-- [ ] A gate-style dependent target does not execute after its product-check prerequisite fails.
+- [x] `check-product` returns nonzero when its late Python test command fails.
+- [x] `check-product-fast` returns nonzero when a Python static command fails.
+- [x] `test-product` returns nonzero when its Python test command fails.
+- [x] A gate-style dependent target does not execute after its product-check prerequisite fails.
 - [ ] Existing Python-only/frontend detection cases and full repository checks pass.
 
 ## No-Test Reason
@@ -105,24 +105,39 @@ fixture failures propagate nonzero and all normal repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Primary Codex agent: enabled fail-fast shell behavior in all three product
+  recipes and added fixture coverage for each failure position plus a dependent
+  gate recipe.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: independent replay proved the old Makefile failed exactly four
+  new regressions and found no P0/P1 implementation defect; one P2 inherited
+  `FAIL_MODULE` isolation defect was accepted.
+- Reviewer 2: waived: this narrow Makefile correction was independently
+  replayed against both pre-fix and fixed recipes with focused fixture coverage.
 
 Fixer:
-- TBD
+- Primary Codex agent: scrubbed inherited `FAIL_MODULE` state before each
+  fixture case; all seven product-detection cases then passed.
 
 Quality Governor:
-- TBD
+- Primary Codex agent: confirmed the change stays in the tool-neutral Makefile
+  and shared fixture, changes no gate/fact state, and remains inside the
+  committed TOOL-005 allowlist.
 
 ## Verifier Evidence
 
-- Command: `python3 scripts/agent/test_product_detection.py && make check`
-- Result: pending
-- Notes: task activated after the masked pytest failure was reproduced
+- Command: `python3 scripts/agent/test_product_detection.py`; `make check-fast`;
+  `make check`
+- Result: focused fixture and fast repository checks passed; full repository
+  check correctly returned nonzero at the existing TRIAL-005 performance guard
+- Notes: 7/7 fixture tests passed. The old Makefile replay failed exactly four
+  new regressions. The fixed `make check` reached 216 passed/1 failed and exited
+  at `check-product` with `Error 1`, rather than continuing to a gate. Final
+  completion remains pending a separately scoped Phase 4 benchmark fix and a
+  clean full repository run.
 
 ## Failure Queue Items
 
-- none
+- Pending Phase 4 follow-up: frozen TRIAL-005 benchmark intermittently reports
+  `performance_budget.passed == false` during the full 217-test suite.

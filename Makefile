@@ -24,7 +24,8 @@ check-fast: validate-agent-system test-hooks-fast test-formatter test-validator 
 check-agent: validate-agent-system test-agent
 
 check-product:
-	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
+	@set -e; \
+	if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
 		echo "[pre-scaffold] no product source exists; this is NOT phase or release evidence"; \
 	else \
 		has_python=0; has_frontend=0; \
@@ -57,7 +58,8 @@ check-product:
 	fi
 
 check-product-fast:
-	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
+	@set -e; \
+	if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
 		echo "[pre-scaffold] no product source exists; fast check is agent-system evidence only"; \
 	else \
 		if [ -e tests ] || [ -e pyproject.toml ] || find flowsight -type f -name '*.py' -print -quit 2>/dev/null | grep -q .; then \
@@ -78,7 +80,8 @@ test: test-agent test-product
 test-agent: test-hooks test-formatter test-allowlist test-product-detection test-validator
 
 test-product:
-	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
+	@set -e; \
+	if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
 		echo "[pre-scaffold] product tests unavailable"; \
 	else \
 		has_python=0; has_frontend=0; \
