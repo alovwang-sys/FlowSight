@@ -6,7 +6,7 @@
 task_id: TRIAL-005
 release: v1
 task_type: spike
-status: review
+status: complete
 primary_phase: phase4
 impacted_phases: []
 depends_on: [TRIAL-003]
@@ -143,15 +143,16 @@ Quality Governor:
 ## Verifier Evidence
 
 - Commit: `9f195d33ba77f11bde103b91ba94fe5872c73591`
-- Commands: `.venv/bin/python -m pytest tests/spikes/test_tracepoint_backend.py`;
+- Command: `.venv/bin/python -m pytest tests/spikes/test_tracepoint_backend.py`;
   `/tmp/flowsight-trial004-py312/bin/python -m pytest tests/spikes/test_tracepoint_backend.py`;
   `make check`; `make gate-phase4`
-- Result: CPython 3.13.5 and 3.12.11 each passed 31 focused tests and produced
+- Result: passed
+- Notes: CPython 3.13.5 and 3.12.11 each passed 31 focused tests and produced
   digest `sha256:3993fd75a45b1e14be3e04d56534928cadc928a92dce5af6473398e5c14c30e9`;
   immutable `make check` passed all agent/static checks and 217 tests. GitHub
   Actions run `29114712575` passed Ubuntu/macOS × CPython 3.12/3.13 on commit
-  `d5893e3d09ccb9a9a9c3399fa649129664d38c3f`.
-- Notes: the user approved all five scope reductions. The final decision is
+  `d5893e3d09ccb9a9a9c3399fa649129664d38c3f`. The user approved all five scope
+  reductions. The final decision is
   `go-with-scope-reductions`; FS-015/016/017/020/033 now use command-backed
   TRIAL-005 evidence. A control-plane-only completion commit and final gate run
   remain.
