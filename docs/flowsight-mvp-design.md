@@ -409,7 +409,7 @@ updated_at
 - 只支持**指定变量名**，不支持任意 Python 表达式。
 - 绑定的 CodeNode 漂移（`location_hash` 变化）时置 `stale`，需用户重新确认后才继续命中（见 5.1）。
 
-后端实现的语义边界见 6.5。TRIAL-005 未给出 go 结论前，任何 backend 和 async 支持都不得标记为稳定；不受支持的函数形态必须在创建 tracepoint 时被明确拒绝。
+后端实现的语义边界见 6.5。TRIAL-005 完成且 `phase4-tracepoint` gate 打开前，任何 backend 和 async 支持都不得标记为稳定；不受支持的函数形态必须在创建 tracepoint 时被明确拒绝。
 
 ### 5.6 Snapshot
 
@@ -629,6 +629,19 @@ def calculate_price(order):
 - 若 async 隔离无法证明，v1 明确拒绝 async tracepoint，但不影响 async 函数的普通 `@trace` span。
 - 若 `sys.monitoring` 无法安全取得目标 frame，只有在受限 `sys.settrace` 方案证明不会越出目标调用范围时才可启用；否则缩小功能，不允许启用全局 trace。
 - 创建 tracepoint 时就校验支持性，不能等请求运行后静默失败。
+
+**TRIAL-005 本地候选结论（尚未完成任务或打开 gate）：** `go-with-scope-reductions`，选择 `sys.monitoring` 的 per-code `LINE` event，global event mask 必须始终为 0；不提供 `sys.settrace` fallback。最终采用前仍需显式批准下列范围收缩，并让同一不可变提交通过 macOS/Linux × CPython 3.12/3.13 CI：
+
+- 仅支持标准 GIL-enabled CPython 3.12/3.13，并要求 generic monitoring tool ID 3/4 至少一个可安全占用；不得抢占 debugger、coverage、profiler、optimizer 或其他 tool。
+- 每次启动必须用真实 local-line event 自检 `sys._getframe(1)` 能取得 callback 对应的精确 frame/code/line；由于 [`sys.monitoring` 的公开 callback 形状](https://docs.python.org/3.13/library/sys.monitoring.html)不提供 frame，自检失败、audit 拒绝、残留 LINE callback、非零 global mask 或 probe/已配置 code 的非零 local mask 时必须 fail closed 且保留外部状态。公开 API 无法枚举无关 code 的 stale local mask，因此支持声明不得扩展到该不可检测情形。
+- 支持通过完整创建校验的 exact Python sync/coroutine function、bound instance/class method 和 static function，包括已验证的 closure free/cell vars、嵌套、递归和并发 coroutine。lambda/comprehension、generator/async-generator、one-line/目标自身 definition-line、不能解析为 exact Python function 的对象和非法直接 spec 在创建时拒绝。code-object-only backend 无法可靠识别所有 nested pure `def`/`class` line；Phase 4 创建 API 仍必须按 5.5 用 source/AST validator 拒绝这些行，不能把 backend 接受误报成产品支持。
+- 线程池只在调用方显式传播 `contextvars` request context 时归属请求；raw/unpropagated executor work 不捕获。即使 context 已复制，request scope 结束后恢复的 task/thread 也必须因 active-token 失效而不捕获。
+- 合成 existing-`sys.settrace` callback 可共存，且 FlowSight 不读写其 slot；这不等于真实 debugpy/coverage 集成已验证，后两者在 v1 tracepoint 支持矩阵中保持 unverified/unsupported。TRIAL-005 的负向重叠实验在 3.12/3.13 都证明 per-coroutine install/restore 会串请求、丢事件并残留 tracer，因此禁止该退化路径。
+- 普通 callback/serializer/sink 错误 fail open 并进入有界 health/drop 计数；`KeyboardInterrupt`/`SystemExit` 等 process-control `BaseException` 不吞掉。完整 start/stop lifecycle 串行化；shutdown 依次关闭 callback admission、停 local events、bounded drain 已进入 callback、注销 callback、释放 tool ID，timeout 可重试，并发 stop 必须幂等。
+
+候选 Phase 4 spike regression budget 由 digest `sha256:3993fd75a45b1e14be3e04d56534928cadc928a92dce5af6473398e5c14c30e9` 固定并在每个支持矩阵 job 执行：unconfigured-code median/p95 paired ratio 分别不得超过 1.15×/1.75×；configured-but-unscoped median/p95 分别不得超过 15µs/25µs；captured-hit median/p95 分别不得超过 200µs/300µs。该预算是单 callback/hit 的 spike regression guard，不是 Phase 5 的 10ms request SLA，不覆盖 production queue/transport，也不得按 hit limit 相乘解释为 request 预算。绝对阈值只有在不可变 macOS/Linux × 3.12/3.13 CI 全通过后才成为已接受预算；放宽阈值必须改变 digest 并单独 review。最终 digest 同步记录在 `spikes/tracepoint_backend/RESULT.md`，工作树变动期间不得从设计文字推断旧 digest 仍有效。
+
+候选支持矩阵、负向证据、benchmark digest 与原始统计记录在 `spikes/tracepoint_backend/RESULT.md`。这段候选记录不是 Phase 4 acceptance；只有任务卡的批准、review、不可变 SHA、CI 和 command-backed fact evidence 全部完成后才可把该 backend 标记为稳定。
 
 ### 6.6 数据谱系采集（v1.1 experimental）
 
