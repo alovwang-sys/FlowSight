@@ -6,7 +6,7 @@
 task_id: TOOL-002
 release: v1
 task_type: tooling
-status: review
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [TOOL-001, TRIAL-001]
@@ -134,7 +134,7 @@ Quality Governor:
 
 - Command: `python3 scripts/agent/test_product_detection.py && python3 scripts/agent/test_pre_bash_guard.py && make check`
 - Result: PASS
-- Notes: Independent verifier froze Git-index tree `43aa71a5b1779ac5115570d30cde82e0c518f6ac` with exactly seven staged paths and reproduced it in an isolated repository. Product detection passed 5/5 in 2.70s with a physical ignored `ui/node_modules` fixture and zero Git-visible UI paths; guard passed 158 deny/80 allow in 14.06s; `make check` passed in 29.98s with formatter 4/4, allowlist 23/23, validator 11/11, Ruff, mypy, and Python 4/4. The real pre-commit passed in 6.48s with guard smoke 17/7. An unstaged fatal Makefile poison broke direct `make check-fast` but not the index-snapshot hook, proving worktree edits did not influence evidence. Output explicitly remained partial-scaffold evidence and did not open a Phase gate.
+- Notes: Independent verifier froze Git-index tree `43aa71a5b1779ac5115570d30cde82e0c518f6ac` with exactly seven staged paths and reproduced it in an isolated repository. Product detection passed 5/5 in 2.70s with a physical ignored `ui/node_modules` fixture and zero Git-visible UI paths; guard passed 158 deny/80 allow in 14.06s; `make check` passed in 29.98s with formatter 4/4, allowlist 23/23, validator 11/11, Ruff, mypy, and Python 4/4. The real pre-commit passed in 6.48s with guard smoke 17/7. An unstaged fatal Makefile poison broke direct `make check-fast` but not the index-snapshot hook, proving worktree edits did not influence evidence. GitHub Actions run 29061996670 passed all four Ubuntu/macOS × CPython 3.12/3.13 jobs for implementation commit `8818bb2a4aa624243afcd34021dd43fb3e10768d`. Output explicitly remained partial-scaffold evidence and did not open a Phase gate.
 
 ## Failure Queue Items
 
