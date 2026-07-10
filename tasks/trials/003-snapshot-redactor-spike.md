@@ -6,7 +6,7 @@
 task_id: TRIAL-003
 release: v1
 task_type: safety
-status: planned
+status: in_progress
 primary_phase: phase0
 impacted_phases: [phase1, phase3, phase4]
 depends_on: [TRIAL-001]
@@ -59,6 +59,7 @@ Implement the shared pre-queue safe summary and redaction primitive for every fu
 ## Expected Changed Files
 
 - `flowsight/security/safe_summary.py`
+- `flowsight/security/__init__.py`
 - `tests/security/test_safe_summary.py`
 - `docs/agent-facts.tsv`
 
@@ -73,7 +74,8 @@ Implement the shared pre-queue safe summary and redaction primitive for every fu
 
 ## Acceptance Criteria
 
-- [ ] Secret-like names/paths and token-like values cover password, token, secret, cookie, session, auth/credential and API-key shapes.
+- [ ] Secret-like names/paths cover password/passwd/pwd, token/access_token/refresh_token, secret/key/api_key, cookie/session, and auth/credential shapes; string contents cover bearer/JWT and the MVP-design PII patterns.
+- [ ] Query, header, SQL, exception, args, return, span-event, and snapshot payload shapes all pass through the same pre-queue primitive in tests.
 - [ ] Depth, element-count, per-value, per-summary and total payload limits are deterministic.
 - [ ] Exact built-in primitives/containers are supported; subclasses and unknown objects produce a type-only placeholder.
 - [ ] Malicious `__repr__`, property, iterator, `__getattribute__`, and custom serializer fixtures prove user code is not called.
