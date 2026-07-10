@@ -6,7 +6,7 @@
 task_id: TOOL-005
 release: v1
 task_type: tooling
-status: review
+status: blocked
 primary_phase: phase0
 impacted_phases: [phase1, phase4]
 depends_on: [TOOL-004]
@@ -134,10 +134,10 @@ Quality Governor:
 - Notes: 7/7 fixture tests passed. The old Makefile replay failed exactly four
   new regressions. The fixed `make check` reached 216 passed/1 failed and exited
   at `check-product` with `Error 1`, rather than continuing to a gate. Final
-  completion remains pending a separately scoped Phase 4 benchmark fix and a
-  clean full repository run.
+  completion is blocked by PERF-001, the separately scoped Phase 4 benchmark
+  fix, and then a clean full repository run.
 
 ## Failure Queue Items
 
-- Pending Phase 4 follow-up: frozen TRIAL-005 benchmark intermittently reports
-  `performance_budget.passed == false` during the full 217-test suite.
+- PERF-001: the frozen TRIAL-005 benchmark uses scheduler-sensitive absolute
+  wall time for four checks and fails under sustained host contention.
