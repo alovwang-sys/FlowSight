@@ -6,7 +6,7 @@
 task_id: TOOL-002
 release: v1
 task_type: tooling
-status: in_progress
+status: review
 primary_phase: phase0
 impacted_phases: []
 depends_on: [TOOL-001, TRIAL-001]
@@ -75,13 +75,13 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] `make check` passes on the Python-only `main` checkout when `ui/` contains only ignored artifacts such as `ui/node_modules`.
-- [ ] A non-ignored file under `ui/` still activates frontend scaffold validation and fails clearly when the root manifests are absent.
-- [ ] Product-side detection uses Git's tracked/non-ignored view rather than bare directory existence in check, fast-check, and product-test paths.
-- [ ] The guard rejects `xargs` as opaque stdin-driven command construction instead of claiming to parse its dynamic inputs.
-- [ ] The guard rejects force-push intent through `-f`, `--force`, abbreviations, force-with-lease, `+refspec`, and mirror forms while allowing ordinary push and `--no-force`.
-- [ ] Regression tests cover the new denials, safe controls, and ignored-only frontend checkout.
-- [ ] Documentation names interpreter/build-tool execution as a deliberate residual boundary and does not imply that CI can undo destructive commands.
+- [x] `make check` passes on the Python-only `main` checkout when `ui/` contains only ignored artifacts such as `ui/node_modules`.
+- [x] A non-ignored file under `ui/` still activates frontend scaffold validation and fails clearly when the root manifests are absent.
+- [x] Product-side detection uses Git's tracked/non-ignored view rather than bare directory existence in check, fast-check, and product-test paths.
+- [x] The guard rejects `xargs` as opaque stdin-driven command construction instead of claiming to parse its dynamic inputs.
+- [x] The guard rejects force-push intent through `-f`, `--force`, abbreviations, force-with-lease, `+refspec`, and mirror forms while allowing ordinary push and `--no-force`.
+- [x] Regression tests cover the new denials, safe controls, and ignored-only frontend checkout.
+- [x] Documentation names interpreter/build-tool execution as a deliberate residual boundary and does not imply that CI can undo destructive commands.
 
 ## No-Test Reason
 
@@ -118,23 +118,23 @@ ignored-only frontend artifacts do not activate frontend checks; direct guard re
 ## Role Outputs
 
 Implementer:
-- TBD
+- Replaced bare `ui/` existence checks with one tracked/non-ignored detector plus a non-Git fail-closed fallback; added five temporary-repository behavior tests; blocked direct/recognized-wrapper xargs and forced Git ref rewrites while documenting the interpreter boundary.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: Found the `-ofoo` push-option false positive and config-env/nonzero/signed mirror bypasses; after fixes, re-ran all reproductions plus safe controls and reported PASS with no remaining P0/P1.
+- Reviewer 2: Found config-driven mirror/refspec bypasses, missing `-t` parsing, non-Git UI detection, and over-broad xargs wording; all accepted findings were fixed, exact pre-commit/index checks passed, and final review reported PASS.
 
 Fixer:
-- TBD
+- Added push-aware option/value parsing, direct and persistent `remote.*.mirror/push` protection including opaque `--config-env`, explicit safe controls, Git-aware/fail-closed product detection, and precise residual-boundary documentation without scanning interpreter source or changing reset policy.
 
 Quality Governor:
-- TBD
+- PASS: confirmed the seven-path Phase 0 tooling slice stays inside the allowlist and tool-neutral control plane, closes every reviewer finding with positive/negative tests, keeps the five integration tests out of `check-fast`, accurately documents residual interpreter/reset boundaries, and opens no product gate. No P0/P1/P2 remained.
 
 ## Verifier Evidence
 
 - Command: `python3 scripts/agent/test_product_detection.py && python3 scripts/agent/test_pre_bash_guard.py && make check`
-- Result: TBD
-- Notes: TBD
+- Result: PASS
+- Notes: Independent verifier froze Git-index tree `43aa71a5b1779ac5115570d30cde82e0c518f6ac` with exactly seven staged paths and reproduced it in an isolated repository. Product detection passed 5/5 in 2.70s with a physical ignored `ui/node_modules` fixture and zero Git-visible UI paths; guard passed 158 deny/80 allow in 14.06s; `make check` passed in 29.98s with formatter 4/4, allowlist 23/23, validator 11/11, Ruff, mypy, and Python 4/4. The real pre-commit passed in 6.48s with guard smoke 17/7. An unstaged fatal Makefile poison broke direct `make check-fast` but not the index-snapshot hook, proving worktree edits did not influence evidence. Output explicitly remained partial-scaffold evidence and did not open a Phase gate.
 
 ## Failure Queue Items
 

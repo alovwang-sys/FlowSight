@@ -1,6 +1,18 @@
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
-.PHONY: check check-fast check-agent check-product check-product-fast check-staged-files test test-agent test-product validate-agent-system test-hooks test-hooks-fast test-formatter test-allowlist test-validator gate-phase0 gate-phase1 gate-phase4 init guard
+# A frontend scaffold exists when either root manifest exists or Git can see a
+# tracked/non-ignored untracked path under ui/. Outside a usable Git worktree,
+# fall back to the physical ui path so source archives fail closed; ignored
+# dependency/tool caches remain invisible in a normal Git checkout.
+FRONTEND_PRESENT = test -e package.json || test -e package-lock.json || { \
+	if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+		if visible_ui=$$(git ls-files --cached --others --exclude-standard -- ui 2>/dev/null); then test -n "$$visible_ui"; else test -e ui; fi; \
+	else \
+		test -e ui; \
+	fi; \
+}
+
+.PHONY: check check-fast check-agent check-product check-product-fast check-staged-files test test-agent test-product validate-agent-system test-hooks test-hooks-fast test-formatter test-allowlist test-product-detection test-validator gate-phase0 gate-phase1 gate-phase4 init guard
 
 check: check-agent check-product
 
@@ -12,12 +24,12 @@ check-fast: validate-agent-system test-hooks-fast test-formatter test-validator 
 check-agent: validate-agent-system test-agent
 
 check-product:
-	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && [ ! -e ui ] && [ ! -e package.json ] && [ ! -e package-lock.json ]; then \
+	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
 		echo "[pre-scaffold] no product source exists; this is NOT phase or release evidence"; \
 	else \
 		has_python=0; has_frontend=0; \
 		if [ -e tests ] || [ -e pyproject.toml ] || find flowsight -type f -name '*.py' -print -quit 2>/dev/null | grep -q .; then has_python=1; fi; \
-		if [ -e ui ] || [ -e package.json ] || [ -e package-lock.json ]; then has_frontend=1; fi; \
+		if { $(FRONTEND_PRESENT); }; then has_frontend=1; fi; \
 		if [ "$$has_python" -eq 1 ]; then \
 			test -d flowsight && test -d tests && test -f pyproject.toml || { echo "partial Python scaffold: flowsight/, tests/, and pyproject.toml are all required" >&2; exit 1; }; \
 			test -d examples || { echo "Python scaffold requires examples/" >&2; exit 1; }; \
@@ -45,7 +57,7 @@ check-product:
 	fi
 
 check-product-fast:
-	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && [ ! -e ui ] && [ ! -e package.json ] && [ ! -e package-lock.json ]; then \
+	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
 		echo "[pre-scaffold] no product source exists; fast check is agent-system evidence only"; \
 	else \
 		if [ -e tests ] || [ -e pyproject.toml ] || find flowsight -type f -name '*.py' -print -quit 2>/dev/null | grep -q .; then \
@@ -55,7 +67,7 @@ check-product-fast:
 			$(PYTHON) -m ruff check flowsight examples tests; \
 			$(PYTHON) -m mypy flowsight; \
 		fi; \
-		if [ -e ui ] || [ -e package.json ] || [ -e package-lock.json ]; then \
+		if { $(FRONTEND_PRESENT); }; then \
 			test -d ui && test -f package.json && test -f package-lock.json || { echo "frontend scaffold requires ui/, package.json, and package-lock.json" >&2; exit 1; }; \
 			npm run check; \
 		fi; \
@@ -63,15 +75,15 @@ check-product-fast:
 
 test: test-agent test-product
 
-test-agent: test-hooks test-formatter test-allowlist test-validator
+test-agent: test-hooks test-formatter test-allowlist test-product-detection test-validator
 
 test-product:
-	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && [ ! -e ui ] && [ ! -e package.json ] && [ ! -e package-lock.json ]; then \
+	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
 		echo "[pre-scaffold] product tests unavailable"; \
 	else \
 		has_python=0; has_frontend=0; \
 		if [ -e tests ] || [ -e pyproject.toml ] || find flowsight -type f -name '*.py' -print -quit 2>/dev/null | grep -q .; then has_python=1; fi; \
-		if [ -e ui ] || [ -e package.json ] || [ -e package-lock.json ]; then has_frontend=1; fi; \
+		if { $(FRONTEND_PRESENT); }; then has_frontend=1; fi; \
 		if [ "$$has_python" -eq 1 ]; then \
 			test -d flowsight && test -d tests && test -f pyproject.toml || { echo "partial Python scaffold: product tests cannot run" >&2; exit 1; }; \
 			$(PYTHON) -m pytest; \
@@ -96,6 +108,9 @@ test-formatter:
 
 test-allowlist:
 	$(PYTHON) scripts/agent/test_check_staged_files.py
+
+test-product-detection:
+	$(PYTHON) scripts/agent/test_product_detection.py
 
 test-validator:
 	$(PYTHON) scripts/agent/test_validate_agent_system.py

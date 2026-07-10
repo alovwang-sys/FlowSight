@@ -297,8 +297,14 @@ The shared pre-commit hook materializes a temporary `git checkout-index` snapsho
 The pre-command guard is deliberately a conservative static filter, not a
 general shell sandbox. It fails closed for known opaque shell execution,
 destructive Git/filesystem forms, and non-loopback binds on recognized servers,
-but arbitrary interpreters or build tools can still run code. Use the
-stdin-driven `printf '%s\n' '<command>' | make guard` helper for manual checks;
+but arbitrary interpreters or build tools can still run code. It deliberately
+does not inspect source strings passed to commands such as `python -c` or
+`perl -e`; that boundary belongs to the active tool sandbox and review, not a
+brittle source-code substring filter. Direct `xargs` execution, including forms
+reached through the guard's recognized wrappers, is blocked because its final
+argument vector depends on stdin and cannot be reviewed from the shell command
+alone. Use the stdin-driven
+`printf '%s\n' '<command>' | make guard` helper for manual checks;
 do not interpolate a candidate command into a Make variable or JSON string.
 
 Local hooks are bypassable by a human with direct Git access and are not a security boundary. `--no-verify`, changing `core.hooksPath`, or pushing a commit created elsewhere can skip them. Repository policy must therefore require the CI check on a protected branch; review must reject commits that bypassed task scoping even when the full test suite passes.

@@ -113,9 +113,13 @@ commit even if its full `make check` is green.
 The command guard is a conservative static filter for direct shell commands,
 not a general shell sandbox. It rejects known destructive forms, opaque shell
 evaluation, dynamic Git commands, and non-loopback binds for recognized local
-servers. Arbitrary interpreters and build tools can still execute code, so task
-allowlists, review, sandboxing where available, and protected-branch CI remain
-independent controls. To inspect a literal command without shell re-quoting, use
+servers. It intentionally does not parse source strings handed to arbitrary
+interpreters such as `python -c` or `perl -e`; those interpreters and build
+tools can still execute code. Direct `xargs` execution and recognized wrapper
+forms are denied rather than partially parsed. Task allowlists, review,
+sandboxing where available, and protected-branch CI remain independent
+controls. To inspect a literal
+command without shell re-quoting, use
 `printf '%s\n' '<command>' | make guard`.
 
 See `docs/agent-rule-authoring.md` for the step-by-step protocol when adding a

@@ -40,7 +40,18 @@ RUN_WRAPPERS = {"pipenv", "poetry", "uv"}
 SENSITIVE_EXECUTABLES = (
     SHELL_EXECUTABLES
     | SERVER_EXECUTABLES
-    | {"chmod", "command", "env", "exec", "find", "git", "nohup", "rm", "sudo"}
+    | {
+        "chmod",
+        "command",
+        "env",
+        "exec",
+        "find",
+        "git",
+        "nohup",
+        "rm",
+        "sudo",
+        "xargs",
+    }
 )
 GIT_GLOBAL_FLAGS = {
     "--bare",
@@ -489,13 +500,14 @@ def shell_script(args: list[str]) -> str | None:
 
 def git_subcommand_args(
     args: list[str], cwd: Path
-) -> tuple[str, list[str], Path, list[str]] | None:
+) -> tuple[str, list[str], Path, list[str], list[str]] | None:
     if not args or executable_name(args[0]) != "git":
         return None
 
     index = 1
     workdir = cwd
     config_overrides: list[str] = []
+    config_env_keys: list[str] = []
     while index < len(args):
         token = args[index]
         if token == "-C" and index + 1 < len(args):
@@ -522,11 +534,11 @@ def git_subcommand_args(
             index += 1
             continue
         if token == "--config-env" and index + 1 < len(args):
-            config_overrides.append(args[index + 1])
+            config_env_keys.append(args[index + 1].partition("=")[0])
             index += 2
             continue
         if token.startswith("--config-env="):
-            config_overrides.append(token.split("=", 1)[1])
+            config_env_keys.append(token.split("=", 1)[1].partition("=")[0])
             index += 1
             continue
         if token in GIT_GLOBAL_OPTIONS_WITH_VALUES:
@@ -546,7 +558,7 @@ def git_subcommand_args(
 
     if index >= len(args):
         return None
-    return args[index], args[index + 1 :], workdir, config_overrides
+    return args[index], args[index + 1 :], workdir, config_overrides, config_env_keys
 
 
 def dangerous_git_config_override(config: str) -> bool:
@@ -557,6 +569,84 @@ def dangerous_git_config_override(config: str) -> bool:
         or key.startswith("include.")
         or key.startswith("includeif.")
     )
+
+
+def remote_config_forces_push(key: str, value: str | None) -> bool:
+    match = re.fullmatch(r"remote\..+\.(mirror|push)", key.strip().lower())
+    if match is None:
+        return False
+    if match.group(1) == "mirror":
+        return value is None or value.strip().lower() not in {"0", "false", "no", "off"}
+    return value is not None and value.lstrip().startswith("+")
+
+
+def git_config_override_forces_push(config: str) -> bool:
+    key, separator, value = config.partition("=")
+    return remote_config_forces_push(key, value if separator else None)
+
+
+def git_config_env_may_force_push(key: str) -> bool:
+    return re.fullmatch(r"remote\..+\.(mirror|push)", key.strip().lower()) is not None
+
+
+def git_config_write_forces_push(args: list[str]) -> bool:
+    read_actions = {
+        "--get",
+        "--get-all",
+        "--get-color",
+        "--get-colorbool",
+        "--get-regexp",
+        "--get-urlmatch",
+        "--list",
+        "-l",
+        "get",
+        "list",
+    }
+    non_force_actions = {
+        "--edit",
+        "--remove-section",
+        "--rename-section",
+        "--unset",
+        "--unset-all",
+        "edit",
+        "remove-section",
+        "rename-section",
+        "unset",
+    }
+    write_actions = {"--add", "--replace-all", "set"}
+    options_with_values = {"--blob", "--comment", "--file", "--type", "-f", "-t"}
+    positionals: list[str] = []
+    parse_options = True
+    index = 0
+
+    while index < len(args):
+        token = args[index]
+        if parse_options and token == "--":
+            parse_options = False
+            index += 1
+            continue
+        if parse_options and token in read_actions:
+            return False
+        if parse_options and token in non_force_actions:
+            return False
+        if parse_options and token in write_actions:
+            index += 1
+            continue
+        if parse_options and token in options_with_values:
+            index += 2
+            continue
+        if parse_options and token.startswith(("--blob=", "--file=", "--type=")):
+            index += 1
+            continue
+        if parse_options and token.startswith("-") and not positionals:
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+
+    if len(positionals) < 2:
+        return False
+    return remote_config_forces_push(positionals[0], positionals[1])
 
 
 def git_environment_changes_config(assignments: dict[str, str]) -> bool:
@@ -650,6 +740,69 @@ def commit_skips_hooks(args: list[str]) -> bool:
             if option in options_with_attached_values:
                 break
     return False
+
+
+def push_forces_remote_update(args: list[str]) -> bool:
+    force_options = ("--force", "--force-with-lease", "--mirror")
+    long_options_with_values = (
+        "--exec",
+        "--push-option",
+        "--receive-pack",
+        "--recurse-submodules",
+        "--repo",
+    )
+    positionals: list[str] = []
+    repository_from_option = False
+    parse_options = True
+    index = 0
+
+    while index < len(args):
+        token = args[index]
+        if parse_options and token == "--":
+            parse_options = False
+            index += 1
+            continue
+
+        if parse_options and token.startswith("--"):
+            if any(long_option_matches(token, option) for option in force_options):
+                return True
+
+            value_option = next(
+                (
+                    option
+                    for option in long_options_with_values
+                    if long_option_matches(token, option)
+                ),
+                None,
+            )
+            if value_option is not None:
+                repository_from_option = repository_from_option or value_option == "--repo"
+                index += 1 if "=" in token else 2
+                continue
+
+            index += 1
+            continue
+
+        if parse_options and token.startswith("-") and token != "-":
+            cluster = token[1:]
+            option_index = 0
+            while option_index < len(cluster):
+                option = cluster[option_index]
+                if option == "o":
+                    index += 2 if option_index == len(cluster) - 1 else 1
+                    break
+                if option == "f":
+                    return True
+                option_index += 1
+            else:
+                index += 1
+            continue
+
+        positionals.append(token)
+        index += 1
+
+    refspecs = positionals if repository_from_option else positionals[1:]
+    return any(refspec.startswith("+") and len(refspec) > 1 for refspec in refspecs)
 
 
 def looks_like_checkout_path(token: str, cwd: Path) -> bool:
@@ -977,6 +1130,9 @@ def inspect_command(command: str, cwd: Path, depth: int = 0) -> None:
         if executable_name(normalized[0]) in {"builtin", "enable", "eval", "source", "."}:
             deny("error: eval/source commands are opaque to the command guard and are blocked for agents.")
 
+        if executable_name(normalized[0]) == "xargs":
+            deny("error: xargs constructs commands from opaque stdin and is blocked for agents.")
+
         nested_script = shell_script(normalized)
         if nested_script is not None:
             inspect_command(nested_script, cwd, depth + 1)
@@ -988,9 +1144,11 @@ def inspect_command(command: str, cwd: Path, depth: int = 0) -> None:
 
         git_parts = git_subcommand_args(normalized, cwd)
         if git_parts:
-            subcommand, rest, git_cwd, config_overrides = git_parts
+            subcommand, rest, git_cwd, config_overrides, config_env_keys = git_parts
             if git_environment_changes_config(assignments) or any(
                 dangerous_git_config_override(config) for config in config_overrides
+            ) or any(
+                dangerous_git_config_override(key) for key in config_env_keys
             ):
                 deny("error: Git config overrides may not replace hooks or define/include aliases.")
             if any(is_dynamic_shell_value(token) for token in normalized):
@@ -999,10 +1157,22 @@ def inspect_command(command: str, cwd: Path, depth: int = 0) -> None:
                 deny("error: Git aliases are opaque to the command guard; spell out the reviewed Git command.")
             if subcommand == "config" and git_config_changes_protected_key(rest):
                 deny("error: changing Git hooks, aliases, or includes is blocked for agents.")
+            if subcommand == "config" and git_config_write_forces_push(rest):
+                deny("error: Git config may not enable forced remote updates for agents.")
             if subcommand == "reset" and any(
                 long_option_matches(token, "--hard") for token in rest
             ):
                 deny("error: 'git reset --hard' is blocked for agents. Ask the user before destructive git operations.")
+            if subcommand == "push" and push_forces_remote_update(rest):
+                deny("error: forced Git pushes are blocked for agents because they can rewrite remote refs.")
+            if subcommand == "push" and any(
+                git_config_override_forces_push(config) for config in config_overrides
+            ):
+                deny("error: Git config overrides may not enable forced remote updates for agents.")
+            if subcommand == "push" and any(
+                git_config_env_may_force_push(key) for key in config_env_keys
+            ):
+                deny("error: opaque Git config environment values may not control forced remote updates for agents.")
             if subcommand == "clean":
                 deny("error: 'git clean' is blocked for agents. Ask the user before destructive git operations.")
             if subcommand == "stash":
