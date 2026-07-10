@@ -6,7 +6,7 @@
 task_id: TRIAL-004
 release: v1
 task_type: spike
-status: planned
+status: in_progress
 primary_phase: phase0
 impacted_phases: [phase1, phase3]
 depends_on: [TRIAL-001, TRIAL-002, TRIAL-003]
@@ -66,6 +66,7 @@ The current task card and its verifier evidence are always writable control-plan
 ## Expected Changed Files
 
 - `spikes/sidecar_otel/`
+- `spikes/sidecar_otel/RESULT.md`
 - `tests/spikes/test_sidecar_otel_lifecycle.py`
 - `docs/flowsight-mvp-design.md`
 - `docs/agent-facts.tsv`
