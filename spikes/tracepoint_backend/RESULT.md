@@ -2,22 +2,20 @@
 
 ## Decision Status
 
-Final decision: **pending the immutable GitHub Actions matrix**.
-
-Local candidate decision: **go with scope reductions**.
+Final decision: **go with the five approved scope reductions**.
 
 Scope approval: **the user explicitly approved all five reductions on
 2026-07-11**.
 
-Candidate backend: **`sys.monitoring` per-code `LINE` events only**. There is no
+Selected backend: **`sys.monitoring` per-code `LINE` events only**. There is no
 `sys.settrace` fallback and no interpreter-wide event mask.
 
 The code in this directory is executable Phase 4 architecture evidence. It is
 not the production tracepoint service, API, or UI.
 
-## Local Candidate Support Matrix
+## Approved v1 Support Matrix
 
-The candidate supports the following only on standard GIL-enabled CPython 3.12
+The approved subset supports the following only on standard GIL-enabled CPython 3.12
 and 3.13, after a startup self-probe succeeds:
 
 | Shape or environment | Candidate result | Evidence boundary |
@@ -101,9 +99,8 @@ in-scope CI job:
 Both local runtimes pass all six checks. These limits are per callback/hit
 regression guards, not the Phase 5 10 ms request SLA, not a production
 queue/transport budget, and not permission to multiply the 300 µs ceiling by
-an arbitrary hit count. Their absolute limits become accepted only if the
-immutable four-job CI matrix passes; any relaxation changes the digest and
-requires separate review.
+an arbitrary hit count. The immutable four-job CI matrix passed these limits.
+Any relaxation changes the digest and requires separate review.
 
 Benchmark suites and evidence runs must execute sequentially on the local host;
 running two timing harnesses concurrently invalidates their absolute metrics.
@@ -174,9 +171,10 @@ These reductions do not affect ordinary OTel spans or explicit
 
 The reviewed implementation is committed at
 `9f195d33ba77f11bde103b91ba94fe5872c73591`. An independent verifier confirmed
-both focused runtimes and immutable `make check` (`217 passed`). The task still
-requires explicit scope approval and the repository's macOS/Linux × CPython
-3.12/3.13 GitHub Actions matrix before completion or gate opening.
+both focused runtimes and immutable `make check` (`217 passed`). Final matrix
+evidence comes from GitHub Actions run `29114712575`, which passed
+Ubuntu/macOS × CPython 3.12/3.13 on
+`d5893e3d09ccb9a9a9c3399fa649129664d38c3f`.
 
 ## Promotion Requirements
 
@@ -196,9 +194,10 @@ requires explicit scope approval and the repository's macOS/Linux × CPython
   filter, or supported Python matrix changes; a changed digest is a different
   benchmark.
 
-## Final Evidence Still Required
+## Final Matrix Evidence
 
-1. Pass GitHub Actions on macOS and Linux with CPython 3.12 and 3.13 for that
-   SHA; record the run URL/ID.
-2. Promote command-backed facts, record the final decision, and
-   complete the task/gate evidence only after the matrix passes.
+- Run: `https://github.com/alovwang-sys/FlowSight/actions/runs/29114712575`
+- Ubuntu 3.12: success, job `86435155825`
+- macOS 3.12: success, job `86435155866`
+- Ubuntu 3.13: success, job `86435155872`
+- macOS 3.13: success, job `86435155880`

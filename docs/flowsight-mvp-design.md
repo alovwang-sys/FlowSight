@@ -196,7 +196,7 @@ Business process                         Local sidecar process
 | 用户级状态目录 | `platformdirs`，project_id 隔离 runtime/data | 复用 |
 | 本地 ingest / storage | `FlowSightSpanProcessor` → SDK sender queue → loopback HTTP → SQLite | **自研核心** |
 | 函数 span | `@flowsight.trace` + `wrapt` | 用 wrapt，不手写脆弱 decorator |
-| 行级 tracepoint | `sys.monitoring` / 受限 `sys.settrace`，由前置 spike 决定支持矩阵 | 技术风险门通过后才实现 |
+| 行级 tracepoint | `sys.monitoring` per-code `LINE` event；无 `sys.settrace` fallback | 只实现 TRIAL-005 批准的支持矩阵 |
 | 静态代码地图 | LibCST 提取结构；grimp 仅提供模块 import edges | 用，函数静态 call edge 不进 v1 |
 | 图 UI | TypeScript + React + React Flow | 用，不从 D3 自搭 |
 | 时间线 | 自建 waterfall，体验参考 VizTracer / Perfetto UI | 自研，仅借鉴 |
@@ -630,7 +630,7 @@ def calculate_price(order):
 - 若 `sys.monitoring` 无法安全取得目标 frame，只有在受限 `sys.settrace` 方案证明不会越出目标调用范围时才可启用；否则缩小功能，不允许启用全局 trace。
 - 创建 tracepoint 时就校验支持性，不能等请求运行后静默失败。
 
-**TRIAL-005 本地候选结论（尚未完成任务或打开 gate）：** `go-with-scope-reductions`，选择 `sys.monitoring` 的 per-code `LINE` event，global event mask 必须始终为 0；不提供 `sys.settrace` fallback。最终采用前仍需显式批准下列范围收缩，并让同一不可变提交通过 macOS/Linux × CPython 3.12/3.13 CI：
+**TRIAL-005 最终结论（2026-07-11）：** `go-with-scope-reductions`，选择 `sys.monitoring` 的 per-code `LINE` event，global event mask 必须始终为 0；不提供 `sys.settrace` fallback。用户已明确批准五项范围收缩，GitHub Actions run `29114712575` 已通过 Ubuntu/macOS × CPython 3.12/3.13：
 
 - 仅支持标准 GIL-enabled CPython 3.12/3.13，并要求 generic monitoring tool ID 3/4 至少一个可安全占用；不得抢占 debugger、coverage、profiler、optimizer 或其他 tool。
 - 每次启动必须用真实 local-line event 自检 `sys._getframe(1)` 能取得 callback 对应的精确 frame/code/line；由于 [`sys.monitoring` 的公开 callback 形状](https://docs.python.org/3.13/library/sys.monitoring.html)不提供 frame，自检失败、audit 拒绝、残留 LINE callback、非零 global mask 或 probe/已配置 code 的非零 local mask 时必须 fail closed 且保留外部状态。公开 API 无法枚举无关 code 的 stale local mask，因此支持声明不得扩展到该不可检测情形。
@@ -639,9 +639,9 @@ def calculate_price(order):
 - 合成 existing-`sys.settrace` callback 可共存，且 FlowSight 不读写其 slot；这不等于真实 debugpy/coverage 集成已验证，后两者在 v1 tracepoint 支持矩阵中保持 unverified/unsupported。TRIAL-005 的负向重叠实验在 3.12/3.13 都证明 per-coroutine install/restore 会串请求、丢事件并残留 tracer，因此禁止该退化路径。
 - 普通 callback/serializer/sink 错误 fail open 并进入有界 health/drop 计数；`KeyboardInterrupt`/`SystemExit` 等 process-control `BaseException` 不吞掉。完整 start/stop lifecycle 串行化；shutdown 依次关闭 callback admission、停 local events、bounded drain 已进入 callback、注销 callback、释放 tool ID，timeout 可重试，并发 stop 必须幂等。
 
-候选 Phase 4 spike regression budget 由 digest `sha256:3993fd75a45b1e14be3e04d56534928cadc928a92dce5af6473398e5c14c30e9` 固定并在每个支持矩阵 job 执行：unconfigured-code median/p95 paired ratio 分别不得超过 1.15×/1.75×；configured-but-unscoped median/p95 分别不得超过 15µs/25µs；captured-hit median/p95 分别不得超过 200µs/300µs。该预算是单 callback/hit 的 spike regression guard，不是 Phase 5 的 10ms request SLA，不覆盖 production queue/transport，也不得按 hit limit 相乘解释为 request 预算。绝对阈值只有在不可变 macOS/Linux × 3.12/3.13 CI 全通过后才成为已接受预算；放宽阈值必须改变 digest 并单独 review。最终 digest 同步记录在 `spikes/tracepoint_backend/RESULT.md`，工作树变动期间不得从设计文字推断旧 digest 仍有效。
+Phase 4 spike regression budget 由 digest `sha256:3993fd75a45b1e14be3e04d56534928cadc928a92dce5af6473398e5c14c30e9` 固定并在每个支持矩阵 job 执行：unconfigured-code median/p95 paired ratio 分别不得超过 1.15×/1.75×；configured-but-unscoped median/p95 分别不得超过 15µs/25µs；captured-hit median/p95 分别不得超过 200µs/300µs。该预算是单 callback/hit 的 spike regression guard，不是 Phase 5 的 10ms request SLA，不覆盖 production queue/transport，也不得按 hit limit 相乘解释为 request 预算。不可变四 job CI 已全部通过，因此这些阈值成为已接受预算；放宽阈值必须改变 digest 并单独 review。最终 digest 同步记录在 `spikes/tracepoint_backend/RESULT.md`。
 
-候选支持矩阵、负向证据、benchmark digest 与原始统计记录在 `spikes/tracepoint_backend/RESULT.md`。这段候选记录不是 Phase 4 acceptance；只有任务卡的批准、review、不可变 SHA、CI 和 command-backed fact evidence 全部完成后才可把该 backend 标记为稳定。
+最终支持矩阵、负向证据、benchmark digest、原始统计和 CI 记录在 `spikes/tracepoint_backend/RESULT.md`。Phase 4 生产实现不得扩展该矩阵；任何新增 backend 或函数形态必须重新经过独立证据与范围批准。
 
 ### 6.6 数据谱系采集（v1.1 experimental）
 
@@ -1125,7 +1125,7 @@ Authorization: Bearer <startup-token>
 
 ### 12.5 依赖选型与不依赖清单
 
-明确 v1 依赖（详见 4.1）：Python/FastAPI、OpenTelemetry、wrapt、LibCST、grimp（仅 import graph）、platformdirs、SQLite、TypeScript/React/React Flow，以及由 TRIAL-005 选定的 `sys.monitoring`/受限 `sys.settrace` backend。NetworkX 只有出现明确图算法需求时才加入，不作为骨架默认依赖。
+明确 v1 依赖（详见 4.1）：Python/FastAPI、OpenTelemetry、wrapt、LibCST、grimp（仅 import graph）、platformdirs、SQLite、TypeScript/React/React Flow，以及由 TRIAL-005 选定的 `sys.monitoring` backend。NetworkX 只有出现明确图算法需求时才加入，不作为骨架默认依赖。
 
 明确 v1 **不依赖**（只借鉴，不作为核心）：
 

@@ -6,13 +6,13 @@
 task_id: TRIAL-005
 release: v1
 task_type: spike
-status: in_progress
+status: review
 primary_phase: phase4
 impacted_phases: []
 depends_on: [TRIAL-003]
 requires_gates: []
 opens_gates: [phase4-tracepoint]
-spike_decision: pending
+spike_decision: go-with-scope-reductions
 scope_reductions: sys.monitoring only; exact non-generator sync/coroutine functions and methods; explicitly context-propagated thread-pool work; standard GIL CPython 3.12/3.13 with safe tool ID and frame self-probe; real debugpy/coverage unsupported
 scope_override: v1 tracepoints are limited to the five approved TRIAL-005 reductions recorded in spikes/tracepoint_backend/RESULT.md
 scope_override_approved_by: user on 2026-07-11
@@ -80,7 +80,7 @@ The current task card and its verifier evidence are always writable control-plan
 - [x] Tests prove before-line semantics, named-vars-only capture, and no capture from unrelated functions or requests.
 - [x] Existing debugger/coverage tracer, enable/disable, cleanup, and monitoring tool-ID conflicts are tested or explicitly rejected with evidence.
 - [x] `sys.monitoring` frame-locals feasibility and any scoped `sys.settrace` isolation are measured with a frozen overhead harness.
-- [ ] Result is exactly a supported backend, a documented narrowed subset, or Phase 4 no-go; the design/facts are updated accordingly.
+- [x] Result is exactly a supported backend, a documented narrowed subset, or Phase 4 no-go; the design/facts are updated accordingly.
 
 ## No-Test Reason
 
@@ -148,15 +148,14 @@ Quality Governor:
   `make check`; `make gate-phase4`
 - Result: CPython 3.13.5 and 3.12.11 each passed 31 focused tests and produced
   digest `sha256:3993fd75a45b1e14be3e04d56534928cadc928a92dce5af6473398e5c14c30e9`;
-  immutable `make check` passed all agent/static checks and 217 tests.
-- Notes: `make gate-phase4` reran 217 tests successfully, then remained closed
-  only on pending TRIAL-005 decision/status and planned FS-015/016/017/020/033
-  evidence. The local candidate is `go-with-scope-reductions`; final decision is
-  not recorded before explicit approval and the immutable four-job CI matrix.
+  immutable `make check` passed all agent/static checks and 217 tests. GitHub
+  Actions run `29114712575` passed Ubuntu/macOS × CPython 3.12/3.13 on commit
+  `d5893e3d09ccb9a9a9c3399fa649129664d38c3f`.
+- Notes: the user approved all five scope reductions. The final decision is
+  `go-with-scope-reductions`; FS-015/016/017/020/033 now use command-backed
+  TRIAL-005 evidence. A control-plane-only completion commit and final gate run
+  remain.
 
 ## Failure Queue Items
 
-- `TRIAL-005-CI`: push the immutable candidate only after explicit authorization,
-  pass macOS/Linux × CPython 3.12/3.13, and record the run URL/ID.
-- `TRIAL-005-FACT-PROMOTION`: after approval and CI, promote the five Phase 4
-  gate facts, record the final decision, complete the card, and rerun the gate.
+- none
