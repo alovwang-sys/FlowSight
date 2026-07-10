@@ -6,7 +6,7 @@
 task_id: TRIAL-002
 release: v1
 task_type: implementation
-status: planned
+status: in_progress
 primary_phase: phase0
 impacted_phases: []
 depends_on: [TRIAL-001]
@@ -48,6 +48,7 @@ Implement a small single-writer SQLite queue for fake events so FlowSight has a 
 
 - `flowsight/store/**`
 - `tests/store/**`
+- `docs/agent-facts.tsv`
 - `pyproject.toml`
 - `Makefile`
 
@@ -55,6 +56,7 @@ Implement a small single-writer SQLite queue for fake events so FlowSight has a 
 
 - `flowsight/store/writer.py`
 - `tests/store/test_wal_writer.py`
+- `docs/agent-facts.tsv`
 
 ## Forbidden
 
@@ -66,10 +68,11 @@ Implement a small single-writer SQLite queue for fake events so FlowSight has a 
 ## Acceptance Criteria
 
 - [ ] SQLite WAL mode is enabled.
+- [ ] SQLite schema versioning exists and rejects databases newer than this writer.
 - [ ] Writes go through one bounded serialized queue with one proven writer identity.
 - [ ] Concurrent producers can queue and flush 100 fake events with no loss or duplicate.
 - [ ] Close/enqueue races and shutdown flush are covered without sleeps.
-- [ ] Storage errors are visible, not swallowed.
+- [ ] Queue-full and injected storage errors are visible to callers and health state, not swallowed.
 
 ## No-Test Reason
 
