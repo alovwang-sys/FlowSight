@@ -293,9 +293,16 @@ canonical child-bootstrap argument tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- Implementation pending. The planned slice is one side-effect-free Phase 0
-  codec with no launcher, descriptor ownership, listener, runtime, or READY
-  behavior.
+- Added one side-effect-free Phase 0 codec for the canonical eight-argument
+  schema, exact runtime-config re-derivation, inert descriptor scalars, bounded
+  filesystem encoding, and an immutable decoded result. The public wrappers
+  normalize every ordinary failure only after deleting all production-frame
+  inputs and status locals; non-`Exception` process control retains identity.
+- Added deterministic round trips, complete lexical/type/range matrices,
+  byte-budget seams, factory/fsencode provenance checks, fixed-error privacy,
+  object-release evidence, and an exact positive AST structure/call boundary.
+  No launcher, CLI, descriptor ownership, listener, state, READY, Uvicorn, SDK,
+  storage, telemetry, or UI behavior was added.
 
 Adversarial Reviewer:
 - Reviewer 1: found an impossible same-path replacement guarantee, an undefined
@@ -307,11 +314,24 @@ Adversarial Reviewer:
   a stale queue README. The revised card freezes order/provenance/errors,
   requires the 9216/9217 seam and Unicode evidence, updates the queue record,
   and received final P0/P1/P2 = 0 and GO.
+- Three implementation reviewers initially found a singleton-input traceback
+  retention bug plus false-green gaps in per-field comparisons, opaque/dynamic
+  AST calls, nested definitions/module caches, captured factory provenance,
+  all-position type/control coverage, nonempty byte-boundary evidence, and
+  partial-candidate release. The wrappers now delete every failure local before
+  the fixed raise; the tests exercise all five exact fields and all eight
+  positions, prove candidate collection, and account for every one of the 111
+  production calls plus exact recursive/top-level structure. All three final
+  reviews reported P0/P1/P2 = 0 and GO.
 
 Fixer:
 - Codex primary accepted every contract finding, kept the simpler ordered
   eight-argument protocol instead of adding JSON parser ambiguity, and expanded
   no product/runtime scope.
+- Codex primary accepted every implementation finding. The only production
+  corrections were failure-frame local deletion and a semantically identical
+  explicit `float.hex` call that makes the static call boundary complete; all
+  other fixes strengthened behavioral and structural regression evidence.
 
 Quality Governor:
 - Independent review confirmed exactly one Phase 0 codec slice, direct
@@ -319,18 +339,29 @@ Quality Governor:
   implementation/test allowlist, and strict separation from launcher, child
   adoption, listener, state, READY, Uvicorn, SDK, storage, OTel, and UI work.
   Final P0/P1/P2 = 0 and GO.
+- The implementation diff remains inside the exact four-file allowlist plus
+  this task card. Exact imports, globals, classes, functions, slot operations,
+  and call counts reject alternate protocols, mutable caches, callbacks,
+  descriptor/process operations, and hidden later-phase behavior.
 
 ## Verifier Evidence
 
-- Command: `.venv/bin/python -m pytest tests/sidecar/test_child_bootstrap.py`
-- Result: contract passed; implementation pending
-- Notes: `scripts/validate_agent_system.py`, `git diff --check`, and JSONL
+- Command: focused child-bootstrap/runtime-config tests; `make test-phase0`;
+  `make check`; `make gate-phase0`; candidate GitHub Actions matrix
+- Result: local verification passed; candidate matrix pending
+- Notes: the final focused suite passed 513 tests and `make test-phase0` passed
+  2,105 tests. `make gate-phase0` ran the complete `make check` path with 2,230
+  passing tests and then passed the
+  `phase0-sustained` gate on local macOS CPython 3.13.5. Ruff format/lint,
+  strict mypy, `scripts/validate_agent_system.py`, `git diff --check`, and JSONL
   parsing passed for the reviewed planned card and FSQ-0001 record. Planned
   contract commit `39af3fe215ed4b767f5c0049f7958594f8158e3d` passed
   [run 29166816747](https://github.com/alovwang-sys/FlowSight/actions/runs/29166816747)
   with jobs `86581228477` (macOS 3.13), `86581228478` (macOS 3.12),
   `86581228485` (Ubuntu 3.13), and `86581228492` (Ubuntu 3.12). This is
-  task-system evidence only, not codec or Phase 0 product acceptance.
+  task-system evidence only, not codec or Phase 0 product acceptance. Candidate
+  implementation matrix evidence will be recorded only after the pushed commit
+  completes successfully on macOS/Linux and CPython 3.12/3.13.
 
 ## Failure Queue Items
 

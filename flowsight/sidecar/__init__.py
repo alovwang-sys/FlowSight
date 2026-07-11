@@ -1,6 +1,12 @@
 """Production sidecar primitives."""
 
 from .app import MAX_PRIVATE_BODY_BYTES, create_sidecar_app
+from .child_bootstrap import (
+    CHILD_BOOTSTRAP_SCHEMA_VERSION,
+    SidecarChildBootstrap,
+    decode_sidecar_child_bootstrap,
+    encode_sidecar_child_bootstrap,
+)
 from .health import probe_sidecar_health
 from .listener import (
     DEFAULT_SIDECAR_PORT,
@@ -57,12 +63,14 @@ __all__ = [
     "MAX_PRIVATE_BODY_BYTES",
     "MAX_STARTUP_SIGNAL_BYTES",
     "MAX_STATE_BYTES",
+    "CHILD_BOOTSTRAP_SCHEMA_VERSION",
     "DEFAULT_SIDECAR_PORT",
     "ListenerBindError",
     "ListenerErrorCode",
     "OwnerLock",
     "OwnerLockError",
     "OwnerLockErrorCode",
+    "SidecarChildBootstrap",
     "SidecarRuntimeConfig",
     "OwnerElectionError",
     "OwnerElectionErrorCode",
@@ -88,7 +96,9 @@ __all__ = [
     "bind_loopback_listener",
     "create_sidecar_app",
     "create_startup_state",
+    "decode_sidecar_child_bootstrap",
     "discover_existing_startup",
+    "encode_sidecar_child_bootstrap",
     "open_startup_channel",
     "probe_sidecar_health",
     "prepare_sidecar_runtime_config",
