@@ -85,6 +85,30 @@ class _OpaqueMalformed:
     def __repr__(self) -> NoReturn:
         self._invoked("repr")
 
+    def __add__(self, other: object) -> NoReturn:
+        del other
+        self._invoked("addition")
+
+    def __radd__(self, other: object) -> NoReturn:
+        del other
+        self._invoked("reflected addition")
+
+    def __sub__(self, other: object) -> NoReturn:
+        del other
+        self._invoked("subtraction")
+
+    def __rsub__(self, other: object) -> NoReturn:
+        del other
+        self._invoked("reflected subtraction")
+
+    def __call__(self, *args: object, **kwargs: object) -> NoReturn:
+        del args, kwargs
+        self._invoked("call")
+
+    def __getattr__(self, name: str) -> NoReturn:
+        del name
+        self._invoked("attribute access")
+
     def __getitem__(self, key: object) -> NoReturn:
         del key
         self._invoked("item access")
@@ -1726,6 +1750,51 @@ def test_production_ast_stays_inside_one_shot_election_boundary() -> None:
     parent_by_id = {
         id(child): parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
     }
+
+    observe_scope = next(
+        function for function in structural_functions if function.name == "_observe_monotonic"
+    )
+    observed_assignments = [
+        node
+        for node in ast.walk(observe_scope)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "observed"
+    ]
+    assert len(observed_assignments) == 1
+    observed_assignment = observed_assignments[0]
+    assert isinstance(observed_assignment.value, ast.Call)
+    assert _attribute_path(observed_assignment.value.func) == "_read_monotonic"
+    assert observed_assignment.value.args == []
+    assert observed_assignment.value.keywords == []
+
+    raw_observed_loads = [
+        node
+        for node in ast.walk(observe_scope)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id == "observed"
+    ]
+    assert raw_observed_loads
+    for node in raw_observed_loads:
+        parent = parent_by_id[id(node)]
+        if isinstance(parent, ast.Call):
+            assert _attribute_path(parent.func) in {"type", "math.isfinite"}
+            assert parent.args == [node]
+            assert parent.keywords == []
+            continue
+        if isinstance(parent, ast.Compare):
+            assert parent.left is node
+            assert len(parent.ops) == 1
+            assert isinstance(parent.ops[0], ast.Lt)
+            assert len(parent.comparators) == 1
+            assert isinstance(parent.comparators[0], ast.Name)
+            assert parent.comparators[0].id == "previous"
+            continue
+        if isinstance(parent, ast.Return):
+            assert parent.value is node
+            continue
+        raise AssertionError("unsafe raw clock observation use")
+
     raw_collaborator_names = {
         "incumbent",
         "candidate",
