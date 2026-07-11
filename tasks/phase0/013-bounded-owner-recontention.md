@@ -49,6 +49,10 @@ incumbent or newly elected owner unchanged.
   returned directly without a second outer admission read, so this wrapper does
   not add a cleanup/revalidation step to the move-only owner transfer. As with
   P0-012, synchronous filesystem/health work is not hard-interruptible.
+- Codex primary, acting as task owner, approved the post-activation wording
+  clarification that only contention with positive remaining budget is admitted
+  to wait, plus the explicit `make check` verification line. This changes no
+  goal, allowed file, observable behavior, phase boundary, or scope override.
 - Source of truth: MVP design section 4.2 and Phase 0, plus TRIAL-004 promotion
   requirements.
 
@@ -131,7 +135,8 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   fixed `OWNER_ELECTION_FAILED`. Every non-`Exception` `BaseException` from the
   clock, election, or wait preserves identity and ends the operation with no
   later clock/election/wait.
-- [ ] Each contention performs one wait of exactly
+- [ ] Each contention admitted to waiting with a positive remaining budget
+  performs one wait of exactly
   `min(0.025, current_remaining)` seconds through the frozen operation. The
   interval is always a positive built-in float. Exact `None` permits another
   retry only when the first post-wait observation proves elapsed monotonic time
@@ -183,6 +188,7 @@ Run:
 ```sh
 .venv/bin/python -m pytest tests/sidecar/test_startup_wait.py
 make test-phase0
+make check
 make gate-phase0
 ```
 
@@ -221,14 +227,22 @@ Implementer:
 - TBD
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: pre-implementation contract review found early-return busy-loop,
+  process-control classification, and consumed-contention exception-chain gaps.
+  After full-interval elapsed, exact `BaseException`, context-isolation, and
+  honest outer-deadline evidence were added, final P0/P1/P2 = 0 and GO.
+- Reviewer 2: implementability review verified exact-error bare re-raise,
+  fixed-error creation outside `except`, checked elapsed subtraction, and direct
+  reuse of the first post-wait budget. Final P0/P1/P2 = 0 and GO.
 
 Fixer:
-- TBD
+- Codex primary accepted all planned-contract findings; none were deferred.
 
 Quality Governor:
-- TBD
+- Pre-implementation scope review confirmed one Phase 0 election-policy slice
+  with no process/runtime/state/SDK expansion. Its two P2 wording/verification
+  findings were task-owner approved and accepted immediately after activation;
+  observable behavior was unchanged. P0/P1 = 0 and GO.
 
 ## Verifier Evidence
 
