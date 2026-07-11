@@ -26,8 +26,8 @@ Phase 0
 
 ## Goal
 
-Normalize one project root into an immutable, non-sensitive scalar sidecar
-configuration before any child handoff or process launch.
+Normalize one project root into an immutable, scalar-only, repr-safe internal
+sidecar configuration before any child handoff or process launch.
 
 ## Context
 
@@ -42,8 +42,7 @@ configuration before any child handoff or process launch.
   database paths. This task may construct one inert `StateStore` to normalize
   the platformdirs root, but it never ensures or touches that directory.
 - The fixed surface is
-  `prepare_sidecar_runtime_config(project_root, *, requested_port=None,
-  startup_timeout=5.0) -> SidecarRuntimeConfig`.
+  `prepare_sidecar_runtime_config(project_root: str | Path, *, requested_port: int | None = None, startup_timeout: float = 5.0) -> SidecarRuntimeConfig`.
 - This task does not change `FlowSight`. A later SDK lifecycle task will map its
   existing `project_root` and `ui_port` inputs to this already-reviewed factory.
 - Source of truth:
@@ -81,7 +80,10 @@ control-plane records; they do not expand the product-code allowlist above.
 - Do not create, chmod, read, publish, remove, repair, or retain a runtime
   directory, state file, lock, database, or other product filesystem object.
   Only strict canonical resolution of the caller's project-root directory and
-  inert P0-001 `StateStore` path normalization are permitted.
+  inert P0-001 `StateStore` path normalization are permitted. The frozen
+  platformdirs query may perform its documented read-only environment/access
+  probes; it must still run with `ensure_exists=False` and create or mutate
+  nothing.
 - Do not inspect incumbent state, decide requested-port compatibility, bind a
   listener, elect/wait for an owner, adopt/close a descriptor, or manufacture a
   startup state.
@@ -90,10 +92,19 @@ control-plane records; they do not expand the product-code allowlist above.
   runtime, or READY protocol.
 - Do not add SQLite/writer/queue/lease/SDK/OTel/reload/shutdown/UI/browser
   behavior or import spike code. Apart from the exact platformdirs pin already
-  selected by the MVP, do not add, remove, or change another dependency.
-- Do not include or expose a token, database/state/lock path, PID, startup ID,
-  final port, deadline, descriptor, process handle, raw exception, or caller
-  path/value in repr, errors, logs, output, callbacks, caches, or side results.
+  selected by this task from the MVP's library choice, do not add, remove, or
+  change another dependency.
+- Apart from the five declared exact scalar fields on a successful
+  `SidecarRuntimeConfig`, do not expose a token, database/state/lock path, PID,
+  startup ID, final port, deadline, descriptor, process handle, raw exception,
+  caller path/value, or runtime path in repr, errors, logs, stdout/stderr,
+  callbacks, caches, or side results. The configuration fields themselves must
+  never be interpolated into repr or an error. An identity-preserved
+  non-`Exception` `BaseException` may retain its caller-supplied payload;
+  production must not inspect, format, print, log, cache, or retain it and must
+  perform no later work.
+  A caller's already-active Python-managed exception context is not an internal
+  disclosure and may remain as described in the acceptance criteria.
 - Do not add a default-port override, public mutable field, public constructor,
   `to_wire`/`from_wire`, serializer, callback, mutable module state, or cache.
 
@@ -112,38 +123,79 @@ control-plane records; they do not expand the product-code allowlist above.
 - [ ] `project_root` accepts only an exact built-in `str` or exact platform
   `Path`. It resolves strictly to an existing directory other than the
   filesystem root; relative, absolute, and symlink aliases of one directory
-  produce the same exact canonical string and project ID. Empty/NUL text,
-  missing paths, files, filesystem roots, derived/duck values, and ordinary
-  resolution failures raise fixed context-free input errors without disclosing
-  the path; process-control errors preserve identity.
+  produce the same exact canonical string and project ID. Before resolution,
+  the exact input's built-in string form, and after resolution the canonical
+  string, must each be nonempty, control-free, at most 4096 characters, and
+  `os.fsencode` to exact built-in bytes of at most 4096 bytes. A wrong input
+  type raises exactly context-free
+  `TypeError("project_root must be an exact built-in str or platform Path")`.
+  Empty/NUL/control text, overlong roots, missing paths, files, filesystem roots
+  (including alternate or symlink aliases), and ordinary resolution failures
+  raise exactly context-free
+  `ValueError("project_root is invalid")`; process-control errors preserve
+  identity.
 - [ ] `project_id` is exactly
-  `project-v1-<sha256(b"flowsight-project-v1\\0" + os.fsencode(canonical_root))>`
+  `project-v1-<sha256(b"flowsight-project-v1\x00" + os.fsencode(canonical_root))>`
   with 64 lowercase hexadecimal digest characters. It contains no raw path and
-  changes for distinct canonical roots.
+  fixed distinct-root fixtures produce their independently expected different
+  digest identities. At least one test fixes the expected hexadecimal digest
+  independently rather than recomputing it through a production helper.
 - [ ] Production captures `platformdirs.user_runtime_path` at import and calls
   it exactly once as `user_runtime_path("flowsight", appauthor=False,
   ensure_exists=False)`. `pyproject.toml` has one exact unmarked runtime pin
   `platformdirs==4.10.0` and no duplicate dev pin. Public attribute replacement
   cannot change direct dispatch; a private seam remains fault injection only.
+- [ ] The platformdirs result must be an exact platform `Path` that is already
+  absolute, is not the filesystem root, has no `..` lexical component, and
+  encodes as nonempty, control-free text of at most 4096 characters and exact
+  built-in bytes of at most 4096 bytes. A relative, root, derived, malformed, or
+  ordinary failed result raises the fixed runtime configuration error with zero
+  `StateStore` construction or later work.
 - [ ] The exact platformdirs `Path` is passed to one canonical P0-001
-  `StateStore` construction with the derived project ID. The config stores that
-  store's exact normalized absolute `runtime_root` as a nonempty, control-free,
-  at-most-4096-character built-in string, never its project-specific
-  `runtime_dir`. No directory is created and no store or `Path` identity is
-  retained. Malformed/ordinary collaborator failure becomes fixed context-free
-  `RuntimeError("sidecar runtime configuration failed")`.
+  `StateStore` construction with the derived project ID and must return an
+  exact `StateStore`. Production reads only that exact instance dictionary
+  through a built-in operation; the `runtime_root` field must be an exact
+  platform `Path`, with no attribute or `__fspath__` dispatch on a malformed
+  value. The config stores its normalized absolute, non-root, `..`-free root as
+  a nonempty, control-free, at-most-4096-character and 4096-fsencoded-byte
+  built-in string, never its project-specific `runtime_dir`. No directory is
+  created and no store or `Path` identity is retained. Malformed/ordinary
+  collaborator failure becomes fixed
+  `RuntimeError("sidecar runtime configuration failed")`. This task trusts the
+  canonical constructor's project-path derivations and validates only the
+  exact result type, exact matching `project_id`, and exact lexical
+  `runtime_root`; it neither inspects nor recomputes runtime-dir, state, lock,
+  mutation-lock, or database paths. Production captures the canonical
+  `StateStore` constructor at import; public attribute replacement cannot
+  redirect it, while a private seam remains fault injection rather than a
+  provenance boundary.
 - [ ] `requested_port` accepts only `None` or an exact built-in `int` in
   `0..65535`; `bool`, subclasses, coercible values, and out-of-range values fail
-  with one fixed preflight error. `None`, `0`, and explicit ports remain
-  distinct scalar values; this task performs no bind or compatibility policy.
+  exactly with context-free `ValueError` whose message is
+  `requested_port must be None or an exact built-in int in 0..65535`. `None`,
+  `0`, and explicit ports remain distinct scalar values; this task performs no
+  bind or compatibility policy.
 - [ ] `startup_timeout` accepts only exact built-in `int`/`float` values that
   are finite, positive, and at most 30 seconds, then stores one exact `float`.
-  It reads no clock and creates no deadline. Port/timeout failures happen
-  before project-root resolution or platformdirs/runtime work.
+  A wrong type raises exactly context-free
+  `TypeError("startup_timeout must be a built-in int or float")`; invalid
+  numeric values raise exactly context-free
+  `ValueError("startup_timeout must be finite, positive, and at most 30 seconds")`.
+  It reads no clock and creates no deadline. Validation order is project-root
+  top-level type, port, timeout, project-root text/resolution, project-ID
+  derivation, platformdirs, `StateStore`, then private construction. No invalid
+  prefix performs later work.
 - [ ] Success contains only independent exact scalar values, is value-equal for
   equal inputs, remains unchanged after caller filesystem aliases change, and
   retains no caller `Path`, platformdirs `Path`, `StateStore`, callback, or raw
-  exception. Repr/errors/stdout/stderr expose no project or runtime path.
+  internally caught exception. Fixed failures are created and raised `from
+  None` only after leaving an internal `except` suite; absent a caller-active
+  exception their cause, context, and notes are empty. A caller's already-active
+  Python-managed context may remain, but formatted output suppresses it and
+  production never reads or caches it. Repr/errors/stdout/stderr expose no
+  project or runtime path except that an identity-preserved non-`Exception`
+  `BaseException` may still carry its preexisting caller payload; production
+  never formats or emits that payload.
 - [ ] Deterministic tests cover public shape, direct construction, frozen/slots,
   fixed repr/errors, root type/existence/directory/alias matrices, exact digest,
   platformdirs call/provenance/failure, no directory creation, normalized
@@ -195,7 +247,7 @@ exact sidecar runtime-configuration tests and all repository checks pass
 
 ## Reviewer Focus
 
-- Can path aliases, platformdirs failure, a forged collaborator, coercion, or
+- Can path aliases, platformdirs failure, a malformed injected result, coercion, or
   malformed path create a different successful project/runtime identity?
 - Does any output or retained object expose a path or caller-controlled value?
 - Did the task stop before handoff, process, listener, election, state mutation,

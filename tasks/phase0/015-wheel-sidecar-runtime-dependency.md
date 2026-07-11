@@ -9,7 +9,7 @@ task_type: implementation
 status: planned
 primary_phase: phase0
 impacted_phases: []
-depends_on: [P0-001, TRIAL-004]
+depends_on: [P0-001, P0-014, TRIAL-004]
 requires_gates: [phase0-sustained]
 opens_gates: []
 scope_override: none
