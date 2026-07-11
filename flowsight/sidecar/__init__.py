@@ -1,6 +1,7 @@
 """Production sidecar primitives."""
 
 from .app import MAX_PRIVATE_BODY_BYTES, create_sidecar_app
+from .health import probe_sidecar_health
 from .listener import (
     DEFAULT_SIDECAR_PORT,
     ListenerBindError,
@@ -39,4 +40,5 @@ __all__ = [
     "StateStore",
     "bind_loopback_listener",
     "create_sidecar_app",
+    "probe_sidecar_health",
 ]
