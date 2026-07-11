@@ -217,10 +217,11 @@ Ubuntu/macOS × CPython 3.12/3.13 on
 - Ubuntu 3.13: success, job `86435155872`
 - macOS 3.13: success, job `86435155880`
 
-## PERF-001 Schema v3 Candidate Evidence
+## PERF-001 Schema v3 Final Evidence
 
 - Digest:
   `sha256:e3273869041f3b9bc8d4d65977a04e64f87e0c23268aa88586c7562d8e18e12e`
+- Candidate commit: `41d0c3b2b3ad06b2bf5697434fd9a743e01d7c54`.
 - CPython 3.13.5 focused harness: `36 passed`.
 - Isolated CPython 3.12.11 focused harness: `36 passed`.
 - Full local `make check`: `222 passed`, with agent-system, format, lint, and
@@ -228,5 +229,8 @@ Ubuntu/macOS × CPython 3.12/3.13 on
 - Two independent code/test reviews found no remaining P0/P1/P2 after the
   baseline/active wall-routing, two-sided CPU calibration, exact six-check
   mapping, real failure-message, and legacy-field regressions were added.
-- Immutable Ubuntu/macOS × CPython 3.12/3.13 schema v3 CI: pending candidate
-  commit and push. The historical run above does not satisfy this item.
+- Immutable schema v3 CI: GitHub Actions run `29135246585` completed successfully
+  on the candidate commit. Ubuntu 3.12 job `86498180795`, macOS 3.12 job
+  `86498180788`, Ubuntu 3.13 job `86498180825`, and macOS 3.13 job
+  `86498180800` all passed. The historical run above does not satisfy or
+  substitute for this v3 evidence.

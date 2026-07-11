@@ -12,8 +12,8 @@ impacted_phases: []
 depends_on: [TRIAL-005]
 requires_gates: [phase4-tracepoint]
 opens_gates: []
-spike_decision: pending
-scope_reductions: pending
+spike_decision: go
+scope_reductions: none
 scope_override: none
 scope_override_approved_by: none
 ```
@@ -88,7 +88,7 @@ The current task card and its verifier evidence are always writable control-plan
   values instead of exposing only an aggregate boolean.
 - [x] The new schema/digest and supersession rationale are recorded consistently
   in the benchmark, result, and MVP design.
-- [ ] CPython 3.12/3.13 focused tests, `make check`, and isolated Ubuntu/macOS x
+- [x] CPython 3.12/3.13 focused tests, `make check`, and isolated Ubuntu/macOS x
   CPython 3.12/3.13 CI pass without changing tracepoint support claims.
 
 ## No-Test Reason
@@ -157,12 +157,14 @@ Quality Governor:
 - Command: `.venv/bin/python -m pytest tests/spikes/test_tracepoint_backend.py`;
   `/tmp/flowsight-trial004-py312/bin/python -m pytest tests/spikes/test_tracepoint_backend.py`;
   `make check`
-- Result: local candidate passed; immutable schema v3 matrix pending
+- Result: passed
 - Notes: CPython 3.13.5 and 3.12.11 each passed 36 focused tests with digest
   `sha256:e3273869041f3b9bc8d4d65977a04e64f87e0c23268aa88586c7562d8e18e12e`;
   `make check` passed all agent/static checks and 222 tests. Two final reviews
-  found no remaining P0/P1/P2. Candidate commit and four-job CI are still
-  required before the last acceptance item, spike decision, and completion.
+  found no remaining P0/P1/P2. GitHub Actions run `29135246585` passed
+  Ubuntu/macOS x CPython 3.12/3.13 on candidate commit
+  `41d0c3b2b3ad06b2bf5697434fd9a743e01d7c54`; job IDs are recorded in the
+  final result. Decision: `go` with no scope reductions.
 
 ## Failure Queue Items
 
