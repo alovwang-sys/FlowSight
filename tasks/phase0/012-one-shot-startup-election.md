@@ -6,7 +6,7 @@
 task_id: P0-012
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-004, P0-010, P0-011, TRIAL-004]
@@ -118,34 +118,34 @@ sleep-based race.
 
 ## Acceptance Criteria
 
-- [ ] `resolve_owner_election()` accepts only an exact `StateStore` plus an
+- [x] `resolve_owner_election()` accepts only an exact `StateStore` plus an
   exact built-in `int` or `float` timeout. Wrong top-level types and
   invalid/non-finite/non-positive/over-30-second timeouts fail with the same
   fixed preflight messages as P0-010 before clock, discovery, acquire, or
   cleanup work.
-- [ ] `resolve_owner_election`, `OwnerElectionError`, and
+- [x] `resolve_owner_election`, `OwnerElectionError`, and
   `OwnerElectionErrorCode` are identical exports from `flowsight.sidecar` and
   occur exactly once in `__all__`. The function signature is exactly
   `(store: StateStore, timeout: float = 0.5) -> SidecarState | OwnerLock`.
   The error constructor accepts one exact code and exposes only the fixed
   message `sidecar owner election failed (<code>)`.
-- [ ] `OwnerElectionErrorCode` contains exactly
+- [x] `OwnerElectionErrorCode` contains exactly
   `OWNER_ELECTION_DEADLINE_FAILED` and `OWNER_ELECTION_FAILED`. Deadline/clock
   failures use only the first; malformed results and ordinary wrapper failures
   use only the second. Exact canonical P0-004 errors never change category.
-- [ ] Production captures canonical `discover_existing_startup`, bound
+- [x] Production captures canonical `discover_existing_startup`, bound
   `OwnerLock.acquire`, and unbound `OwnerLock.__exit__` at import, and invokes
   each only through a separately patchable private call seam. Replacing the
   public attributes later cannot change this wrapper's direct dispatch. Private
   seam replacement is fault injection, not a supported anti-forgery boundary.
-- [ ] One finite non-regressing monotonic deadline starts after preflight.
+- [x] One finite non-regressing monotonic deadline starts after preflight.
   Every discovery receives the current positive remaining budget; a positive
   remainder is required before acquire, before post-lock discovery, and before
   every successful return. Clock exception, inexact/non-finite value, rollback,
   overflow, or expiry raises exact deadline failure. If an owner is already
   bound, canonical cleanup is attempted exactly once before that error escapes;
   physical close is not claimed after an ambiguous failure.
-- [ ] Pre-lock discovery runs exactly once. A normally returned exact
+- [x] Pre-lock discovery runs exactly once. A normally returned exact
   `SidecarState` is returned unchanged after final deadline admission with zero
   acquire/post-lock-discovery/cleanup calls. A normally returned exact `None`
   is the only result that advances to acquire. Inexact/malformed results or
@@ -153,24 +153,24 @@ sleep-based race.
   fixed election failure, never authority. Ordinary failures already normalized
   by canonical P0-010 to a normal `None` remain indistinguishable negative
   evidence and are consumed internally.
-- [ ] After trusted pre-lock `None`, canonical `OwnerLock.acquire` is called
+- [x] After trusted pre-lock `None`, canonical `OwnerLock.acquire` is called
   exactly once. Exact `OwnerLockError` raised directly by that call preserves
   identity/code/message/cause/context, including visible `OWNER_LOCK_HELD`, and
   performs zero post-lock discovery or cleanup. Derived/inexact or ordinary
   acquire failures become fixed election failure.
-- [ ] A normal acquire result must have exact type `OwnerLock`; P0-012 then
+- [x] A normal acquire result must have exact type `OwnerLock`; P0-012 then
   trusts P0-004's active-owner postcondition and performs no `fileno` or field
   validation. Inexact/unknown values are never invoked and raise fixed election
   failure. Under unmodified private seams, the exact locally bound result is the
   sole cooperative Python owner until cleanup or successful return transfer.
-- [ ] While that owner remains held, post-lock discovery runs exactly once. A
+- [x] While that owner remains held, post-lock discovery runs exactly once. A
   normally returned exact `None` returns the exact acquired owner unchanged and
   performs zero cleanup; a real second contender remains blocked until caller
   close. A normally returned exact `SidecarState` is returned unchanged only
   after canonical cleanup and final deadline admission. Inexact/malformed or
   ordinary results cancel authority, attempt canonical cleanup exactly once,
   and raise fixed failure.
-- [ ] Normal state cleanup calls frozen canonical `OwnerLock.__exit__` exactly
+- [x] Normal state cleanup calls frozen canonical `OwnerLock.__exit__` exactly
   as `(owner, None, None, None)` and requires exact built-in `False`. Cleanup for
   a pending deadline/election error passes that exact error as the active
   exception with `(owner, type(error), error, None)`. Precedence is fixed:
@@ -182,7 +182,7 @@ sleep-based race.
     `OwnerLockError`, becomes `OWNER_ELECTION_FAILED` for other ordinary/
     malformed cleanup, and yields to cleanup process-control;
   - no path retries cleanup or makes a second OS close attempt.
-- [ ] `KeyboardInterrupt`, `SystemExit`, and other process-control
+- [x] `KeyboardInterrupt`, `SystemExit`, and other process-control
   `BaseException` values raised before owner binding preserve identity with zero
   cleanup. After owner binding, cleanup receives
   `(owner, type(error), error, None)` once. Exact `False` re-raises the original;
@@ -190,7 +190,7 @@ sleep-based race.
   fault-injected cleanup seam—preserves it with the one fixed P0-004 cleanup
   note, while a new cleanup process-control exception may replace it. The
   wrapper never reads a dynamic traceback attribute.
-- [ ] Ordinary collaborator failures expose only fixed election errors with no
+- [x] Ordinary collaborator failures expose only fixed election errors with no
   raw cause, formatted context, log, output, callback, or retained detail. They
   normally carry no note; when their sole active-error cleanup is ambiguous,
   only P0-004's fixed `sidecar owner lock cleanup failed` note may be added. A
@@ -198,25 +198,25 @@ sleep-based race.
   fixed errors raised `from None` suppress it from formatted traceback output.
   Production retains no state, owner, exception, or caller input in module
   mutable state.
-- [ ] Real temporary-lock tests prove: an empty store returns one exact active,
+- [x] Real temporary-lock tests prove: an empty store returns one exact active,
   non-inheritable winner that blocks a second canonical acquire until caller
   close; a pre-held canonical owner propagates exact `OWNER_LOCK_HELD` with zero
   post-lock discovery; and an injected post-lock incumbent returns only after
   the temporary owner has been closed and the canonical lock is immediately
   reacquirable. Cleanup ambiguity tests inspect FD reuse before deterministic
   fixture fallback and prove zero retry.
-- [ ] Deterministic matrices cover the five terminal classes (incumbent, winner,
+- [x] Deterministic matrices cover the five terminal classes (incumbent, winner,
   contention/P0-004 error, deadline error, wrapper error), exact call order and
   budgets, every behavior-boundary expiry/rollback, cleanup arguments/results,
   process-control identity, no third discovery/acquire/cleanup retry, and no
   module retention after restoring fault seams.
-- [ ] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
+- [x] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
   error helpers, and rejects loops/comprehensions, mutable module state/defaults,
   dynamic owner close/fileno/adoption, raw lock/state/process/listener/channel/
   SQLite/runtime/policy calls, logging, output, callbacks, waiting, and caches.
   It verifies the public export identities without freezing an implementation
   snapshot or duplicating P0-004/P0-010 internal tests.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -270,25 +270,60 @@ one-shot startup-election tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Codex primary implemented the exact public election API, frozen dependency
+  dispatch, one shared deadline, and the one-shot
+  `discover -> acquire once -> discover` composition in candidate `ec7b6d9`.
+  The focused suite covers exact results/errors, every named deadline and
+  process-control boundary, cleanup precedence, real locks, privacy, and the
+  semantic static boundary without duplicating P0-004/P0-010 internals.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: production reviewer found three P1 ownership/error defects during
+  iteration:
+  owner-bound interruption gaps outside the cleanup region, caller-active
+  exceptions misread through `sys.exception()`, and exact acquire
+  `OwnerLockError` context rewritten by a courier/re-raise. The final design
+  acquires in the same protected frame, tracks only locally active
+  process-control, and uses bare re-raise for the exact direct P0-004 error.
+- Reviewer 2: test/final reviewers found missing boundary assertions plus one
+  final P1 in
+  malformed `__notes__` handling and one P2 tracer-restoration issue. The suite
+  now proves full event prefixes, deadline/process-control/cleanup matrices,
+  caller-context suppression, line-interrupt cleanup, fixed-note fallback, FD
+  closure/reuse, and restoration of the caller's trace function. Final review
+  reported P0/P1/P2 = 0.
 
 Fixer:
-- TBD
+- Codex primary accepted every finding, removed the intermediate owner courier
+  and dynamic caller-exception inference, made process-control note repair
+  fail-safe without replacing the active exception, restored test tracer state,
+  and kept static evidence behavioral rather than an implementation snapshot.
+  No finding was deferred.
 
 Quality Governor:
-- TBD
+- Independent governor reported P0/P1/P2 = 0 and GO for the candidate: only the
+  three product/test allowlist files changed, P0-004/P0-010 success
+  postconditions are trusted rather than repeated, and no process, listener,
+  persistence, retry, wait, dependency, trial, fact, or scope override was
+  added.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: proves one incumbent-or-owner decision only, never waiting,
-  re-contention, stale cleanup, requested-port policy, child launch/transfer,
-  attachment, reload, or complete Phase 0
+- Command: focused startup-election tests; `make test-phase0`;
+  `make gate-phase0` (including full `make check`); pre-commit
+  `make check-fast`; candidate GitHub Actions matrix
+- Result: passed
+- Notes: focused tests passed 131/131; `make test-phase0` passed 1,438 tests;
+  embedded `make check` passed 1,563 tests plus formatting, lint, typing, and
+  agent checks; the sustained Phase 0 gate passed on local CPython 3.13.5.
+  Candidate `ec7b6d91e7b09e86b1c250d6f4df75335753ecdf` passed
+  [run 29157233537](https://github.com/alovwang-sys/FlowSight/actions/runs/29157233537)
+  with jobs `86556235773` (Ubuntu 3.13), `86556235798` (Ubuntu 3.12),
+  `86556235802` (macOS 3.12), and `86556235808` (macOS 3.13). The full check
+  correctly retains the partial-scaffold limitation. This proves one
+  incumbent-or-owner decision only; it does not prove waiting/re-contention,
+  stale cleanup, requested-port policy, child launch/transfer, attachment,
+  reload, or complete Phase 0.
 
 ## Failure Queue Items
 
