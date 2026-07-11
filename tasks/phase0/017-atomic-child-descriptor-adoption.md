@@ -6,7 +6,7 @@
 task_id: P0-017
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-004, P0-006, P0-011, P0-014, P0-016, TRIAL-004]
@@ -135,18 +135,18 @@ control-plane records; they do not expand the product-code allowlist above.
 
 ## Acceptance Criteria
 
-- [ ] `adopt_sidecar_child_descriptors` is exported identically from
+- [x] `adopt_sidecar_child_descriptors` is exported identically from
   `flowsight.sidecar`, occurs exactly once in `__all__`, has the fixed signature
   above, and is the only new production surface. It returns an exact built-in
   two-tuple; no resource bundle, alternate adopter, or public error type exists.
-- [ ] Shallow admission accepts only an exact `SidecarChildBootstrap`, reads
+- [x] Shallow admission accepts only an exact `SidecarChildBootstrap`, reads
   only its exact `config`, `owner_lock_fd`, and `startup_writer_fd` slots without
   dynamic attribute dispatch, and accepts only an exact `SidecarRuntimeConfig`
   plus two distinct exact integers in `3..2147483647`. Missing, malformed,
   subclassed, or out-of-range slots fail before any descriptor, lock, pipe, or
   close operation. Such unsupported input contains no admitted ownership
   locator.
-- [ ] Once shallow admission succeeds, the caller has transferred both
+- [x] Once shallow admission succeeds, the caller has transferred both
   descriptors regardless of the eventual return or exception. The function
   tracks both owned raw locators immediately and attempts to close them
   writer-first then owner on every later canonical-preflight failure. Each
@@ -154,19 +154,19 @@ control-plane records; they do not expand the product-code allowlist above.
   attempt; a reported close failure does not prove physical closure and is
   never retried. The caller
   must never close or reuse either locator after this boundary.
-- [ ] Owned canonical preflight calls the captured P0-016 encoder exactly once
+- [x] Owned canonical preflight calls the captured P0-016 encoder exactly once
   with the snapshotted config and descriptors. The captured encoder is the
   canonical authority; the adopter only requires an exact built-in tuple of
   eight exact built-in strings and then discards it. Public package/module
   replacement cannot redirect the binding; a private seam is fault injection
   only. The adopter neither copies the codec nor calls the decoder again.
-- [ ] Owned canonical preflight constructs exactly one captured canonical
+- [x] Owned canonical preflight constructs exactly one captured canonical
   `StateStore` from only `config.runtime_root` and `config.project_id`, requires
   the exact store type, exact `project_id`, and exact string form of
   `runtime_root`, and directly performs no state/directory operation. Encoder,
   constructor, result-shape, or derived-field failure retires both admitted
   ownership locators with at most one close attempt apiece.
-- [ ] After canonical preflight, the owner-lock descriptor is transferred to
+- [x] After canonical preflight, the owner-lock descriptor is transferred to
   the captured canonical
   `OwnerLock.adopt_inherited(store, fd)` exactly once before the startup writer
   is transferred to the captured canonical
@@ -176,7 +176,7 @@ control-plane records; they do not expand the product-code allowlist above.
   trusted to honor their existing consume-on-entry contracts; fault injection
   may only call the canonical primitive or semantically retire the locator and
   then raise. It may never return a non-exact handle or raise before retirement.
-- [ ] Success returns `(owner_lock, startup_writer)` containing the exact two
+- [x] Success returns `(owner_lock, startup_writer)` containing the exact two
   existing handle types. Both retain their original move-only, safe-repr,
   non-inheritable, close-once contracts; the tuple retains no bootstrap,
   config, store, encoding, callback, extra raw locator scalar, or extra owner;
@@ -184,7 +184,7 @@ control-plane records; they do not expand the product-code allowlist above.
   One private result-construction seam exists only to prove post-adoption
   failure cleanup; it accepts no caller callback and may return only the exact
   tuple in production.
-- [ ] Every reviewed post-admission success, ordinary failure, and synchronous
+- [x] Every reviewed post-admission success, ordinary failure, and synchronous
   seam interruption retires each locator exactly once: canonical-preflight
   failure attempts to close raw writer then raw owner; owner failure attempts
   to close the not-yet-adopted writer; writer
@@ -194,7 +194,7 @@ control-plane records; they do not expand the product-code allowlist above.
   adopter out of order. Each raw or handle cleanup receives at most one close
   attempt; an ambiguous reported close is semantically retired and never
   retried or reported as proven physically closed.
-- [ ] Production captures canonical raw `os.close`, `OwnerLock.close`,
+- [x] Production captures canonical raw `os.close`, `OwnerLock.close`,
   `StartupWriter.close`, and unbound `BaseException.add_note` cleanup dispatch at
   import. Public attribute replacement or an exception's override cannot
   redirect P0-017 cleanup/note dispatch; private seams exist only to prove
@@ -202,7 +202,7 @@ control-plane records; they do not expand the product-code allowlist above.
   close, descriptor reuse, and note-attachment failure. Note failure never
   replaces the active process-control identity. No fallible work occurs after
   the exact result tuple is admitted.
-- [ ] Every ordinary validation, encoder, store, adoption, result-admission, or
+- [x] Every ordinary validation, encoder, store, adoption, result-admission, or
   cleanup failure becomes exactly
   `RuntimeError("sidecar child descriptor adoption failed")`, raised `from
   None` only after internal failure and cleanup frames are gone. Without a
@@ -211,7 +211,7 @@ control-plane records; they do not expand the product-code allowlist above.
   formatted output and production never reads or caches it. Fixed-error text
   and P0-017 traceback frame locals contain no bootstrap, config, path, store,
   encoding, handle, descriptor, errno, raw primitive error, or caught exception.
-- [ ] `KeyboardInterrupt`, `SystemExit`, and non-`Exception` control values
+- [x] `KeyboardInterrupt`, `SystemExit`, and non-`Exception` control values
   synchronously raised by a captured operation preserve identity across every
   P0-017-owned cleanup path and stop all later adoption work. Only an exception
   explicitly caught during this invocation participates in cleanup arbitration;
@@ -226,29 +226,29 @@ control-plane records; they do not expand the product-code allowlist above.
   exception wins over an ordinary active failure; another composition cleanup
   failure attempts only the fixed P0-017 note. Hostile `add_note` overrides and
   invalid pre-existing `__notes__` cannot replace the preserved identity.
-- [ ] Caller-active `ValueError` and `KeyboardInterrupt` matrices cover success,
+- [x] Caller-active `ValueError` and `KeyboardInterrupt` matrices cover success,
   ordinary failure, process-control failure, and cleanup failure. The baseline
   caller exception retains identity and notes unchanged. A fixed ordinary
   RuntimeError may retain only Python's suppressed caller-managed context; it
   never uses that context for cleanup precedence or note attachment.
-- [ ] Deterministic real-descriptor tests cover correct owner/writer adoption,
+- [x] Deterministic real-descriptor tests cover correct owner/writer adoption,
   wrong/swapped/closed/socket/regular/duplicate descriptors, every preflight
   and partial-adoption stage, descriptor-number reuse,
   ambiguous close, public dependency replacement, and ordinary/process-control
   failures using real same-process owner-lock and pipe duplicates. Existing
   unchanged P0-004 tests remain the owner-lock fork/exec continuity evidence;
   pair-after-exec composition belongs to the future entrypoint/launcher task.
-- [ ] Descriptor-boundary tests distinguish `2` (rejected untouched), a real
+- [x] Descriptor-boundary tests distinguish `2` (rejected untouched), a real
   descriptor at `3` (admitted and transferred), and `2147483647` (range-admitted
   then semantically retired after fixed failure without requiring the operating
   system to allocate that descriptor number).
-- [ ] Tests prove the adopter directly calls no `StateStore` mutation method,
+- [x] Tests prove the adopter directly calls no `StateStore` mutation method,
   creates/deletes no path, and leaves any pre-existing state file's inode and
   bytes plus the canonical owner-lock inode unchanged. No output is emitted,
   and exact positive AST allowlists reject
   process/CLI/listener/state/READY/FastAPI/Uvicorn/SDK/storage/OTel/UI behavior,
   alternate adopters, caches, callbacks, dynamic calls, or unreviewed imports.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass locally and on the macOS/Linux x CPython 3.12/3.13 CI matrix.
 
 ## No-Test Reason
@@ -310,11 +310,24 @@ atomic child descriptor-adoption tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- Implementation pending. The planned slice composes only the two existing
-  inherited-descriptor primitives after exact shallow admission and one
-  unambiguous post-shallow-admission pair-consume boundary.
+- Added exact child-side bootstrap admission, captured canonical encoder/store
+  preflight, owner-before-writer adoption, and one writer-first cleanup state
+  machine for raw and adopted authorities. Success returns the admitted exact
+  handle tuple immediately; ordinary failures cross only the fixed error
+  boundary, while synchronous process control follows the reviewed precedence.
+- Added deterministic descriptor, reuse, cleanup, caller-context, privacy,
+  provenance, filesystem, and recursive AST evidence without adding a child
+  command, process, listener, state publication, READY, or serving runtime.
 
 Adversarial Reviewer:
+- Reviewer 1: resource-state review found READY test scope creep, incomplete
+  preflight/raw cleanup-control evidence, and external FD 3 inheritable-state
+  corruption. The fixes removed READY behavior, completed the precedence
+  matrix, restored FD 3 exactly, and received final P0/P1/P2 = 0 and GO.
+- Reviewer 2: scope/privacy review found exact AST gaps for alternate adopters,
+  mutable class/default state, and nested imports/classes/type aliases. The
+  recursive allowlist now freezes every reviewed structure and call boundary;
+  final review reported P0/P1/P2 = 0 and GO.
 - Three independent planning reviews recommended descriptor adoption before a
   child entrypoint, command specification, or launcher because the unproved
   partial-adoption cleanup is their direct safety prerequisite.
@@ -326,6 +339,11 @@ Adversarial Reviewer:
   synchronous captured-operation evidence, canonical unbound note dispatch,
   and exact primitive/scope exceptions. Two independent final reviews reported
   P0/P1/P2 = 0 and GO.
+- Three independent implementation reviews found and closed READY test scope
+  creep, external FD 3 inheritable-state corruption, missing raw-preflight and
+  cleanup-control cases, asymmetric exactness matrices, and AST allowlist gaps
+  for helpers, mutable state, nested imports/classes, calls, and defaults. All
+  three final reviews reported P0/P1/P2 = 0 and GO.
 
 Fixer:
 - Codex primary selected the smaller descriptor-pair composition and deferred
@@ -334,24 +352,41 @@ Fixer:
   existing adopter consume contracts, and narrowed error/privacy claims.
 - Every P0/P1 finding was accepted; no product allowlist or phase scope was
   expanded.
+- The successful path was simplified to return the exact admitted tuple before
+  any further callable work. All other accepted implementation findings
+  strengthened tests and structural guards rather than broadening production.
 
 Quality Governor:
 - Final audit confirmed one Phase 0 ownership slice, complete direct
   dependencies, an open prerequisite gate, the exact four-file allowlist, and
   strict separation from entrypoint, process, listener, state, READY, Uvicorn,
   SDK, storage, OTel, reload, shutdown, and UI behavior. Contract GO.
+- Final implementation audit confirmed the exact four-file product allowlist,
+  fixed public surface, close-once/reuse semantics, exception privacy, frozen
+  dispatch, and full-tree AST boundary. Implementation GO.
 
 ## Verifier Evidence
 
-- Command: `.venv/bin/python scripts/validate_agent_system.py`; `git diff --check`
-- Result: reviewed planned contract passed; implementation pending
-- Notes: no product code has been changed. Planned contract commit
-  `4f53fa10c86658d99891ac094b3c99d9a7d9424d` passed
+- Command: focused child-adoption/runtime-config tests; `make test-phase0`;
+  `make check`; `make gate-phase0`; candidate GitHub Actions matrix
+- Result: passed
+- Notes: the final focused suite passed 390 tests, `make test-phase0` passed
+  2,196 tests, and the final `make gate-phase0` ran the complete `make check`
+  path with 2,321 passing tests before the `phase0-sustained` gate passed on
+  local macOS CPython 3.13.5. Ruff format/lint, strict mypy,
+  `scripts/validate_agent_system.py`, `git diff --check`, the staged-file
+  allowlist, and an external non-inheritable FD 3 restoration probe passed.
+  Implementation candidate
+  `b544819cc73e08b4ad8810f2b58222c32d5a57b5` passed
+  [run 29170380435](https://github.com/alovwang-sys/FlowSight/actions/runs/29170380435)
+  with jobs `86590502043` (macOS 3.12), `86590502044` (Ubuntu 3.12),
+  `86590502047` (macOS 3.13), and `86590502053` (Ubuntu 3.13). Planned contract
+  commit `4f53fa10c86658d99891ac094b3c99d9a7d9424d` passed
   [run 29169104247](https://github.com/alovwang-sys/FlowSight/actions/runs/29169104247)
   with jobs `86587218440` (macOS 3.13), `86587218452` (macOS 3.12),
   `86587218457` (Ubuntu 3.12), and `86587218476` (Ubuntu 3.13). This is
-  task-system evidence only, not descriptor-adoption or Phase 0 product
-  acceptance.
+  retained as task-system evidence only, not descriptor-adoption or Phase 0
+  product acceptance. FSQ-0001 did not recur in the candidate matrix.
 
 ## Failure Queue Items
 
