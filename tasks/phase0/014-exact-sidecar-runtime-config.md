@@ -81,9 +81,11 @@ control-plane records; they do not expand the product-code allowlist above.
   directory, state file, lock, database, or other product filesystem object.
   Only strict canonical resolution of the caller's project-root directory and
   inert P0-001 `StateStore` path normalization are permitted. The frozen
-  platformdirs query may perform its documented read-only environment/access
-  probes; it must still run with `ensure_exists=False` and create or mutate
-  nothing.
+  platformdirs query and its standard-library fallback may perform their own
+  environment, access, and temporary-directory availability probes; those
+  probes are not FlowSight product state. It must still run with
+  `ensure_exists=False` and create or mutate no FlowSight project/runtime target
+  or descendant.
 - Do not inspect incumbent state, decide requested-port compatibility, bind a
   listener, elect/wait for an owner, adopt/close a descriptor, or manufacture a
   startup state.
@@ -113,7 +115,8 @@ control-plane records; they do not expand the product-code allowlist above.
 - [ ] `SidecarRuntimeConfig` is an exact frozen, slot-only value object with
   exactly `project_root: str`, `runtime_root: str`, `project_id: str`,
   `requested_port: int | None`, and `startup_timeout: float`. Direct
-  construction always raises the fixed context-free
+  construction with any positional/keyword argument shape always raises the
+  fixed context-free
   `TypeError("SidecarRuntimeConfig must be prepared")`; repr is exactly
   `<SidecarRuntimeConfig>` and exposes no field.
 - [ ] `SidecarRuntimeConfig` and `prepare_sidecar_runtime_config` are identical
@@ -126,19 +129,21 @@ control-plane records; they do not expand the product-code allowlist above.
   produce the same exact canonical string and project ID. Before resolution,
   the exact input's built-in string form, and after resolution the canonical
   string, must each be nonempty, control-free, at most 4096 characters, and
-  `os.fsencode` to exact built-in bytes of at most 4096 bytes. A wrong input
-  type raises exactly context-free
+  `os.fsencode` to exact built-in bytes of at most 4096 bytes. Here and for the
+  runtime root, control-free means every character has `ord(character) >= 32`
+  and `ord(character) != 127`. A wrong input type raises exactly context-free
   `TypeError("project_root must be an exact built-in str or platform Path")`.
   Empty/NUL/control text, overlong roots, missing paths, files, filesystem roots
   (including alternate or symlink aliases), and ordinary resolution failures
   raise exactly context-free
   `ValueError("project_root is invalid")`; process-control errors preserve
   identity.
-- [ ] `project_id` is exactly
-  `project-v1-<sha256(b"flowsight-project-v1\x00" + os.fsencode(canonical_root))>`
-  with 64 lowercase hexadecimal digest characters. It contains no raw path and
-  fixed distinct-root fixtures produce their independently expected different
-  digest identities. At least one test fixes the expected hexadecimal digest
+- [ ] `project_id` is exactly `"project-v1-" +
+  sha256(b"flowsight-project-v1\x00" +
+  os.fsencode(canonical_root)).hexdigest()`, with 64 lowercase hexadecimal
+  digest characters after the prefix. It contains no raw path and fixed
+  distinct-root fixtures produce their independently expected different digest
+  identities. At least one test fixes the expected hexadecimal digest
   independently rather than recomputing it through a production helper.
 - [ ] Production captures `platformdirs.user_runtime_path` at import and calls
   it exactly once as `user_runtime_path("flowsight", appauthor=False,
@@ -158,9 +163,9 @@ control-plane records; they do not expand the product-code allowlist above.
   platform `Path`, with no attribute or `__fspath__` dispatch on a malformed
   value. The config stores its normalized absolute, non-root, `..`-free root as
   a nonempty, control-free, at-most-4096-character and 4096-fsencoded-byte
-  built-in string, never its project-specific `runtime_dir`. No directory is
-  created and no store or `Path` identity is retained. Malformed/ordinary
-  collaborator failure becomes fixed
+  built-in string, never its project-specific `runtime_dir`. No FlowSight
+  project/runtime target or descendant is created or mutated, and no store or
+  `Path` identity is retained. Malformed/ordinary collaborator failure becomes fixed
   `RuntimeError("sidecar runtime configuration failed")`. This task trusts the
   canonical constructor's project-path derivations and validates only the
   exact result type, exact matching `project_id`, and exact lexical
@@ -185,9 +190,9 @@ control-plane records; they do not expand the product-code allowlist above.
   top-level type, port, timeout, project-root text/resolution, project-ID
   derivation, platformdirs, `StateStore`, then private construction. No invalid
   prefix performs later work.
-- [ ] Success contains only independent exact scalar values, is value-equal for
-  equal inputs, remains unchanged after caller filesystem aliases change, and
-  retains no caller `Path`, platformdirs `Path`, `StateStore`, callback, or raw
+- [ ] Success contains only exact scalar values, is value-equal for equal
+  inputs, remains unchanged after caller filesystem aliases change, and retains
+  no caller `Path`, platformdirs `Path`, `StateStore`, callback, or raw
   internally caught exception. Fixed failures are created and raised `from
   None` only after leaving an internal `except` suite; absent a caller-active
   exception their cause, context, and notes are empty. A caller's already-active
@@ -196,12 +201,18 @@ control-plane records; they do not expand the product-code allowlist above.
   project or runtime path except that an identity-preserved non-`Exception`
   `BaseException` may still carry its preexisting caller payload; production
   never formats or emits that payload.
+- [ ] A `KeyboardInterrupt`, `SystemExit`, or other non-`Exception`
+  `BaseException` from project-root resolution, digest encoding/hashing,
+  platformdirs, `StateStore` construction, exact dictionary/root inspection, or
+  private construction preserves identity and ends the operation with no later
+  work. Ordinary failures alone are normalized to the fixed errors above.
 - [ ] Deterministic tests cover public shape, direct construction, frozen/slots,
   fixed repr/errors, root type/existence/directory/alias matrices, exact digest,
-  platformdirs call/provenance/failure, no directory creation, normalized
+  platformdirs call/provenance/failure, no FlowSight target mutation, normalized
   StateStore root versus runtime-dir confusion, complete port/timeout
-  boundaries, exact float normalization, ordering/no-later-work, equality,
-  non-retention, and stdout/stderr privacy.
+  boundaries, exact float normalization, process-control at every seam,
+  ordering/no-later-work, equality, non-retention, target bytes/metadata
+  unchanged, and stdout/stderr privacy.
 - [ ] Static and fault-injection evidence proves production performs only exact
   preflight, strict project-root resolution, fixed project-ID hashing, the
   frozen platformdirs query, inert canonical StateStore normalization, scalar
@@ -236,6 +247,9 @@ exact sidecar runtime-configuration tests and all repository checks pass
 
 - Distinct aliases of one project root must not create duplicate sidecars or
   source-sandbox identities.
+- Canonical strings establish lexical identity only. They do not prove inode
+  continuity or eliminate TOCTOU; Phase 2 source access must still enforce
+  realpath/descriptor containment for every read.
 - Passing `runtime_dir` instead of `runtime_root` to a child would make
   `StateStore` add a second `project-<digest>` layer and split ownership.
 - Treating `bool`, a derived integer, `None`, or port `0` as interchangeable can
@@ -261,14 +275,28 @@ Implementer:
 - TBD
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: design/contract review found missing canonical project-root
+  identity, relative platformdirs admission, target-versus-global filesystem
+  side-effect wording, all-seam process-control evidence, digest-byte ambiguity,
+  and lexical-versus-inode safety boundaries. After the contract fixes, final
+  P0/P1/P2 = 0 and GO.
+- Reviewer 2: implementation review found fixed-error/context ambiguity,
+  incomplete platformdirs and StateStore result admission, absolute collision
+  wording, and an ambiguous raw digest separator. After exact messages/order,
+  pre-StateStore fail-closed checks, exact result/dictionary fields, and an
+  independently fixed digest fixture were required, final P0/P1/P2 = 0 and GO.
 
 Fixer:
-- TBD
+- Codex primary accepted all pre-implementation findings. The final contract
+  permits platformdirs/stdlib availability probes but no FlowSight target
+  mutation, propagates process-control at every seam, and defines one exact
+  lexical identity without claiming inode continuity. None were deferred.
 
 Quality Governor:
-- TBD
+- Independent scope review confirmed one inert Phase 0 scalar-preflight slice
+  with the MVP-selected platformdirs dependency. It stops before SDK lifecycle,
+  child handoff, wire format, process, listener, election, source scanning,
+  storage, and UI behavior. P0/P1/P2 = 0 and GO.
 
 ## Verifier Evidence
 
