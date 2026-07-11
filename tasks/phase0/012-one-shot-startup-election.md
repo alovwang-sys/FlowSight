@@ -168,7 +168,8 @@ sleep-based race.
   performs zero cleanup; a real second contender remains blocked until caller
   close. A normally returned exact `SidecarState` is returned unchanged only
   after canonical cleanup and final deadline admission. Inexact/malformed or
-  ordinary results cancel authority, clean up once, and raise fixed failure.
+  ordinary results cancel authority, attempt canonical cleanup exactly once,
+  and raise fixed failure.
 - [ ] Normal state cleanup calls frozen canonical `OwnerLock.__exit__` exactly
   as `(owner, None, None, None)` and requires exact built-in `False`. Cleanup for
   a pending deadline/election error passes that exact error as the active
@@ -178,7 +179,8 @@ sleep-based race.
     becomes `OWNER_ELECTION_FAILED`, and cleanup process-control propagates;
   - pending deadline/election error is re-raised after exact `False`, may receive
     P0-004's fixed note on canonical ambiguous close, yields to an exact cleanup
-    `OwnerLockError`, and yields to cleanup process-control;
+    `OwnerLockError`, becomes `OWNER_ELECTION_FAILED` for other ordinary/
+    malformed cleanup, and yields to cleanup process-control;
   - no path retries cleanup or makes a second OS close attempt.
 - [ ] `KeyboardInterrupt`, `SystemExit`, and other process-control
   `BaseException` values raised before owner binding preserve identity with zero
