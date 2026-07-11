@@ -6,7 +6,7 @@
 task_id: P0-012
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-004, P0-010, P0-011, TRIAL-004]
@@ -210,13 +210,13 @@ sleep-based race.
   budgets, every behavior-boundary expiry/rollback, cleanup arguments/results,
   process-control identity, no third discovery/acquire/cleanup retry, and no
   module retention after restoring fault seams.
-- [ ] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
+- [x] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
   error helpers, and rejects loops/comprehensions, mutable module state/defaults,
   dynamic owner close/fileno/adoption, raw lock/state/process/listener/channel/
   SQLite/runtime/policy calls, logging, output, callbacks, waiting, and caches.
   It verifies the public export identities without freezing an implementation
   snapshot or duplicating P0-004/P0-010 internal tests.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -272,7 +272,9 @@ one-shot startup-election tests and all repository checks pass
 Implementer:
 - Codex primary implemented the exact public election API, frozen dependency
   dispatch, one shared deadline, and the one-shot
-  `discover -> acquire once -> discover` composition in candidate `ec7b6d9`.
+  `discover -> acquire once -> discover` composition in product candidate
+  `ec7b6d9`; final test-boundary candidate `7faf300` closes the positive static
+  allowlist and opaque-malformed-result evidence.
   The focused suite covers exact results/errors, every named deadline and
   process-control boundary, cleanup precedence, real locks, privacy, and the
   semantic static boundary without duplicating P0-004/P0-010 internals.
@@ -285,20 +287,20 @@ Adversarial Reviewer:
   `OwnerLockError` context rewritten by a courier/re-raise. The final design
   acquires in the same protected frame, tracks only locally active
   process-control, and uses bare re-raise for the exact direct P0-004 error.
-- Reviewer 2: test/final reviewers found missing boundary assertions plus one
-  final P1 in
-  malformed `__notes__` handling and one P2 tracer-restoration issue. The suite
-  now proves full event prefixes, deadline/process-control/cleanup matrices,
-  caller-context suppression, line-interrupt cleanup, fixed-note fallback, FD
-  closure/reuse, and restoration of the caller's trace function. Final review
-  reported P0/P1/P2 = 0.
+- Reviewer 2: test/final reviewers found missing boundary assertions, malformed
+  `__notes__` handling, a blacklist-based static false-green channel, and a
+  proposed global-tracing test that violated the agent rules. The final suite
+  proves full event prefixes, deadline/process-control/cleanup matrices through
+  named seams, caller-context suppression, fixed-note fallback, FD
+  closure/reuse, opaque malformed results, and a positive structural allowlist;
+  it contains no `sys.settrace`. No review finding remains open.
 
 Fixer:
 - Codex primary accepted every finding, removed the intermediate owner courier
   and dynamic caller-exception inference, made process-control note repair
-  fail-safe without replacing the active exception, restored test tracer state,
-  and kept static evidence behavioral rather than an implementation snapshot.
-  No finding was deferred.
+  fail-safe without replacing the active exception, rejected global tracing,
+  and replaced duplicate blacklist assertions with a contract-derived positive
+  structure/call boundary. No finding was deferred.
 
 Quality Governor:
 - Independent governor reported P0/P1/P2 = 0 and GO for the candidate: only the
@@ -313,23 +315,18 @@ Quality Governor:
   `make gate-phase0` (including full `make check`); pre-commit
   `make check-fast`; candidate GitHub Actions matrix
 - Result: passed
-- Notes: focused tests passed 131/131; `make test-phase0` passed 1,438 tests;
-  embedded `make check` passed 1,563 tests plus formatting, lint, typing, and
+- Notes: focused tests passed 133/133; `make test-phase0` passed 1,440 tests;
+  embedded `make check` passed 1,565 tests plus formatting, lint, typing, and
   agent checks; the sustained Phase 0 gate passed on local CPython 3.13.5.
-  Candidate `ec7b6d91e7b09e86b1c250d6f4df75335753ecdf` passed
-  [run 29157233537](https://github.com/alovwang-sys/FlowSight/actions/runs/29157233537)
-  with jobs `86556235773` (Ubuntu 3.13), `86556235798` (Ubuntu 3.12),
-  `86556235802` (macOS 3.12), and `86556235808` (macOS 3.13). The full check
-  correctly retains the partial-scaffold limitation. This proves one
+  Final candidate `7faf300b886f1ece80c0be8441cf79291b17ab68` passed
+  [run 29157887780](https://github.com/alovwang-sys/FlowSight/actions/runs/29157887780)
+  on its first attempt with jobs `86557940451` (macOS 3.13), `86557940457`
+  (Ubuntu 3.12), `86557940470` (macOS 3.12), and `86557940473` (Ubuntu 3.13).
+  The full check correctly retains the partial-scaffold limitation. This proves one
   incumbent-or-owner decision only; it does not prove waiting/re-contention,
   stale cleanup, requested-port policy, child launch/transfer, attachment,
   reload, or complete Phase 0.
 
 ## Failure Queue Items
 
-- P1: the committed AST test is still blacklist-based and permits extra private
-  helpers, module aliases/caches, nested definitions, and aliased forbidden
-  calls. Replace it with a contract-derived positive structural boundary.
-- Governance: remove the `sys.settrace` line-interrupt test because FlowSight's
-  agent rules prohibit enabling global interpreter tracing; retain deterministic
-  process-control coverage through the named private clock/discovery seams.
+- none
