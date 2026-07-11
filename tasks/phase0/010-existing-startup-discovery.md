@@ -6,7 +6,7 @@
 task_id: P0-010
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-005, P0-008, TRIAL-004]
@@ -116,66 +116,66 @@ start a subprocess.
 
 ## Acceptance Criteria
 
-- [ ] `discover_existing_startup()` accepts only an exact `StateStore` plus an
+- [x] `discover_existing_startup()` accepts only an exact `StateStore` plus an
   exact built-in `int` or `float` timeout. Wrong top-level types and
   invalid/non-finite/non-positive/over-30-second timeouts fail before clock,
   load, or health work. The fixed errors are
   `TypeError("store must be an exact StateStore")`,
   `TypeError("timeout must be a built-in int or float")`, and
   `ValueError("timeout must be finite, positive, and at most 30 seconds")`.
-- [ ] `discover_existing_startup` is an identical export from
+- [x] `discover_existing_startup` is an identical export from
   `flowsight.sidecar`, appears exactly once in `__all__`, and has the exact
   signature `(store: StateStore, timeout: float = 0.5) -> SidecarState | None`.
   This task adds no public error or authority taxonomy.
-- [ ] Production captures the canonical unbound `StateStore.load` and canonical
+- [x] Production captures the canonical unbound `StateStore.load` and canonical
   `probe_sidecar_health` callables at import, then invokes them only through
   separately patchable private helpers. This freezes only the wrapper's direct
   dispatch; their already-reviewed internal method graphs remain trusted.
-- [ ] After input preflight, one exact finite non-regressing monotonic deadline
+- [x] After input preflight, one exact finite non-regressing monotonic deadline
   begins before the first load. A positive remaining budget is required before
   the probe, before the second load, and after final comparison. Expiry,
   rollback, a non-float/non-finite observation, or deadline overflow returns
   `None` without starting later work.
-- [ ] The frozen canonical loader is called at most twice in the exact order
+- [x] The frozen canonical loader is called at most twice in the exact order
   `first load -> health probe -> second load`, with no retry or hidden extra
   read. A first `None`, inexact result, ordinary failure, or invalid exact state
   returns `None` with zero health probes and zero second loads.
-- [ ] An exact first `SidecarState` is independently reconstructed through the
+- [x] An exact first `SidecarState` is independently reconstructed through the
   strict state schema as a distinct fully equal copy before network work.
   Forged, derived, schema-invalid, self-returning, or unequal reconstruction
   cannot reach the health probe.
-- [ ] The frozen canonical P0-005 health probe is invoked exactly once with the
+- [x] The frozen canonical P0-005 health probe is invoked exactly once with the
   exact first loaded object and the current positive remaining budget. Only an
   exact built-in `True` may continue; `False`, an inexact result, ordinary
   failure, or expiry returns `None` with zero second loads.
-- [ ] After health success and another positive remaining check, the frozen
+- [x] After health success and another positive remaining check, the frozen
   canonical loader is invoked exactly once more. The second value must be an
   exact `SidecarState`, be a distinct object from the first load, independently
   reconstruct as a distinct equal copy, and equal the first state across every
   field, including token, database path, timestamp, startup ID, PID, port,
   host, and schema/protocol versions.
-- [ ] Success returns the exact second loaded object unchanged only after one
+- [x] Success returns the exact second loaded object unchanged only after one
   final positive non-regressed remaining-budget observation. Same-object,
   derived, inexact, schema-invalid, partially equal, rotated, or late second
   state returns `None`.
-- [ ] After caller preflight, every ordinary clock/load/reconstruction/probe/
+- [x] After caller preflight, every ordinary clock/load/reconstruction/probe/
   comparison failure returns only `None`, with no log, output, repr, callback,
   retained exception, secret detail, or additional public error category.
   `KeyboardInterrupt` and `SystemExit` preserve object identity at every stage
   and this wrapper adds or changes no note. P0-005's existing fixed
   `sidecar health probe cleanup failed` cleanup note may remain unchanged.
-- [ ] Every normal `None` result remains explicitly negative evidence only.
+- [x] Every normal `None` result remains explicitly negative evidence only.
   Production performs zero lock, state mutation, PID/process, listener,
   channel, SQLite, lease, retry, runtime, or SDK work and returns no boolean,
   enum, handle, callback, or other value that could be mistaken for permission
   to elect, clean up, or launch.
-- [ ] One unpatched real composition runs public API -> two real temporary
+- [x] One unpatched real composition runs public API -> two real temporary
   P0-001 state reads around one bounded real P0-005 loopback health response,
   then proves an exact result fully equal to but distinct from the published
   fixture, stable on-disk metadata, a dead helper thread, deterministic socket
   cleanup, and no token/path output. A separate no-state path proves zero
   network work.
-- [ ] Deterministic unit matrices prove exact call order/counts, shared deadline,
+- [x] Deterministic unit matrices prove exact call order/counts, shared deadline,
   full-field rotation rejection, same-object rejection, exact collaborator
   results, process-control propagation, no hidden retry, no retained exceptions,
   and captured first/second objects with `result is second` and
@@ -193,7 +193,7 @@ start a subprocess.
   printing/output, callback, mutation, and cache calls/imports. They also reject
   `for`, `async for`, `while`, every comprehension, mutable defaults,
   global/nonlocal declarations, and attribute/subscript stores.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -245,24 +245,60 @@ existing-startup discovery tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Added and exported one `discover_existing_startup()` observation window with
+  exact caller preflight, one shared monotonic success deadline, two frozen
+  canonical state loads around one frozen authenticated P0-005 health probe,
+  strict independent state reconstruction, full-state equality, and exact
+  second-object return.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: compared direct two-read discovery against manufacturing READY
+  and reusing P0-008, then challenged observable identity evidence, incumbent
+  wording, requested-port policy, cleanup-note propagation, dispatch counts,
+  deadline stages, and lifecycle authority. Final review reported
+  P0=0/P1=0/P2=0.
+- Reviewer 2: attacked test false-green paths in equality ordinals, state wire
+  reconstruction, event prefixes, exception retention, real socket cleanup,
+  exact imports/Final bindings/call receivers, module mutation, decorators, and
+  delayed staged content. After fixes, final review reported P0=0/P1=0/P2=0.
 
 Fixer:
-- TBD
+- Applied every accepted finding. The 138-test matrix now fixes all four state
+  equality positions, both `to_wire` stages, exact success/failure event order,
+  derived clock values, stable real state metadata, explicit listener/client FD
+  closure, post-patch exception-retention scans, and exact alias-aware AST
+  imports, bindings, functions, calls, decorators, and mutation exclusions. No
+  finding was deferred.
 
 Quality Governor:
-- TBD
+- Candidate `5b888cb` changes exactly the three allowlisted product/test files.
+  Static and behavioral evidence keep the slice to one read-only incumbent
+  discovery window with no requested-port policy, lock, election, stale
+  cleanup, process, channel, listener mutation, SQLite, lease, retry, SDK, or
+  runtime authority. The sustained gate and all four supported CI combinations
+  are green.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: proves one existing-startup discovery window only, never election,
-  stale cleanup, process launch, attachment, reload, or complete Phase 0
+- Command: focused startup-discovery tests; `make test-phase0`;
+  `make gate-phase0` (including full `make check`); pre-commit
+  `make check-fast`; candidate GitHub Actions matrix
+- Result: passed
+- Notes: focused tests passed 138/138 on local CPython 3.13;
+  `make test-phase0` passed 1,299 tests; the final full check passed 1,424 tests
+  plus formatting, lint, typing, and agent checks, followed by the sustained
+  Phase 0 gate. Candidate
+  `5b888cb27677da67735fce1b3b46a35bd309a9da` passed
+  [run 29153577962](https://github.com/alovwang-sys/FlowSight/actions/runs/29153577962):
+  macOS 3.12 job `86546935161`, macOS 3.13 job `86546935177`, Ubuntu 3.12 job
+  `86546935178`, and Ubuntu 3.13 job `86546935197`. The real composition test
+  performs two real P0-001 state reads around one bounded authenticated P0-005
+  loopback health response and proves stable state bytes/metadata, closed
+  sockets, a dead helper thread, and no token/path output. The full check
+  correctly retains the partial-scaffold limitation. This evidence proves one
+  existing-startup discovery window only; it does not grant requested-port
+  compatibility, attachment, election, stale cleanup, process launch, reload,
+  or complete Phase 0 acceptance.
 
 ## Failure Queue Items
 
