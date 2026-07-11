@@ -66,16 +66,73 @@ class _MalformedValueInvoked(BaseException):
     pass
 
 
+class _UnexpectedCollaboratorCall(BaseException):
+    pass
+
+
 class _OpaqueMalformed:
+    @staticmethod
+    def _invoked(protocol: str) -> NoReturn:
+        raise _MalformedValueInvoked(f"malformed value protocol invoked: {protocol}")
+
     def __bool__(self) -> NoReturn:
-        raise _MalformedValueInvoked("malformed value must not be truth-tested")
+        self._invoked("bool")
 
     def __eq__(self, other: object) -> NoReturn:
         del other
-        raise _MalformedValueInvoked("malformed value must not be compared")
+        self._invoked("equality")
 
     def __repr__(self) -> NoReturn:
-        raise _MalformedValueInvoked("malformed value must not be represented")
+        self._invoked("repr")
+
+    def __getitem__(self, key: object) -> NoReturn:
+        del key
+        self._invoked("item access")
+
+    def __iter__(self) -> NoReturn:
+        self._invoked("iteration")
+
+    def __hash__(self) -> NoReturn:
+        self._invoked("hash")
+
+    def __len__(self) -> NoReturn:
+        self._invoked("length")
+
+    def __contains__(self, item: object) -> NoReturn:
+        del item
+        self._invoked("containment")
+
+    def __lt__(self, other: object) -> NoReturn:
+        del other
+        self._invoked("ordering")
+
+    def __le__(self, other: object) -> NoReturn:
+        del other
+        self._invoked("ordering")
+
+    def __gt__(self, other: object) -> NoReturn:
+        del other
+        self._invoked("ordering")
+
+    def __ge__(self, other: object) -> NoReturn:
+        del other
+        self._invoked("ordering")
+
+    def __str__(self) -> NoReturn:
+        self._invoked("string conversion")
+
+    def __format__(self, format_spec: str) -> NoReturn:
+        del format_spec
+        self._invoked("formatting")
+
+    def __index__(self) -> NoReturn:
+        self._invoked("index conversion")
+
+    def __int__(self) -> NoReturn:
+        self._invoked("integer conversion")
+
+    def __float__(self) -> NoReturn:
+        self._invoked("float conversion")
 
 
 class _Flow:
@@ -102,13 +159,13 @@ class _Flow:
     def read_clock(self) -> object:
         self.events.append(("clock",))
         if not self.clock_values:
-            raise AssertionError("unexpected extra monotonic read")
+            raise _UnexpectedCollaboratorCall("unexpected extra monotonic read")
         return _resolve(self.clock_values.pop(0))
 
     def discover(self, store: StateStore, timeout: float) -> object:
         self.events.append(("discover", store, timeout))
         if not self.discoveries:
-            raise AssertionError("unexpected extra discovery")
+            raise _UnexpectedCollaboratorCall("unexpected extra discovery")
         return _resolve(self.discoveries.pop(0))
 
     def acquire(self, store: StateStore) -> object:
@@ -127,7 +184,7 @@ class _Flow:
 
 def _resolve(value: object) -> object:
     if value is _UNEXPECTED:
-        raise AssertionError("unexpected collaborator call")
+        raise _UnexpectedCollaboratorCall("unexpected collaborator call")
     if isinstance(value, BaseException):
         raise value
     return value
@@ -1642,6 +1699,75 @@ def test_production_ast_stays_inside_one_shot_election_boundary() -> None:
         ast.Await,
     )
     assert not any(isinstance(node, forbidden_structural_nodes) for node in ast.walk(tree))
+
+    parent_by_id = {
+        id(child): parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
+    }
+    raw_collaborator_names = {
+        "incumbent",
+        "candidate",
+        "post_lock_result",
+        "result",
+        "owner",
+    }
+    assignment_targets = {
+        "candidate": "owner",
+        "post_lock_result": "post_lock_state",
+        "owner": "result",
+    }
+    owner_call_targets = {
+        "_OWNER_LOCK_EXIT",
+        "_attempt_release",
+        "_exit_owner",
+        "_release_process_control",
+        "_release_pending",
+        "_release_normal",
+    }
+    for node in ast.walk(tree):
+        if (
+            not isinstance(node, ast.Name)
+            or not isinstance(node.ctx, ast.Load)
+            or node.id not in raw_collaborator_names
+        ):
+            continue
+        parent = parent_by_id[id(node)]
+        if isinstance(parent, ast.Call):
+            call_target = _attribute_path(parent.func)
+            if node.id == "owner":
+                assert call_target in owner_call_targets
+            else:
+                assert call_target == "type"
+                assert parent.args == [node]
+                assert parent.keywords == []
+            continue
+        if isinstance(parent, ast.Compare):
+            assert len(parent.ops) == 1
+            assert isinstance(parent.ops[0], (ast.Is, ast.IsNot))
+            assert len(parent.comparators) == 1
+            other = parent.comparators[0] if parent.left is node else parent.left
+            if node.id == "result":
+                assert (isinstance(other, ast.Constant) and other.value is False) or (
+                    isinstance(other, ast.Name) and other.id == "owner"
+                )
+            elif node.id == "owner":
+                assert isinstance(other, ast.Name)
+                assert other.id == "result"
+            else:
+                assert isinstance(other, ast.Constant)
+                assert other.value is None
+            continue
+        if isinstance(parent, ast.Assign):
+            assert parent.value is node
+            assert len(parent.targets) == 1
+            assert isinstance(parent.targets[0], ast.Name)
+            assert parent.targets[0].id == assignment_targets[node.id]
+            continue
+        if isinstance(parent, ast.Return):
+            assert parent.value is node
+            assert node.id in {"incumbent", "owner"}
+            continue
+        raise AssertionError(f"unsafe raw collaborator use: {node.id}")
+
     for assignment in structural_assignments:
         assigned_value = assignment.value
         assert assigned_value is not None
@@ -1756,6 +1882,41 @@ def test_production_ast_stays_inside_one_shot_election_boundary() -> None:
     assert all_call_paths.count("_release_normal") <= 1
     assert all_call_paths.count("_release_pending") <= 2
     assert all_call_paths.count("_release_process_control") <= 1
+
+    discovery_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and normalized_call_path(node) == "_DISCOVER_EXISTING_STARTUP"
+    ]
+    assert len(discovery_calls) == 1
+    discovery_call = discovery_calls[0]
+    assert len(discovery_call.args) == 2
+    assert [argument.id for argument in discovery_call.args if isinstance(argument, ast.Name)] == [
+        "store",
+        "timeout",
+    ]
+    assert discovery_call.keywords == []
+
+    acquire_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and normalized_call_path(node) == "_OWNER_LOCK_ACQUIRE"
+    ]
+    assert len(acquire_calls) == 1
+    acquire_call = acquire_calls[0]
+    assert len(acquire_call.args) == 1
+    assert isinstance(acquire_call.args[0], ast.Name)
+    assert acquire_call.args[0].id == "store"
+    assert acquire_call.keywords == []
+
+    clock_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and normalized_call_path(node) == "time.monotonic"
+    ]
+    assert len(clock_calls) == 1
+    assert clock_calls[0].args == []
+    assert clock_calls[0].keywords == []
 
     exit_calls = [
         node
