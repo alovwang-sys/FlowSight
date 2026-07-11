@@ -6,7 +6,7 @@
 task_id: P0-013
 release: v1
 task_type: implementation
-status: planned
+status: in_progress
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-012, TRIAL-004]
@@ -116,9 +116,9 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   replacement remains fault injection, not a provenance/security boundary.
 - [ ] After preflight, one exact finite non-regressing monotonic deadline bounds
   all retry admission and waiting. Before every election and wait there is a
-  positive remaining budget; each election receives that current budget. Clock
-  exception, inexact/non-finite observation, rollback, overflow, no progress
-  across a completed wait, or expiry raises exact
+  positive remaining budget; each election receives that current budget. An
+  ordinary clock `Exception`, inexact/non-finite observation, rollback, overflow,
+  insufficient elapsed time across a completed wait, or expiry raises exact
   `OWNER_ELECTION_DEADLINE_FAILED` with no later election/wait.
 - [ ] The first canonical P0-012 election runs immediately with no wait. An
   exact `SidecarState` or `OwnerLock` result is returned unchanged and ends the
@@ -128,21 +128,37 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   `OwnerLockErrorCode.OWNER_LOCK_HELD` enters the wait path. Every other exact
   P0-004 or P0-012 error preserves identity/code/message/cause/context with zero
   wait/retry; derived, malformed, or ordinary private-seam failure becomes the
-  fixed `OWNER_ELECTION_FAILED`; process-control preserves identity.
+  fixed `OWNER_ELECTION_FAILED`. Every non-`Exception` `BaseException` from the
+  clock, election, or wait preserves identity and ends the operation with no
+  later clock/election/wait.
 - [ ] Each contention performs one wait of exactly
   `min(0.025, current_remaining)` seconds through the frozen operation. The
-  interval is always a positive built-in float. Exact `None` plus strict clock
-  progress permits the next retry; ordinary/malformed wait failure becomes the
-  fixed election failure, while process-control preserves identity.
+  interval is always a positive built-in float. Exact `None` permits another
+  retry only when the first post-wait observation proves elapsed monotonic time
+  is finite and at least the requested interval, computed by checked
+  subtraction, and the outer deadline remains positive. That same observation
+  and remaining budget admit the next election without an intervening clock
+  read. Ordinary/malformed wait failure becomes exact
+  `OWNER_ELECTION_FAILED`, while process-control preserves identity.
 - [ ] Repeated contention cannot busy-loop or outlive the cooperative retry
-  window: every completed wait must advance the clock, each iteration recomputes
-  remaining time, and expiry reports exact deadline failure rather than the
-  last contention object. No path performs an extra wait/election after expiry.
+  window: an early/no-op wait fails deadline admission even if the clock moved
+  slightly, each iteration recomputes remaining time, and expiry reports exact
+  deadline failure rather than the last contention object. Consumed contention
+  is folded to a boolean outside its `except` suite; a later deadline/wait error
+  carries no cause, context, note, callback, or retained reference to that
+  contention object. A caller's already-active Python-managed `__context__` may
+  remain, but fixed errors raised `from None` suppress it from formatted output.
+  No path performs an extra wait/election after expiry.
 - [ ] Deterministic matrices cover immediate incumbent/winner, contention then
   incumbent/winner, repeated contention to expiry, every clock boundary,
   poll-capping, strict progress, exact error taxonomy/identity, malformed seam
-  values, process-control, call order/budgets, and no retention after restoring
-  seams. Tests use no sleep.
+  values, process-control, call order/budgets, no retained contention, and no
+  retention after restoring seams. The clock matrix proves checked finite
+  elapsed subtraction and zero redundant observation between a successful wait
+  admission and its retry. One case proves an attempt admitted before the outer
+  deadline may return an exact success after that deadline because P0-012 owns
+  per-attempt success admission and the outer timeout is not a hard wall-clock
+  interrupt. Tests use no sleep.
 - [ ] A real temporary-lock test starts with one canonical owner held, reaches
   an observable bounded wait, releases that owner without a sleep race, and
   proves the waiter returns one exact active owner that blocks another canonical
@@ -180,8 +196,8 @@ bounded owner re-contention tests and all repository checks pass
 
 - Treating any negative discovery or malformed error as retry authority can
   create split brain. Only exact canonical lock contention may wait.
-- A wait that returns without monotonic progress can busy-loop under a broken
-  clock/seam; strict progress fails closed.
+- A wait that returns before its full requested interval can busy-loop under a
+  fast-returning seam; full-interval monotonic progress fails closed.
 - The outer deadline bounds retry admission, not arbitrary synchronous work.
   Each admitted P0-012 attempt independently receives the remaining budget and
   enforces its reviewed cooperative success deadline.
