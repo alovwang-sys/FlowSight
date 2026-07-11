@@ -354,15 +354,21 @@ Quality Governor:
   [run 29164049540](https://github.com/alovwang-sys/FlowSight/actions/runs/29164049540)
   on its first attempt with jobs `86573979812` (Ubuntu 3.12), `86573979817`
   (macOS 3.13), `86573979818` (macOS 3.12), and `86573979819` (Ubuntu 3.13).
-  One later local full-gate run after the test-only hardening passed 2,002 of
-  2,003 tests and failed only the existing Phase 4 tracepoint CPU benchmark;
-  one isolated confirmation reproduced that host-load failure. PERF-001 forbids
-  retry-until-green or threshold changes, so neither was done; the unchanged
-  benchmark passed all four isolated final-CI jobs. The full check correctly
-  retains its partial-scaffold limitation. This evidence proves exact scalar
-  configuration only; it does not prove child launch/READY, descriptor handoff,
-  state publication, requested-port compatibility, reload, SDK attachment, or
-  complete Phase 0.
+  One concurrent local full-gate run after the test-only hardening passed 2,002
+  of 2,003 tests and failed only the existing Phase 4 tracepoint CPU benchmark;
+  one isolated confirmation reproduced that host-load failure. No threshold,
+  skip, or retry loop was introduced. The separately scheduled final required
+  gate run subsequently passed 2,003/2,003 tests and `phase0-sustained`, while
+  the unchanged benchmark also passed all four isolated final-CI jobs.
+  Completion-control commit `24bd0e4f0192decc6b9049fb487752c905ca03ad`
+  passed
+  [run 29164167533](https://github.com/alovwang-sys/FlowSight/actions/runs/29164167533)
+  on its first attempt with jobs `86574298710` (Ubuntu 3.12), `86574298716`
+  (macOS 3.12), `86574298725` (Ubuntu 3.13), and `86574298726` (macOS 3.13).
+  The full check correctly retains its partial-scaffold limitation. This
+  evidence proves exact scalar configuration only; it does not prove child
+  launch/READY, descriptor handoff, state publication, requested-port
+  compatibility, reload, SDK attachment, or complete Phase 0.
 
 ## Failure Queue Items
 
