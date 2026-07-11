@@ -6,7 +6,7 @@
 task_id: P0-003
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-002, TRIAL-004]
@@ -74,23 +74,23 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] Requested/default ports accept only exact built-in integers in the
+- [x] Requested/default ports accept only exact built-in integers in the
   documented ranges; booleans, coercible values, and out-of-range values fail
   before a socket is allocated. Port `0` requests one OS-selected port.
-- [ ] The primitive creates only an `AF_INET`/`SOCK_STREAM` socket, binds only
+- [x] The primitive creates only an `AF_INET`/`SOCK_STREAM` socket, binds only
   `127.0.0.1`, marks the descriptor non-inheritable, calls `listen`, and returns
   that same still-open socket with a real nonzero bound port.
-- [ ] With no explicit port, an available default is retained; only an
+- [x] With no explicit port, an available default is retained; only an
   `EADDRINUSE` conflict falls back through a new atomic bind to port `0`.
-- [ ] An explicit `EADDRINUSE` conflict never falls back and returns the fixed
+- [x] An explicit `EADDRINUSE` conflict never falls back and returns the fixed
   `EXPLICIT_PORT_CONFLICT` code. Non-conflict bind/setup failures use separate
   fixed non-sensitive codes and never expose raw errno, port, or OS text.
-- [ ] Every failed allocation/setup/listen path closes its socket exactly once;
+- [x] Every failed allocation/setup/listen path closes its socket exactly once;
   `KeyboardInterrupt` and `SystemExit` also close the socket and propagate.
-- [ ] While returned, the listening socket exclusively retains its port; after
+- [x] While returned, the listening socket exclusively retains its port; after
   close the test can reacquire it. No runtime/election/state/SQLite behavior is
   introduced.
-- [ ] Focused listener tests, `make test-phase0`, and full repository checks
+- [x] Focused listener tests, `make test-phase0`, and full repository checks
   pass on the supported Python versions.
 
 ## No-Test Reason
@@ -167,9 +167,12 @@ Quality Governor:
 - Notes: focused listener tests passed 72/72 on both local Python versions;
   `make test-phase0` passed 316 tests; `make check` passed 441 tests plus
   format, lint, type, frontend, build, and agent checks; the gate validator
-  passed. Candidate CI is pending. This evidence proves only atomic loopback
-  listener ownership; it does not claim a running sidecar, singleton/reload, or
-  complete Phase 0 acceptance.
+  passed. Candidate `17e65037d0f3ea4ca25604ad63957c9cdc062484`
+  passed [run 29141236329](https://github.com/alovwang-sys/FlowSight/actions/runs/29141236329):
+  Ubuntu 3.12 job `86514729227`, macOS 3.13 job `86514729236`, macOS 3.12 job
+  `86514729243`, and Ubuntu 3.13 job `86514729580`. This evidence proves only
+  atomic loopback listener ownership; it does not claim a running sidecar,
+  singleton/reload, or complete Phase 0 acceptance.
 
 ## Failure Queue Items
 
