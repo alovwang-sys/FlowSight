@@ -21,6 +21,11 @@ from .startup_channel import (
     StartupWriter,
     open_startup_channel,
 )
+from .startup_state import (
+    StartupStateError,
+    StartupStateErrorCode,
+    create_startup_state,
+)
 from .state import (
     LOOPBACK_HOST,
     MAX_STATE_BYTES,
@@ -58,9 +63,12 @@ __all__ = [
     "StartupFailureCode",
     "StartupReader",
     "StartupReady",
+    "StartupStateError",
+    "StartupStateErrorCode",
     "StartupWriter",
     "bind_loopback_listener",
     "create_sidecar_app",
+    "create_startup_state",
     "open_startup_channel",
     "probe_sidecar_health",
 ]
