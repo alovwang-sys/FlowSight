@@ -1769,6 +1769,16 @@ def test_production_ast_stays_inside_one_shot_election_boundary() -> None:
     assert observed_assignment.value.args == []
     assert observed_assignment.value.keywords == []
 
+    raw_observed_writes = [
+        node
+        for node in ast.walk(observe_scope)
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and node.id == "observed"
+    ]
+    assert len(raw_observed_writes) == 1
+    assert raw_observed_writes[0] is observed_assignment.targets[0]
+
     raw_observed_loads = [
         node
         for node in ast.walk(observe_scope)
