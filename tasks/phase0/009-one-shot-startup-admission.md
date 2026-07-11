@@ -6,7 +6,7 @@
 task_id: P0-009
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-006, P0-007, P0-008, TRIAL-004]
@@ -127,21 +127,21 @@ readiness and deterministic cleanup. They may not start a subprocess.
 
 ## Acceptance Criteria
 
-- [ ] `receive_startup_outcome()` accepts only exact `StateStore` and
+- [x] `receive_startup_outcome()` accepts only exact `StateStore` and
   `StartupReader` objects plus an exact built-in `int` or `float` timeout.
   Wrong top-level types and invalid/non-finite/non-positive/over-limit timeouts
   fail with fixed errors before reader field access, clock, receive, or verify.
-- [ ] `receive_startup_outcome`, `StartupAdmissionError`, and
+- [x] `receive_startup_outcome`, `StartupAdmissionError`, and
   `StartupAdmissionErrorCode` are identical exports from `flowsight.sidecar`
   and appear exactly once in its `__all__`. The function signature is exactly
   `(store: StateStore, reader: StartupReader, timeout: float = 0.5) ->
   SidecarState | StartupFailure | None`; the error constructor accepts one
   exact `code` argument and no dynamic detail.
-- [ ] `StartupAdmissionErrorCode` contains only
+- [x] `StartupAdmissionErrorCode` contains only
   `STARTUP_ADMISSION_DEADLINE_FAILED`; `StartupAdmissionError` accepts only that
   exact code and exposes a fixed message/code with no caller value, cause, or
   context. No other new error category is introduced.
-- [ ] Reader preflight uses the captured canonical `StartupReader.fileno`
+- [x] Reader preflight uses the captured canonical `StartupReader.fileno`
   entrypoint, requires an exact built-in descriptor at least `3`, and emits only
   fixed safe errors. Exact P0-006 errors from this direct entrypoint preserve
   identity; an inexact/missing/below-`3` descriptor or any other ordinary
@@ -149,26 +149,26 @@ readiness and deterministic cleanup. They may not start a subprocess.
   `ValueError("reader is invalid")`. A valid reader remains caller-owned and can
   complete a real later channel roundtrip after any preflight or deadline-setup
   failure.
-- [ ] Production captures canonical unbound `StartupReader.fileno` and
+- [x] Production captures canonical unbound `StartupReader.fileno` and
   `StartupReader.receive` and canonical `verify_ready_startup` callables at
   import and invokes them only through separately patchable private helpers.
   This freezes the wrapper's direct dispatch only. The frozen `receive`
   implementation may still call its trusted P0-006 internal method graph
   dynamically; P0-009 neither freezes that graph nor tests runtime replacement
   of an internal method as a supported case.
-- [ ] Each monotonic observation is an exact finite built-in `float`, never
+- [x] Each monotonic observation is an exact finite built-in `float`, never
   regresses from the prior observation, and cannot produce a non-finite or
   non-increasing deadline. A fixed context-free `StartupAdmissionError` raised
   during any pre-transfer deadline or remaining-budget observation leaves the
   reader caller-owned; process-control exceptions preserve identity at those
   same boundaries. Tests prove both initial and immediate pre-receive clock
   failures, rollback, expiry, and overflow with zero receive/verify work.
-- [ ] One monotonic success-admission deadline starts before ownership transfer.
+- [x] One monotonic success-admission deadline starts before ownership transfer.
   A current positive remaining budget is passed to the sole receive; after an
   exact READY, a fresh positive non-regressed remainder is passed to P0-008 and
   a final positive non-regressed remainder is required before state success can
   return. Failure, expiry, or rollback after receive never starts extra work.
-- [ ] The canonical reader receive is invoked at most once. Invocation entry
+- [x] The canonical reader receive is invoked at most once. Invocation entry
   alone is not claimed to have transferred ownership. On supported
   paths after P0-006 invalidates the public handle, READY, explicit failure,
   structured channel error, ordinary failure, or process-control interruption
@@ -176,50 +176,50 @@ readiness and deterministic cleanup. They may not start a subprocess.
   ambiguous close is never retried or misreported as proven physical closure.
   An exception before invalidation leaves caller cleanup responsible, and
   P0-009 never directly closes or retries a descriptor.
-- [ ] An exact valid `StartupFailure` is independently reconstructed as a
+- [x] An exact valid `StartupFailure` is independently reconstructed as a
   distinct equal copy and the exact received object is returned unchanged with
   zero READY verifications, state loads, or health probes. Forged, derived, or
   otherwise inexact failure values return `None` without exposing their fields.
-- [ ] An exact `StartupReady` is independently reconstructed as a distinct equal
+- [x] An exact `StartupReady` is independently reconstructed as a distinct equal
   copy before P0-008. Only a valid exact READY reaches the frozen canonical
   verifier, exactly once, using the exact received object and current positive
   remaining budget. Inexact, derived, forged, or unknown channel results return
   `None` with zero verifier calls, state loads, or health probes.
-- [ ] Only an exact valid `SidecarState` returned by P0-008 can succeed. A
+- [x] Only an exact valid `SidecarState` returned by P0-008 can succeed. A
   separately reconstructed exact copy must be distinct and fully equal; the
   exact verifier result is returned only before the outer deadline. `None`,
   ordinary failure, derived/inexact/schema-invalid/nonfresh/unequal result, or
   late state returns `None`. Provenance is supplied by the frozen canonical
   P0-008 callable; reconstruction validates schema/value integrity but does not
   claim to prove collaborator provenance from values alone.
-- [ ] Exact P0-006 `StartupChannelError` values originating only from the direct
+- [x] Exact P0-006 `StartupChannelError` values originating only from the direct
   canonical fileno/receive stages preserve identity/code/message/cause/context
   and any existing fixed cleanup note. An identical or derived error injected
   by clock, message/state reconstruction, comparison, or READY verification is
   treated as an ordinary collaborator failure, never misreported as a channel
   failure.
-- [ ] Other ordinary post-receive clock/collaborator failures return only
+- [x] Other ordinary post-receive clock/collaborator failures return only
   `None` without logs, output, retained exception, secret detail, or another
   public error taxonomy. A normal return always follows the sole receive, so
   `None` never leaves the reader caller-owned.
-- [ ] `KeyboardInterrupt` and `SystemExit` preserve identity at reader
+- [x] `KeyboardInterrupt` and `SystemExit` preserve identity at reader
   validation, deadline, receive, message reconstruction, READY verification,
   state reconstruction/comparison, and final admission. This wrapper adds no
   note; only P0-006's existing fixed channel-cleanup note may remain.
-- [ ] One unpatched full READY composition runs public API -> real P0-006 pipe
+- [x] One unpatched full READY composition runs public API -> real P0-006 pipe
   -> real P0-008 -> two real temporary state reads around one bounded real
   loopback health response, then proves exact state identity, reader invalidation,
   stable state metadata, dead helper thread, deterministic socket/writer cleanup,
   and no token output. A separate real failure-signal roundtrip returns exact
   safe failure evidence with zero verifier work.
-- [ ] Deterministic unit matrices prove exact order/counts, outer deadline and
+- [x] Deterministic unit matrices prove exact order/counts, outer deadline and
   ownership boundaries, structured-error provenance, and no hidden retry.
   Static AST evidence fixes exactly one canonical receive call site and one
   verifier call site; zero direct close/read/open/load/probe/publish/remove,
   statements or comprehension loops, mutable global/nonlocal cache writes,
   policy imports, or extra public functions prove no process/election/cleanup/
   state-mutation/retry authority entered production.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -275,24 +275,55 @@ one-shot startup admission tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Added and exported one `receive_startup_outcome()` composition boundary that
+  validates exact inputs before transfer, shares one monotonic success deadline,
+  consumes the canonical P0-006 reader once, preserves exact channel failures,
+  returns exact safe child failure evidence, and admits READY only through the
+  frozen canonical P0-008 verifier.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: challenged ownership linearization, exact channel-error
+  provenance, real descriptor cleanup evidence, and exception retention. After
+  fixes, final review reported P0=0/P1=0/P2=0.
+- Reviewer 2: found false-positive gaps in exact import/mutation policy,
+  canonical receive consumption, whole-lifetime thread/socket cleanup, and
+  monkeypatch-backed exception-retention assertions. After fixes, final review
+  reported P0=0/P1=0/P2=0.
 
 Fixer:
-- TBD
+- Applied every accepted finding. The 140-test matrix now performs descriptor
+  assertions before fallback cleanup, proves real canonical consumption before
+  ordinary and process-control failures, fixes exact AST allowlists and mutable
+  cache guards, nests all loopback cleanup, and checks exception retention only
+  after production bindings are restored. No finding was deferred.
 
 Quality Governor:
-- TBD
+- Candidate `657dce0` changes exactly the three allowlisted product/test files.
+  Static and behavioral evidence keep the slice to channel-to-verified-outcome
+  admission with no process, election, owner-lock, stale cleanup, launch, state
+  mutation, retry, background work, or extra authority result. The sustained
+  gate and all four supported CI combinations are green.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: proves one startup-channel outcome admission only, never child,
-  election, cleanup, or launch authority
+- Command: focused startup-admission tests; `make test-phase0`;
+  `make gate-phase0` (including full `make check`); pre-commit
+  `make check-fast`; candidate GitHub Actions matrix
+- Result: passed
+- Notes: focused tests passed 140/140 on local CPython 3.13;
+  `make test-phase0` passed 1,161 tests; the final full check passed 1,286 tests
+  plus formatting, lint, typing, and agent checks, followed by the sustained
+  Phase 0 gate. Candidate
+  `657dce06d4ebc2f74eb714d5a70ab74cd0060eb9` passed
+  [run 29152167988](https://github.com/alovwang-sys/FlowSight/actions/runs/29152167988):
+  macOS 3.12 job `86543273430`, Ubuntu 3.13 job `86543273431`, Ubuntu 3.12 job
+  `86543273432`, and macOS 3.13 job `86543273442`. The real composition test
+  exercises a real P0-006 pipe and P0-008 verification with two temporary state
+  reads around one bounded authenticated loopback health response, while the
+  real failure roundtrip performs zero READY verification. The full check
+  correctly retains the partial-scaffold limitation. This evidence proves one
+  startup-channel outcome admission only; it does not grant child/process,
+  election, cleanup, launch, or complete Phase 0 acceptance.
 
 ## Failure Queue Items
 
