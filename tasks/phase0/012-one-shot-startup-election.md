@@ -143,12 +143,16 @@ sleep-based race.
   remainder is required before acquire, before post-lock discovery, and before
   every successful return. Clock exception, inexact/non-finite value, rollback,
   overflow, or expiry raises exact deadline failure. If an owner is already
-  bound, it is cleaned up once before that error escapes.
+  bound, canonical cleanup is attempted exactly once before that error escapes;
+  physical close is not claimed after an ambiguous failure.
 - [ ] Pre-lock discovery runs exactly once. A normally returned exact
   `SidecarState` is returned unchanged after final deadline admission with zero
   acquire/post-lock-discovery/cleanup calls. A normally returned exact `None`
   is the only result that advances to acquire. Inexact/malformed results or
-  ordinary discovery failure raise fixed election failure, never authority.
+  ordinary failure escaping the wrapper's private discovery call seam raise
+  fixed election failure, never authority. Ordinary failures already normalized
+  by canonical P0-010 to a normal `None` remain indistinguishable negative
+  evidence and are consumed internally.
 - [ ] After trusted pre-lock `None`, canonical `OwnerLock.acquire` is called
   exactly once. Exact `OwnerLockError` raised directly by that call preserves
   identity/code/message/cause/context, including visible `OWNER_LOCK_HELD`, and
@@ -168,20 +172,27 @@ sleep-based race.
 - [ ] Normal state cleanup calls frozen canonical `OwnerLock.__exit__` exactly
   as `(owner, None, None, None)` and requires exact built-in `False`. Cleanup for
   a pending deadline/election error passes that exact error as the active
-  exception with `(owner, type(error), error, None)`. Exact canonical
-  `OwnerLockError` cleanup failure takes precedence; ordinary/malformed cleanup
-  becomes fixed election failure; cleanup process-control propagates. No path
-  retries cleanup or makes a second OS close attempt.
+  exception with `(owner, type(error), error, None)`. Precedence is fixed:
+  - pending state continues to final deadline only after exact `False`; exact
+    cleanup `OwnerLockError` takes precedence, other ordinary/malformed cleanup
+    becomes `OWNER_ELECTION_FAILED`, and cleanup process-control propagates;
+  - pending deadline/election error is re-raised after exact `False`, may receive
+    P0-004's fixed note on canonical ambiguous close, yields to an exact cleanup
+    `OwnerLockError`, and yields to cleanup process-control;
+  - no path retries cleanup or makes a second OS close attempt.
 - [ ] `KeyboardInterrupt`, `SystemExit`, and other process-control
   `BaseException` values raised before owner binding preserve identity with zero
   cleanup. After owner binding, cleanup receives
   `(owner, type(error), error, None)` once. Exact `False` re-raises the original;
-  ordinary/malformed cleanup preserves it with the one fixed P0-004 cleanup
+  ordinary/malformed cleanup—including exact or derived `OwnerLockError` from a
+  fault-injected cleanup seam—preserves it with the one fixed P0-004 cleanup
   note, while a new cleanup process-control exception may replace it. The
   wrapper never reads a dynamic traceback attribute.
 - [ ] Ordinary collaborator failures expose only fixed election errors with no
-  raw cause, formatted context, note, log, output, callback, or retained detail.
-  A caller's already-active Python-managed `__context__` may still exist, but
+  raw cause, formatted context, log, output, callback, or retained detail. They
+  normally carry no note; when their sole active-error cleanup is ambiguous,
+  only P0-004's fixed `sidecar owner lock cleanup failed` note may be added. A
+  caller's already-active Python-managed `__context__` may still exist, but
   fixed errors raised `from None` suppress it from formatted traceback output.
   Production retains no state, owner, exception, or caller input in module
   mutable state.
