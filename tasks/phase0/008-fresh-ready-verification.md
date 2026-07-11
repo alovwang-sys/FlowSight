@@ -44,8 +44,10 @@ authenticated health probe, and a second fully equal trusted state load.
   full-equality composition evidence.
 - Production captures `StateStore.load` once at module import as a private
   unbound callable and invokes it through a separately patchable private helper.
-  This bypasses instance-injected callbacks and later class monkeypatches while
-  keeping deterministic fault injection local to this module's tests.
+  This bypasses an instance-injected `load` callback and a later replacement of
+  `StateStore.load` while keeping deterministic fault injection local to this
+  module's tests. P0-008 trusts the internal method graph already owned by
+  P0-001; freezing that graph would require a separate P0-001 hardening task.
 - The fixed public shape is `verify_ready_startup(store, ready, timeout=0.5) ->
   SidecarState | None`. `None` means only “this READY was not proven”; it never
   means “no sidecar exists” and never grants election, stale cleanup, retry,
@@ -190,8 +192,8 @@ fresh READY verification tests and all repository checks pass
   rotation during the observation window.
 - Treating `None` as election permission can create a split brain; only a later
   owner-lock policy task may decide what happens after verification fails.
-- Calling an injected instance method can execute unknown caller behavior;
-  production must retain the canonical load callable.
+- Calling an injected instance `load` callback can execute unknown caller
+  behavior; production must retain the canonical `StateStore.load` entrypoint.
 - Claiming a hard total timeout over synchronous filesystem calls would create
   a guarantee this slice cannot enforce.
 
