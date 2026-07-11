@@ -6,7 +6,7 @@
 task_id: P0-007
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-002, P0-003, P0-006, TRIAL-004]
@@ -88,55 +88,55 @@ control-plane records; they do not expand the product-code allowlist above.
 
 ## Acceptance Criteria
 
-- [ ] `create_startup_state()` accepts only an exact `StateStore` and exact
+- [x] `create_startup_state()` accepts only an exact `StateStore` and exact
   built-in `socket.socket` structurally satisfying the observable P0-003
   postcondition. Wrong top-level object types raise fixed `TypeError` before
   any store field access, socket inspection, entropy, PID, or clock call.
-- [ ] The listener is revalidated as an open, non-inheritable, listening IPv4
+- [x] The listener is revalidated as an open, non-inheritable, listening IPv4
   TCP socket bound exactly to `127.0.0.1` and a nonzero port. Its port is derived
   from that socket. The factory calls no bind/listen/set/dup/detach/close
   operation; for a listener valid on entry, the same object and FD remain open
   with address, listening state, inheritable flag, and timeout/blocking state
   unchanged after success or failure.
-- [ ] Store validation snapshots exact built-in `project_id` plus exact
+- [x] Store validation snapshots exact built-in `project_id` plus exact
   platform-`Path` `runtime_root`, `runtime_dir`, and `database_path` values. It
   validates project text, absolute paths, and purely recomputes
   `project-<sha256(project_id)[:32]>/events.sqlite3` for exact lexical equality;
   it never reconstructs `StateStore`, resolves/stats/tests a path, or calls a
   store method. The returned project ID and database path come only from that
   snapshot; this does not claim to re-prove filesystem trust.
-- [ ] Each successful call invokes exactly one `secrets.token_hex(16)`, one
+- [x] Each successful call invokes exactly one `secrets.token_hex(16)`, one
   `secrets.token_urlsafe(32)`, one `os.getpid()`, and one `time.time_ns()`.
-- [ ] The startup ID is an exact built-in 32-character lowercase hexadecimal
+- [x] The startup ID is an exact built-in 32-character lowercase hexadecimal
   string compatible with `StartupReady`; the capability token is an exact
   built-in 43-character URL-safe bearer string carrying the fixed 32-byte
   generator request.
-- [ ] PID and timestamp are exact positive built-in integers within the
+- [x] PID and timestamp are exact positive built-in integers within the
   `SidecarState` bounds. Host and protocol/state versions remain their exact v1
   defaults, and the result is an exact freshly revalidated `SidecarState`.
-- [ ] Raising, wrong-exact-type, malformed, or out-of-range monkeypatched
+- [x] Raising, wrong-exact-type, malformed, or out-of-range monkeypatched
   generator, PID, clock, store-field, listener-inspection, or final-schema
   results fail closed and never return a partial state. Entropy quality is
   trusted to the standard-library `secrets` implementation; evidence proves
   exact calls and grammar, not the entropy of a monkeypatched valid constant.
-- [ ] After exact top-level types are accepted, every structural store/listener
+- [x] After exact top-level types are accepted, every structural store/listener
   rejection and ordinary inspection, entropy, PID, clock, generated-value, or
   final-schema failure exposes only a fixed private
   `STARTUP_STATE_GENERATION_FAILED` error with no generated value, token, path,
   PID, errno, OS text, cause, or context. `KeyboardInterrupt` and `SystemExit`
   preserve identity.
-- [ ] The factory accepts and invokes no caller-provided callback and never
+- [x] The factory accepts and invokes no caller-provided callback and never
   logs, caches, prints, or includes the capability token in repr or errors; no
   unknown caller object method is invoked while validating exact inputs.
-- [ ] Real listener/store integration proves
+- [x] Real listener/store integration proves
   `StartupReady(state.startup_id, state.pid, state.port)` constructs,
   `SidecarState.from_wire(state.to_wire()) == state`, and
   `create_sidecar_app(state)` succeeds, while no `StateStore` method is called
   and the project runtime/data paths remain absent.
-- [ ] Deterministic fault matrices cover every input/generation stage and prove
+- [x] Deterministic fault matrices cover every input/generation stage and prove
   zero hidden state I/O, listener mutation/cleanup, process orchestration,
   retry, or sleep behavior.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -183,24 +183,54 @@ exact in-memory startup-state tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Added the exported exact in-memory factory with top-level type preflight,
+  pure lexical store snapshots, non-mutating listener inspection, one-shot
+  identity/token/PID/time generation, fresh state revalidation, and fixed
+  context-free ordinary failures.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: removed unenforceable card claims, then found and closed test
+  false positives around all-interface binding, private filesystem methods,
+  failure logging/output, socket mutation, retries, field boundaries, error
+  repr privacy, OS process APIs, and nested token caching; final review reported
+  P0=0/P1=0/P2=0.
+- Reviewer 2: reproduced that Darwin does not implement `SO_ACCEPTCONN` and
+  confirmed the read-only `TCP_CONNECTION_INFO`/`TCPS_LISTEN` replacement while
+  Linux retains `SO_ACCEPTCONN`. Final implementation review found no remaining
+  defect or Phase 0 scope gap.
 
 Fixer:
-- TBD
+- Applied every accepted finding. Store checks now prove only exact lexical
+  invariants without filesystem access; listener checks use the supported
+  platform kernel query without mutation; the 129-test matrix pins every
+  input/generation stage, private failure, process-control path, no-retry
+  prefix, and forbidden side effect. No finding was deferred.
 
 Quality Governor:
-- TBD
+- Final review reported P0=0/P1=0/P2=0. Candidate `84b3bfd` changes exactly the
+  three allowlisted files and remains one Phase 0 in-memory factory: it performs
+  no state I/O/publication, listener mutation, lock, health, startup-channel,
+  HTTP, process, thread, queue, SQLite, runtime, or SDK lifecycle behavior. The
+  sustained gate and supported CI matrix are green.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: proves in-memory startup identity generation only, not publication or
-  runtime startup
+- Command: focused startup-state tests; `make test-phase0`; `make gate-phase0`
+  (including full `make check`); pre-commit `make check-fast`; candidate GitHub
+  Actions matrix
+- Result: passed
+- Notes: focused tests passed 129/129 on local CPython 3.13; `make test-phase0`
+  passed 886 tests; the final full check passed 1,011 tests plus formatting,
+  lint, typing, and agent checks, followed by the sustained Phase 0 gate.
+  Candidate `84b3bfda5682a34fcc443926eef05e6d8a1a6e1e` passed
+  [run 29148633310](https://github.com/alovwang-sys/FlowSight/actions/runs/29148633310):
+  macOS 3.13 job `86534381298`, Ubuntu 3.13 job `86534381303`, macOS 3.12 job
+  `86534381305`, and Ubuntu 3.12 job `86534381311`. The matrix exercises the
+  real Darwin and Linux listening-state branches. The full check correctly
+  retains the partial-scaffold limitation. This evidence proves exact in-memory
+  startup identity generation only; it does not prove state publication,
+  election, process launch/readiness, health, runtime lifecycle, or complete
+  Phase 0 acceptance.
 
 ## Failure Queue Items
 
