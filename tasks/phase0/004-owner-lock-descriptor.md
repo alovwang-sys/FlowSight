@@ -6,7 +6,7 @@
 task_id: P0-004
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-003, TRIAL-004]
@@ -78,35 +78,35 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] `OwnerLock.acquire()` accepts an exact `StateStore`, descriptor-anchors
+- [x] `OwnerLock.acquire()` accepts an exact `StateStore`, descriptor-anchors
   creation/opening of the fixed project owner-lock file, and requires a regular
   empty current-user `0600` file with one link and `O_RDWR` access.
-- [ ] Acquisition is a single `LOCK_EX | LOCK_NB` attempt. Genuine contention
+- [x] Acquisition is a single `LOCK_EX | LOCK_NB` attempt. Genuine contention
   returns fixed `OWNER_LOCK_HELD`; all other filesystem/flock failures return a
   separate fixed non-sensitive error and never repair or follow an unsafe file.
-- [ ] A successful handle owns one non-inheritable descriptor, has a fixed safe
+- [x] A successful handle owns one non-inheritable descriptor, has a fixed safe
   repr, exposes only `fileno()`, and provides idempotent close/context-manager
   cleanup without ever calling `LOCK_UN` or unlinking the lock file.
-- [ ] `OwnerLock.adopt_inherited()` consumes an exact built-in descriptor at
+- [x] `OwnerLock.adopt_inherited()` consumes an exact built-in descriptor at
   least `3`, then verifies regular/current-user/`0600`/single-link/empty/
   `O_RDWR`, exact canonical lock inode and project directory, and restores
   non-inheritable status before returning.
-- [ ] Adoption proves continuity rather than acquiring a new lock: an
+- [x] Adoption proves continuity rather than acquiring a new lock: an
   independently opened canonical probe must be blocked while reasserting
   `LOCK_EX | LOCK_NB` on the candidate succeeds. Unheld, shared-lock, separate
   open-file-description, wrong-inode, replaced-path, pipe/socket/directory,
   closed, and malformed descriptors fail closed and are consumed exactly once.
-- [ ] A real exec + `pass_fds` test proves gapless continuity: after parent
+- [x] A real exec + `pass_fds` test proves gapless continuity: after parent
   close, a third process remains blocked while the child holds the inherited
   descriptor; only the child's last close allows the same persistent inode to
   be acquired again. Independent exec contenders prove exactly one winner.
-- [ ] Every allocated/consumed descriptor is closed at most once on failure.
+- [x] Every allocated/consumed descriptor is closed at most once on failure.
   Close errors become fixed visible cleanup failures without retrying an
   ambiguous integer; `KeyboardInterrupt`/`SystemExit` propagate with only fixed
   cleanup notes where necessary.
-- [ ] Public errors have exact fixed messages/codes and expose no path, file
+- [x] Public errors have exact fixed messages/codes and expose no path, file
   descriptor, inode, errno, raw OS text, cause, context, or sensitive note.
-- [ ] Focused owner-lock tests, `make test-phase0`, and full repository checks
+- [x] Focused owner-lock tests, `make test-phase0`, and full repository checks
   pass on the supported OS/Python matrix.
 
 ## No-Test Reason
@@ -187,12 +187,15 @@ Quality Governor:
 - Command: focused owner-lock tests on CPython 3.12/3.13; `make test-phase0`;
   `make check`; `make check-fast`; phase0-sustained validator; candidate GitHub
   Actions matrix
-- Result: local checks passed; candidate CI pending
+- Result: passed
 - Notes: focused owner-lock tests passed 120/120 on both local Python versions;
   `make test-phase0` passed 436 tests; `make check` passed 561 tests plus format,
   lint, type, frontend, build, and agent checks; `make check-fast` and the gate
-  validator passed. Candidate CI is pending. The full check correctly retains
-  the partial-scaffold limitation. This evidence proves only owner-lock
+  validator passed. Candidate `a7274c9d80ba84de56655b0efd9a53211fcb750f`
+  passed [run 29143198236](https://github.com/alovwang-sys/FlowSight/actions/runs/29143198236):
+  macOS 3.12 job `86520058656`, Ubuntu 3.12 job `86520058667`, Ubuntu 3.13
+  job `86520058671`, and macOS 3.13 job `86520058687`. The full check correctly
+  retains the partial-scaffold limitation. This evidence proves only owner-lock
   descriptor acquisition/adoption and exec continuity, not election, a running
   singleton, reload orchestration, or complete Phase 0 acceptance.
 
