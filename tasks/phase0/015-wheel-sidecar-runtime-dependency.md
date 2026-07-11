@@ -292,6 +292,10 @@ Adversarial Reviewer:
   descendant after the leader exited. All three were fixed with exact command
   tuples, `socket.*` rejection, and a real reverse-lifecycle regression. Two
   independent final reviews reported P0/P1 = 0 and GO.
+- CI-fix review confirmed that macOS `EPERM` from a zero-signal process-group
+  probe must conservatively mean “still exists.” The bounded poll now succeeds
+  only on `ESRCH`; persistent `EPERM` still fails at the existing deadline.
+  Two independent final reviews again reported P0/P1 = 0 and GO.
 
 Fixer:
 - Codex primary accepted all five P1 findings and both wording clarifications
@@ -299,6 +303,8 @@ Fixer:
   was expanded.
 - Codex primary accepted every implementation P1 and added focused regressions;
   no implementation finding was deferred.
+- Codex primary diagnosed the first implementation matrix failure from its job
+  log and added only the portable `EPERM` classification plus its regression.
 
 Quality Governor:
 - Codex primary confirmed one Phase 0 packaging/dependency slice, complete
@@ -329,6 +335,18 @@ Quality Governor:
 - Result: 2015 passed in 91.07 seconds; `phase0-sustained` gate passed
 - Notes: local macOS CPython 3.13 evidence is complete. Cross-platform
   implementation evidence is pending the pushed GitHub Actions matrix.
+- GitHub Actions: [run 29165605012](https://github.com/alovwang-sys/FlowSight/actions/runs/29165605012)
+- Result: macOS/Python 3.13 exposed one deterministic portability failure;
+  `killpg(pgid, 0)` returned `EPERM` while the killed group was awaiting
+  disappearance. The other three jobs were cancelled by matrix fail-fast.
+- Command: `.venv/bin/python -m pytest tests/packaging/test_wheel_runtime_dependency.py`
+- Result: 13 passed in 28.75 seconds after the portability fix
+- Command: `make check`
+- Result: 2016 passed in 85.69 seconds; partial-scaffold limitation retained
+- Command: `make gate-phase0`
+- Result: 2016 passed in 87.90 seconds; `phase0-sustained` gate passed
+- Notes: the implementation matrix rerun remains pending; the failed candidate
+  is retained as regression evidence rather than reported as acceptance.
 
 ## Failure Queue Items
 

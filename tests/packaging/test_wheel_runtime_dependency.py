@@ -284,6 +284,8 @@ def _process_group_exists(process_group_id: int) -> bool:
         os.killpg(process_group_id, 0)
     except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
     return True
 
 
@@ -753,6 +755,19 @@ def test_checked_command_kills_descendant_process_group_on_timeout(tmp_path: Pat
     assert child_match is not None
     _assert_process_absent(int(child_match.group(1)))
     _assert_process_absent(failure.process_id)
+
+
+def test_process_group_permission_error_is_not_treated_as_absence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def deny_group_probe(process_group_id: int, signal_number: int) -> None:
+        assert process_group_id == 12345
+        assert signal_number == 0
+        raise PermissionError
+
+    monkeypatch.setattr(os, "killpg", deny_group_probe)
+
+    assert _process_group_exists(12345) is True
 
 
 def test_checked_command_kills_group_after_leader_exits_on_term(tmp_path: Path) -> None:
