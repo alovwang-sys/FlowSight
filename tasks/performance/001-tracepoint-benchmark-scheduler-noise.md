@@ -6,7 +6,7 @@
 task_id: PERF-001
 release: v1
 task_type: spike
-status: review
+status: complete
 primary_phase: phase4
 impacted_phases: []
 depends_on: [TRIAL-005]
