@@ -8,6 +8,7 @@ from .child_bootstrap import (
     decode_sidecar_child_bootstrap,
     encode_sidecar_child_bootstrap,
 )
+from .child_preparation import prepare_sidecar_child
 from .health import probe_sidecar_health
 from .listener import (
     DEFAULT_SIDECAR_PORT,
@@ -103,6 +104,7 @@ __all__ = [
     "encode_sidecar_child_bootstrap",
     "open_startup_channel",
     "probe_sidecar_health",
+    "prepare_sidecar_child",
     "prepare_sidecar_runtime_config",
     "receive_startup_outcome",
     "resolve_owner_election",
