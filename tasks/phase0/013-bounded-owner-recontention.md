@@ -6,7 +6,7 @@
 task_id: P0-013
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-012, TRIAL-004]
@@ -105,37 +105,37 @@ bounded joins. They may not use sleep-based races or start a subprocess.
 
 ## Acceptance Criteria
 
-- [ ] `wait_for_owner_election()` accepts only an exact `StateStore` and exact
+- [x] `wait_for_owner_election()` accepts only an exact `StateStore` and exact
   built-in `int` or `float` timeout. Wrong types and invalid/non-finite/
   non-positive/over-30-second values fail with P0-012's fixed preflight messages
   before clock, election, wait, or retry work.
-- [ ] `wait_for_owner_election` is an identical `flowsight.sidecar` export,
+- [x] `wait_for_owner_election` is an identical `flowsight.sidecar` export,
   occurs exactly once in `__all__`, and has the exact signature
   `(store: StateStore, timeout: float = 0.5) -> SidecarState | OwnerLock`.
   This task adds no public result wrapper, `None`, boolean, callback, error
   type, error code, or poll-cadence argument.
-- [ ] Production captures canonical `resolve_owner_election`, monotonic clock,
+- [x] Production captures canonical `resolve_owner_election`, monotonic clock,
   and wait operation at import and calls them only through private test seams.
   Replacing public attributes later cannot change direct dispatch. Private seam
   replacement remains fault injection, not a provenance/security boundary.
-- [ ] After preflight, one exact finite non-regressing monotonic deadline bounds
+- [x] After preflight, one exact finite non-regressing monotonic deadline bounds
   all retry admission and waiting. Before every election and wait there is a
   positive remaining budget; each election receives that current budget. An
   ordinary clock `Exception`, inexact/non-finite observation, rollback, overflow,
   insufficient elapsed time across a completed wait, or expiry raises exact
   `OWNER_ELECTION_DEADLINE_FAILED` with no later election/wait.
-- [ ] The first canonical P0-012 election runs immediately with no wait. An
+- [x] The first canonical P0-012 election runs immediately with no wait. An
   exact `SidecarState` or `OwnerLock` result is returned unchanged and ends the
   operation. The wrapper does not read fields, call `fileno`, close/release the
   owner, or make another clock/election/wait call after success.
-- [ ] Only an exact `OwnerLockError` carrying exact
+- [x] Only an exact `OwnerLockError` carrying exact
   `OwnerLockErrorCode.OWNER_LOCK_HELD` enters the wait path. Every other exact
   P0-004 or P0-012 error preserves identity/code/message/cause/context with zero
   wait/retry; derived, malformed, or ordinary private-seam failure becomes the
   fixed `OWNER_ELECTION_FAILED`. Every non-`Exception` `BaseException` from the
   clock, election, or wait preserves identity and ends the operation with no
   later clock/election/wait.
-- [ ] Each contention admitted to waiting with a positive remaining budget
+- [x] Each contention admitted to waiting with a positive remaining budget
   performs one wait of exactly
   `min(0.025, current_remaining)` seconds through the frozen operation. The
   interval is always a positive built-in float. Exact `None` permits another
@@ -145,7 +145,7 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   and remaining budget admit the next election without an intervening clock
   read. Ordinary/malformed wait failure becomes exact
   `OWNER_ELECTION_FAILED`, while process-control preserves identity.
-- [ ] Repeated contention cannot busy-loop or outlive the cooperative retry
+- [x] Repeated contention cannot busy-loop or outlive the cooperative retry
   window: an early/no-op wait fails deadline admission even if the clock moved
   slightly, each iteration recomputes remaining time, and expiry reports exact
   deadline failure rather than the last contention object. Consumed contention
@@ -154,7 +154,7 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   contention object. A caller's already-active Python-managed `__context__` may
   remain, but fixed errors raised `from None` suppress it from formatted output.
   No path performs an extra wait/election after expiry.
-- [ ] Deterministic matrices cover immediate incumbent/winner, contention then
+- [x] Deterministic matrices cover immediate incumbent/winner, contention then
   incumbent/winner, repeated contention to expiry, every clock boundary,
   poll-capping, strict progress, exact error taxonomy/identity, malformed seam
   values, process-control, call order/budgets, no retained contention, and no
@@ -164,17 +164,17 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   deadline may return an exact success after that deadline because P0-012 owns
   per-attempt success admission and the outer timeout is not a hard wall-clock
   interrupt. Tests use no sleep.
-- [ ] A real temporary-lock test starts with one canonical owner held, reaches
+- [x] A real temporary-lock test starts with one canonical owner held, reaches
   an observable bounded wait, releases that owner without a sleep race, and
   proves the waiter returns one exact active owner that blocks another canonical
   acquire until caller close. A separate injected sequence proves state
   published during contention is returned unchanged.
-- [ ] Static evidence permits only validation, clock/deadline arithmetic,
+- [x] Static evidence permits only validation, clock/deadline arithmetic,
   canonical P0-012 election, one fixed 25 ms wait, fixed errors, and the bounded
   retry loop. It rejects state/process/listener/channel/SQLite/runtime/SDK calls,
   owner inspection/cleanup/adoption, logging/output, callbacks, mutable state,
   comprehensions, async work, and caches without copying P0-012 internals.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -224,7 +224,12 @@ bounded owner re-contention tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Codex primary implemented the fixed public bounded-wait composition in
+  candidate `b107a15`: exact preflight, frozen canonical election/clock/wait
+  dispatch, one 25 ms capped poll, checked full-interval progress, direct reuse
+  of the post-wait remaining budget, and exact success/error transfer. The
+  implementation adds no process, state mutation, descriptor handoff, runtime,
+  SQLite, SDK, or telemetry behavior.
 
 Adversarial Reviewer:
 - Reviewer 1: pre-implementation contract review found early-return busy-loop,
@@ -234,21 +239,47 @@ Adversarial Reviewer:
 - Reviewer 2: implementability review verified exact-error bare re-raise,
   fixed-error creation outside `except`, checked elapsed subtraction, and direct
   reuse of the first post-wait budget. Final P0/P1/P2 = 0 and GO.
+- Reviewer 3: production adversary verified malformed/missing error-code
+  normalization, consumed-contention isolation, full-interval progress,
+  decreasing budgets, process-control identity, frozen dispatch, and move-only
+  owner transfer. Final P0/P1/P2 = 0 and GO.
+- Reviewer 4: test adversary found a nested-function AST false-green, one
+  literal `sleep(0)` evidence violation, and a missing exact-int timeout branch.
+  After fixes, the suite proves every function is top-level, uses identity plus
+  AST evidence without sleeping, and covers `31` plus a huge exact integer.
+  Final P0/P1/P2 = 0 and GO.
 
 Fixer:
-- Codex primary accepted all planned-contract findings; none were deferred.
+- Codex primary accepted all planned-contract and implementation findings,
+  including safe missing-code handling, nested-helper rejection, no-sleep
+  frozen dispatch evidence, and exact-int timeout boundaries. None were
+  deferred.
 
 Quality Governor:
 - Pre-implementation scope review confirmed one Phase 0 election-policy slice
   with no process/runtime/state/SDK expansion. Its two P2 wording/verification
   findings were task-owner approved and accepted immediately after activation;
-  observable behavior was unchanged. P0/P1 = 0 and GO.
+  observable behavior was unchanged. Final allowed-file and diff review found
+  only the three named product/test files plus this control record, no scope
+  override or dependency change, and P0/P1/P2 = 0 with GO.
 
 ## Verifier Evidence
 
-- Command: TBD
-- Result: TBD
-- Notes: TBD
+- Command: focused startup-wait tests; `make test-phase0`; `make gate-phase0`
+  (including full `make check`); pre-commit `make check-fast`; candidate GitHub
+  Actions matrix
+- Result: passed
+- Notes: focused tests passed 98/98; `make test-phase0` passed 1,542 tests;
+  embedded `make check` passed 1,667 tests plus formatting, lint, typing, and
+  agent checks; the sustained Phase 0 gate passed on local CPython 3.13.5.
+  Candidate `b107a1590aed257076e1ed66a4e18a33b35bad37` passed
+  [run 29160332404](https://github.com/alovwang-sys/FlowSight/actions/runs/29160332404)
+  on its first attempt with jobs `86564216131` (Ubuntu 3.12), `86564216139`
+  (Ubuntu 3.13), `86564216140` (macOS 3.13), and `86564216145` (macOS 3.12).
+  The full check correctly retains the partial-scaffold limitation. This proves
+  bounded re-contention policy only; it does not prove child launch/READY,
+  descriptor handoff, state publication, requested-port policy, reload, SDK
+  attachment, or complete Phase 0.
 
 ## Failure Queue Items
 
