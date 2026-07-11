@@ -45,6 +45,11 @@ sidecar configuration before any child handoff or process launch.
   `prepare_sidecar_runtime_config(project_root: str | Path, *, requested_port: int | None = None, startup_timeout: float = 5.0) -> SidecarRuntimeConfig`.
 - This task does not change `FlowSight`. A later SDK lifecycle task will map its
   existing `project_root` and `ui_port` inputs to this already-reviewed factory.
+- Codex primary, acting as task owner, approved the post-activation
+  clarification that fixed `__reduce__`, `__reduce_ex__`, and `__getstate__`
+  rejection guards enforce the existing no-serializer boundary. They create no
+  wire format or alternate instance and change no goal, allowed file, phase, or
+  scope override.
 - Source of truth:
   - `docs/flowsight-mvp-design.md` sections 4.1, 4.2, 4.4, 7.4, and Phase 0
   - `spikes/sidecar_otel/RESULT.md` promotion requirements
@@ -122,7 +127,10 @@ control-plane records; they do not expand the product-code allowlist above.
 - [ ] `SidecarRuntimeConfig` and `prepare_sidecar_runtime_config` are identical
   `flowsight.sidecar` exports and each occurs exactly once in `__all__`. The
   preparation function has the exact fixed signature and adds no alternate
-  constructor, wire helper, public result wrapper, or extra field.
+  constructor, wire helper, public result wrapper, or extra field. Copy,
+  deepcopy, and pickle serialization fail before producing a side result with
+  exact context-free `TypeError("SidecarRuntimeConfig cannot be serialized")`;
+  the three fixed rejection guards are not serializers.
 - [ ] `project_root` accepts only an exact built-in `str` or exact platform
   `Path`. It resolves strictly to an existing directory other than the
   filesystem root; relative, absolute, and symlink aliases of one directory
@@ -245,11 +253,13 @@ exact sidecar runtime-configuration tests and all repository checks pass
 
 ## Risks
 
-- Distinct aliases of one project root must not create duplicate sidecars or
-  source-sandbox identities.
-- Canonical strings establish lexical identity only. They do not prove inode
-  continuity or eliminate TOCTOU; Phase 2 source access must still enforce
-  realpath/descriptor containment for every read.
+- Supported relative, absolute, and symlink aliases of one project root must
+  not create duplicate sidecars or source-sandbox identities.
+- Canonical strings establish lexical identity only. This slice does not unify
+  case-only spellings on case-insensitive volumes, hard-link aliases, or bind
+  mounts, and it does not prove inode continuity or eliminate TOCTOU. Phase 2
+  source access must still enforce realpath/descriptor containment for every
+  read.
 - Passing `runtime_dir` instead of `runtime_root` to a child would make
   `StateStore` add a second `project-<digest>` layer and split ownership.
 - Treating `bool`, a derived integer, `None`, or port `0` as interchangeable can
@@ -261,8 +271,9 @@ exact sidecar runtime-configuration tests and all repository checks pass
 
 ## Reviewer Focus
 
-- Can path aliases, platformdirs failure, a malformed injected result, coercion, or
-  malformed path create a different successful project/runtime identity?
+- Can a supported relative/absolute/symlink alias, platformdirs failure, a
+  malformed injected result, coercion, or malformed path create a different
+  successful project/runtime identity?
 - Does any output or retained object expose a path or caller-controlled value?
 - Did the task stop before handoff, process, listener, election, state mutation,
   requested-port policy, SDK lifecycle, source scanning, and wire format?
@@ -272,7 +283,13 @@ exact sidecar runtime-configuration tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Codex primary implemented one inert Phase 0 scalar-preflight slice: the exact
+  frozen `SidecarRuntimeConfig`, strict canonical project-root identity,
+  versioned project digest, frozen platformdirs lookup, inert P0-001
+  `StateStore` root normalization, exact port/timeout admission, package
+  exports, and the selected direct runtime dependency pin. It adds no child
+  protocol, process, listener, state mutation, SDK lifecycle, source scan,
+  storage, OTel, or UI behavior.
 
 Adversarial Reviewer:
 - Reviewer 1: design/contract review found missing canonical project-root
@@ -285,24 +302,49 @@ Adversarial Reviewer:
   wording, and an ambiguous raw digest separator. After exact messages/order,
   pre-StateStore fail-closed checks, exact result/dictionary fields, and an
   independently fixed digest fixture were required, final P0/P1/P2 = 0 and GO.
+- Reviewer 3: production adversary found direct `__new__` construction and an
+  exact-dictionary hostile-key collision that could invoke caller-controlled
+  `__eq__`. The final implementation blocks direct construction in `__new__`
+  and rejects every inexact dictionary key before lookup; the malicious-key
+  probe observes zero protocol calls. Case-only, hard-link, and bind-mount
+  equivalence remain explicitly outside this lexical identity contract. Final
+  P0/P1/P2 = 0 and GO.
+- Reviewer 4: test adversary found a keyword-`self` constructor hole, weak
+  dependency-name detection, missing independent temporary-root digests,
+  missing parent-alias/runtime-root and inexact-fsencode evidence, and several
+  static-evidence escape routes. The final suite closes each gap, locks the
+  reviewed production choreography, and rejects alternate helpers, callbacks,
+  mutable module state, dynamic dispatch, and out-of-scope calls. Final
+  P0/P1/P2 = 0 and GO.
 
 Fixer:
-- Codex primary accepted all pre-implementation findings. The final contract
-  permits platformdirs/stdlib availability probes but no FlowSight target
-  mutation, propagates process-control at every seam, and defines one exact
-  lexical identity without claiming inode continuity. None were deferred.
+- Codex primary accepted every contract and implementation finding. The final
+  boundary permits platformdirs/stdlib availability probes but no FlowSight
+  target mutation, propagates process-control at every captured dependency and
+  operation seam, blocks serialization and alternate construction, and defines
+  one exact lexical identity without claiming inode continuity. None were
+  deferred.
 
 Quality Governor:
 - Independent scope review confirmed one inert Phase 0 scalar-preflight slice
   with the MVP-selected platformdirs dependency. It stops before SDK lifecycle,
   child handoff, wire format, process, listener, election, source scanning,
-  storage, and UI behavior. P0/P1/P2 = 0 and GO.
+  storage, and UI behavior. Final implementation review found changes only in
+  the four product/test allowlist files plus this task card. P0/P1/P2 = 0 and
+  GO.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: planned task only; no implementation evidence yet.
+- Command: focused runtime-config tests; `make test-phase0`; `make check`;
+  `make gate-phase0`
+- Result: passed locally; candidate CI pending
+- Notes: focused tests passed 289/289; Phase 0 tests passed 1,868/1,868;
+  formatting, lint, strict production typing, agent-system checks, and the full
+  repository suite passed 1,993/1,993 on local CPython 3.13.5; the sustained
+  Phase 0 gate passed. The full check correctly retains its partial-scaffold
+  limitation. This evidence proves exact scalar configuration only; it does not
+  prove child launch/READY, descriptor handoff, state publication,
+  requested-port compatibility, reload, SDK attachment, or complete Phase 0.
 
 ## Failure Queue Items
 

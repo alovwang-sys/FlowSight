@@ -9,6 +9,7 @@ from .listener import (
     bind_loopback_listener,
 )
 from .owner_lock import OwnerLock, OwnerLockError, OwnerLockErrorCode
+from .runtime_config import SidecarRuntimeConfig, prepare_sidecar_runtime_config
 from .startup_admission import (
     StartupAdmissionError,
     StartupAdmissionErrorCode,
@@ -62,6 +63,7 @@ __all__ = [
     "OwnerLock",
     "OwnerLockError",
     "OwnerLockErrorCode",
+    "SidecarRuntimeConfig",
     "OwnerElectionError",
     "OwnerElectionErrorCode",
     "PROTOCOL_VERSION",
@@ -89,6 +91,7 @@ __all__ = [
     "discover_existing_startup",
     "open_startup_channel",
     "probe_sidecar_health",
+    "prepare_sidecar_runtime_config",
     "receive_startup_outcome",
     "resolve_owner_election",
     "verify_ready_startup",
