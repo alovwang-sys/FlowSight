@@ -67,6 +67,66 @@ OPERATION_POINTS = tuple(
     (name, OPERATION_SEQUENCE[: index + 1].count(name))
     for index, name in enumerate(OPERATION_SEQUENCE)
 )
+EXPECTED_SIDECAR_EXPORTS = (
+    "LOOPBACK_HOST",
+    "MAX_PRIVATE_BODY_BYTES",
+    "MAX_STARTUP_SIGNAL_BYTES",
+    "MAX_STATE_BYTES",
+    "DEFAULT_SIDECAR_PORT",
+    "ListenerBindError",
+    "ListenerErrorCode",
+    "OwnerLock",
+    "OwnerLockError",
+    "OwnerLockErrorCode",
+    "SidecarRuntimeConfig",
+    "OwnerElectionError",
+    "OwnerElectionErrorCode",
+    "PROTOCOL_VERSION",
+    "STATE_SCHEMA_VERSION",
+    "STARTUP_CHANNEL_SCHEMA_VERSION",
+    "InvalidStateError",
+    "SidecarState",
+    "StateBusyError",
+    "StateStorageError",
+    "StateStore",
+    "StartupChannelError",
+    "StartupChannelErrorCode",
+    "StartupAdmissionError",
+    "StartupAdmissionErrorCode",
+    "StartupFailure",
+    "StartupFailureCode",
+    "StartupReader",
+    "StartupReady",
+    "StartupStateError",
+    "StartupStateErrorCode",
+    "StartupWriter",
+    "bind_loopback_listener",
+    "create_sidecar_app",
+    "create_startup_state",
+    "discover_existing_startup",
+    "open_startup_channel",
+    "probe_sidecar_health",
+    "prepare_sidecar_runtime_config",
+    "receive_startup_outcome",
+    "resolve_owner_election",
+    "verify_ready_startup",
+    "wait_for_owner_election",
+)
+EXPECTED_SIDECAR_SUBMODULES = {
+    "app",
+    "health",
+    "listener",
+    "owner_lock",
+    "runtime_config",
+    "startup_admission",
+    "startup_channel",
+    "startup_discovery",
+    "startup_election",
+    "startup_state",
+    "startup_verification",
+    "startup_wait",
+    "state",
+}
 
 
 class _TextSubclass(str):
@@ -211,6 +271,10 @@ def test_public_exports_and_signature_are_exact() -> None:
     assert sidecar_package.prepare_sidecar_runtime_config is prepare_sidecar_runtime_config
     assert sidecar_package.__all__.count("SidecarRuntimeConfig") == 1
     assert sidecar_package.__all__.count("prepare_sidecar_runtime_config") == 1
+    assert tuple(sidecar_package.__all__) == EXPECTED_SIDECAR_EXPORTS
+    assert {name for name in vars(sidecar_package) if not name.startswith("_")} == set(
+        EXPECTED_SIDECAR_EXPORTS
+    ) | EXPECTED_SIDECAR_SUBMODULES
     assert [
         name
         for name in sidecar_package.__all__
@@ -351,6 +415,37 @@ def test_config_is_frozen_slot_only_value_with_private_repr(
         weakref.ref(config)
 
 
+def test_each_config_field_participates_in_value_equality(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, _runtime_root, _calls = _prepare(monkeypatch, tmp_path)
+    original = {
+        field_name: object.__getattribute__(config, field_name)
+        for field_name in SidecarRuntimeConfig.__slots__
+    }
+    replacements: dict[str, object] = {
+        "project_root": f"{config.project_root}-different",
+        "runtime_root": f"{config.runtime_root}-different",
+        "project_id": "project-v1-" + "0" * 64,
+        "requested_port": 0,
+        "startup_timeout": 6.0,
+    }
+
+    for changed_field, replacement in replacements.items():
+        variant = object.__new__(config_module._CONFIG_TYPE)
+        for field_name, value in original.items():
+            object.__setattr__(
+                variant,
+                field_name,
+                replacement if field_name == changed_field else value,
+            )
+        assert config != variant
+        assert variant != config
+
+    assert config.__eq__(object()) is NotImplemented
+
+
 @pytest.mark.parametrize(
     "operation",
     [
@@ -451,6 +546,30 @@ def test_relative_absolute_and_symlink_aliases_have_one_identity(
         linked.requested_port,
         linked.startup_timeout,
     ) == retained_scalars
+
+
+def test_project_resolution_uses_exact_strict_true_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = _project(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    _install_runtime_provider(monkeypatch, runtime_root)
+    real_realpath = config_module._REALPATH
+    calls: list[tuple[str, bool]] = []
+
+    def strict_realpath(value: str, *, strict: bool) -> str:
+        assert type(value) is str and value == str(project_root)
+        assert type(strict) is bool and strict is True
+        calls.append((value, strict))
+        return real_realpath(value, strict=strict)
+
+    monkeypatch.setattr(config_module, "_REALPATH", strict_realpath)
+
+    config = prepare_sidecar_runtime_config(project_root)
+
+    assert type(config) is SidecarRuntimeConfig
+    assert calls == [(str(project_root), True)]
 
 
 def test_distinct_project_roots_have_distinct_fixed_identity(
@@ -600,7 +719,15 @@ def test_startup_timeout_accepts_exact_boundaries_as_float(
 
 @pytest.mark.parametrize(
     "invalid_text",
-    ["", "bad\x00root", "bad\nroot", "bad\x7froot", "x" * 4097, "é" * 3000],
+    [
+        "",
+        "bad\x00root",
+        "bad\nroot",
+        "bad\x1froot",
+        "bad\x7froot",
+        "x" * 4097,
+        "é" * 3000,
+    ],
 )
 def test_project_root_rejects_invalid_text_before_resolution(
     monkeypatch: pytest.MonkeyPatch,
@@ -737,6 +864,33 @@ def test_inexact_fsencoded_bytes_fail_at_each_path_stage_without_later_work(
     assert events == expected_events
 
 
+@pytest.mark.parametrize("malformed_encoded", [b"", b"x" * 4097, object()])
+def test_malformed_fsencoded_project_text_stops_before_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    malformed_encoded: object,
+) -> None:
+    project_root = _project(tmp_path)
+    events: list[str] = []
+    monkeypatch.setattr(config_module, "_fsencode", lambda _value: malformed_encoded)
+    monkeypatch.setattr(
+        config_module,
+        "_resolve_project_root",
+        lambda _value: events.append("resolve"),
+    )
+    monkeypatch.setattr(
+        config_module,
+        "_query_user_runtime_path",
+        lambda: events.append("runtime"),
+    )
+
+    with pytest.raises(ValueError) as captured:
+        prepare_sidecar_runtime_config(project_root)
+
+    _assert_exact_error(captured.value, ValueError, PROJECT_VALUE_ERROR)
+    assert events == []
+
+
 @pytest.mark.parametrize(
     "malformed_digest",
     [object(), _TextSubclass("0" * 64), "0" * 63, "G" * 64],
@@ -766,18 +920,45 @@ def test_malformed_digest_fails_fixed_before_platformdirs(
     assert events == []
 
 
-def test_control_free_rule_allows_ord_128_for_project_and_runtime_paths(
+@pytest.mark.parametrize("allowed_character", [" ", "\x80"], ids=["space", "ord-128"])
+def test_control_free_rule_allows_boundary_characters_for_project_and_runtime_paths(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    allowed_character: str,
 ) -> None:
-    project_root = _project(tmp_path, "project-\x80-allowed")
-    runtime_root = tmp_path / "runtime-\x80-allowed"
+    project_root = _project(tmp_path, f"project-{allowed_character}-allowed")
+    runtime_root = tmp_path / f"runtime-{allowed_character}-allowed"
     _install_runtime_provider(monkeypatch, runtime_root)
 
     config = prepare_sidecar_runtime_config(project_root)
 
     assert config.project_root == str(project_root.resolve(strict=True))
     assert config.runtime_root == str(runtime_root)
+
+
+@pytest.mark.parametrize(
+    ("seam", "error_type", "message"),
+    [
+        ("_ISFINITE", ValueError, TIMEOUT_VALUE_ERROR),
+        ("_is_absolute", ValueError, PROJECT_VALUE_ERROR),
+        ("_is_directory", ValueError, PROJECT_VALUE_ERROR),
+    ],
+)
+def test_integer_one_never_impersonates_exact_boolean_collaborator_results(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    seam: str,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    project_root = _project(tmp_path)
+    _install_runtime_provider(monkeypatch, tmp_path / "runtime-root")
+    monkeypatch.setattr(config_module, seam, lambda *_args, **_kwargs: 1)
+
+    with pytest.raises(error_type) as captured:
+        prepare_sidecar_runtime_config(project_root)
+
+    _assert_exact_error(captured.value, error_type, message)
 
 
 def test_project_root_rejects_missing_file_root_and_root_alias_without_disclosure(
@@ -1686,6 +1867,34 @@ def expected():
     raise TypeError("SidecarRuntimeConfig cannot be serialized") from None
 """
     )
+    assert body_dump(config_methods["__eq__"].body) == expected_body(
+        """
+def expected():
+    if type(other) is not _CONFIG_TYPE:
+        return NotImplemented
+    return (
+        self.project_root == other.project_root
+        and self.runtime_root == other.runtime_root
+        and self.project_id == other.project_id
+        and self.requested_port == other.requested_port
+        and self.startup_timeout == other.startup_timeout
+    )
+"""
+    )
+    assert body_dump(config_methods["__hash__"].body) == expected_body(
+        """
+def expected():
+    return hash(
+        (
+            self.project_root,
+            self.runtime_root,
+            self.project_id,
+            self.requested_port,
+            self.startup_timeout,
+        )
+    )
+"""
+    )
     allowed_function_nodes = {
         id(node)
         for node in (*top_level_definitions, *config_class.body)
@@ -1777,6 +1986,15 @@ def expected():
     project_id_prefix_binding = top_level_assignment_values["_PROJECT_ID_PREFIX"]
     assert isinstance(project_id_prefix_binding, ast.Constant)
     assert project_id_prefix_binding.value == b"flowsight-project-v1\x00"
+    for constant_name, expected_value in {
+        "_MAX_PATH_BYTES": 4096,
+        "_MAX_PATH_CHARACTERS": 4096,
+        "_MAX_STARTUP_TIMEOUT_SECONDS": 30.0,
+    }.items():
+        binding = top_level_assignment_values[constant_name]
+        assert isinstance(binding, ast.Constant)
+        assert type(binding.value) is type(expected_value)
+        assert binding.value == expected_value
 
     functions_by_name = {
         node.name: node for node in top_level_definitions if isinstance(node, ast.FunctionDef)
@@ -1798,6 +2016,24 @@ def expected():
     ):
         raise _RuntimeConfigurationFailure
     return f"project-v1-{digest}"
+"""
+    )
+    assert body_dump(functions_by_name["_valid_path_text"].body) == expected_body(
+        """
+def expected():
+    if (
+        type(value) is not str
+        or not 1 <= len(value) <= _MAX_PATH_CHARACTERS
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        return None
+    try:
+        encoded = _fsencode(value)
+    except Exception:
+        return None
+    if type(encoded) is not bytes or not 1 <= len(encoded) <= _MAX_PATH_BYTES:
+        return None
+    return value, encoded
 """
     )
 
