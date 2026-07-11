@@ -7,6 +7,7 @@ from .listener import (
     ListenerErrorCode,
     bind_loopback_listener,
 )
+from .owner_lock import OwnerLock, OwnerLockError, OwnerLockErrorCode
 from .state import (
     LOOPBACK_HOST,
     MAX_STATE_BYTES,
@@ -26,6 +27,9 @@ __all__ = [
     "DEFAULT_SIDECAR_PORT",
     "ListenerBindError",
     "ListenerErrorCode",
+    "OwnerLock",
+    "OwnerLockError",
+    "OwnerLockErrorCode",
     "PROTOCOL_VERSION",
     "STATE_SCHEMA_VERSION",
     "InvalidStateError",

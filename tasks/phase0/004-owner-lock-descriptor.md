@@ -159,23 +159,42 @@ owner-lock descriptor and exec-continuity tests plus all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Added a descriptor-anchored persistent owner-lock primitive with exact
+  nonblocking acquisition, strict inherited-descriptor continuity proof,
+  low-descriptor promotion, fixed public errors, and close-only cleanup.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: final review reported P0=0/P1=0/P2=0 after accepted fixes for
+  consume-on-entry, bounded child I/O/reaping, nested directory cleanup
+  classification, context-manager cleanup, and acquired descriptors below 3.
+- Reviewer 2: independent FD-matrix review found and closed canonical-probe
+  cleanup classification and descriptor-reuse evidence gaps; its final matrix
+  covers every owner-file setup stage, cleanup owner, and process-control path.
 
 Fixer:
-- TBD
+- Applied every accepted finding, including owner-specific canonical/directory
+  cleanup semantics and `F_DUPFD_CLOEXEC` promotion, then reran all focused and
+  repository evidence. No finding was deferred.
 
 Quality Governor:
-- TBD
+- Final review reported P0=0/P1=0/P2=0, confirmed the four-file dirty set is
+  allowlisted and Phase 0 only, generic state cleanup behavior remains
+  unchanged, the sustained gate is open, and no runtime/election behavior
+  entered this descriptor-only slice.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: proves owner-lock descriptor continuity only, not a running singleton
+- Command: focused owner-lock tests on CPython 3.12/3.13; `make test-phase0`;
+  `make check`; `make check-fast`; phase0-sustained validator; candidate GitHub
+  Actions matrix
+- Result: local checks passed; candidate CI pending
+- Notes: focused owner-lock tests passed 120/120 on both local Python versions;
+  `make test-phase0` passed 436 tests; `make check` passed 561 tests plus format,
+  lint, type, frontend, build, and agent checks; `make check-fast` and the gate
+  validator passed. Candidate CI is pending. The full check correctly retains
+  the partial-scaffold limitation. This evidence proves only owner-lock
+  descriptor acquisition/adoption and exec continuity, not election, a running
+  singleton, reload orchestration, or complete Phase 0 acceptance.
 
 ## Failure Queue Items
 

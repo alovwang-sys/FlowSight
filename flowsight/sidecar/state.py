@@ -37,6 +37,10 @@ class StateBusyError(StateStorageError):
     """Another process is atomically mutating the state record."""
 
 
+class _OwnerLockFileCleanupError(StateStorageError):
+    """An owner-lock helper descriptor reported ambiguous cleanup."""
+
+
 def _exact_int(value: object, name: str, *, minimum: int, maximum: int) -> int:
     if type(value) is not int or not minimum <= value <= maximum:
         raise InvalidStateError(f"{name} is invalid")
@@ -75,6 +79,10 @@ def _private_regular_file(metadata: os.stat_result) -> bool:
         and stat.S_IMODE(metadata.st_mode) == 0o600
         and metadata.st_nlink == 1
     )
+
+
+def _private_owner_lock_file(metadata: os.stat_result) -> bool:
+    return _private_regular_file(metadata) and metadata.st_size == 0
 
 
 def _file_signature(metadata: os.stat_result) -> tuple[int, ...]:
@@ -232,6 +240,123 @@ class StateStore:
                 directory_descriptor,
             )
 
+    def _open_owner_lock_file(self, *, create: bool) -> int:
+        """Open the exact persistent owner-lock inode through the trusted directory."""
+
+        directory_descriptor = -1
+        first_descriptor = -1
+        verified_descriptor = -1
+        created = False
+        flags = (
+            os.O_RDWR | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        )
+        try:
+            directory_descriptor = self._open_owner_lock_directory(
+                create=create,
+                repair=create,
+            )
+            if create:
+                try:
+                    first_descriptor = os.open(
+                        _OWNER_LOCK_NAME,
+                        flags | os.O_CREAT | os.O_EXCL,
+                        0o600,
+                        dir_fd=directory_descriptor,
+                    )
+                except FileExistsError:
+                    first_descriptor = os.open(
+                        _OWNER_LOCK_NAME,
+                        flags,
+                        dir_fd=directory_descriptor,
+                    )
+                else:
+                    created = True
+                    os.fchmod(first_descriptor, 0o600)
+            else:
+                first_descriptor = os.open(
+                    _OWNER_LOCK_NAME,
+                    flags,
+                    dir_fd=directory_descriptor,
+                )
+
+            first_metadata = os.fstat(first_descriptor)
+            if not _private_owner_lock_file(first_metadata):
+                raise StateStorageError("sidecar owner lock file is invalid")
+            if created:
+                os.fsync(first_descriptor)
+                os.fsync(directory_descriptor)
+
+            self._require_owner_lock_canonical_directory(directory_descriptor)
+            verified_descriptor = os.open(
+                _OWNER_LOCK_NAME,
+                flags,
+                dir_fd=directory_descriptor,
+            )
+            verified_metadata = os.fstat(verified_descriptor)
+            if not _private_owner_lock_file(verified_metadata) or (
+                first_metadata.st_dev,
+                first_metadata.st_ino,
+            ) != (verified_metadata.st_dev, verified_metadata.st_ino):
+                raise StateStorageError("sidecar owner lock file changed during operation")
+            self._require_owner_lock_canonical_directory(directory_descriptor)
+
+            descriptor_to_close = first_descriptor
+            first_descriptor = -1
+            if not self._try_close(descriptor_to_close):
+                raise _OwnerLockFileCleanupError("sidecar owner lock file cleanup failed")
+            descriptor_to_close = directory_descriptor
+            directory_descriptor = -1
+            if not self._try_close(descriptor_to_close):
+                raise _OwnerLockFileCleanupError("sidecar owner lock directory cleanup failed")
+            result = verified_descriptor
+            verified_descriptor = -1
+            return result
+        except StateStorageError:
+            raise
+        except (OSError, NotImplementedError):
+            raise StateStorageError("sidecar owner lock file setup failed") from None
+        finally:
+            self._finish_owner_lock_file_cleanup(
+                sys.exception(),
+                verified_descriptor,
+                first_descriptor,
+                directory_descriptor,
+            )
+
+    def _require_owner_lock_canonical_directory(self, directory_descriptor: int) -> None:
+        """Verify the owner directory while preserving owner-lock cleanup semantics."""
+
+        canonical_descriptor = -1
+        try:
+            canonical_descriptor = self._open_owner_lock_directory(
+                create=False,
+                repair=False,
+            )
+            anchored = os.fstat(directory_descriptor)
+            canonical = os.fstat(canonical_descriptor)
+            if (anchored.st_dev, anchored.st_ino) != (
+                canonical.st_dev,
+                canonical.st_ino,
+            ):
+                raise StateStorageError("state project directory changed during operation")
+        except StateStorageError:
+            raise
+        except (OSError, NotImplementedError):
+            raise StateStorageError("sidecar owner lock directory verification failed") from None
+        finally:
+            self._finish_owner_lock_file_cleanup(
+                sys.exception(),
+                canonical_descriptor,
+            )
+
+    def _open_owner_lock_directory(self, *, create: bool, repair: bool) -> int:
+        return StateStore._open_directory(
+            self,
+            create=create,
+            repair=repair,
+            _owner_lock_cleanup=True,
+        )
+
     def load(self) -> SidecarState | None:
         """Return a trusted state record or ``None`` for every invalid input."""
 
@@ -356,7 +481,13 @@ class StateStore:
             if cleanup_failed:
                 self._surface_cleanup_failure(active_error, "state removal cleanup failed")
 
-    def _open_directory(self, *, create: bool, repair: bool) -> int:
+    def _open_directory(
+        self,
+        *,
+        create: bool,
+        repair: bool,
+        _owner_lock_cleanup: bool = False,
+    ) -> int:
         root_descriptor = -1
         project_descriptor = -1
         project_missing_observed = False
@@ -368,7 +499,12 @@ class StateStore:
                 | getattr(os, "O_DIRECTORY", 0)
                 | getattr(os, "O_NOFOLLOW", 0)
             )
-            root_descriptor = self._open_runtime_root(flags, create=create, repair=repair)
+            root_descriptor = self._open_runtime_root(
+                flags,
+                create=create,
+                repair=repair,
+                _owner_lock_cleanup=_owner_lock_cleanup,
+            )
 
             project_name = self.runtime_dir.name
             try:
@@ -395,6 +531,8 @@ class StateStore:
             descriptor_to_close = root_descriptor
             root_descriptor = -1
             if not self._try_close(descriptor_to_close):
+                if _owner_lock_cleanup:
+                    raise _OwnerLockFileCleanupError("sidecar owner lock file cleanup failed")
                 raise StateStorageError("state directory cleanup failed")
             result = project_descriptor
             project_descriptor = -1
@@ -404,14 +542,28 @@ class StateStore:
         except (OSError, NotImplementedError):
             raise StateStorageError("state directory setup failed") from None
         finally:
-            self._finish_descriptor_cleanup(
-                sys.exception(),
-                "state directory cleanup failed",
-                project_descriptor,
-                root_descriptor,
-            )
+            if _owner_lock_cleanup:
+                self._finish_owner_lock_file_cleanup(
+                    sys.exception(),
+                    project_descriptor,
+                    root_descriptor,
+                )
+            else:
+                self._finish_descriptor_cleanup(
+                    sys.exception(),
+                    "state directory cleanup failed",
+                    project_descriptor,
+                    root_descriptor,
+                )
 
-    def _open_runtime_root(self, flags: int, *, create: bool, repair: bool) -> int:
+    def _open_runtime_root(
+        self,
+        flags: int,
+        *,
+        create: bool,
+        repair: bool,
+        _owner_lock_cleanup: bool = False,
+    ) -> int:
         parts = self.runtime_root.parts
         if not self.runtime_root.is_absolute() or len(parts) < 2:
             raise StateStorageError("state root directory is invalid")
@@ -458,6 +610,8 @@ class StateStore:
                 descriptor_to_close = current_descriptor
                 current_descriptor = -1
                 if not self._try_close(descriptor_to_close):
+                    if _owner_lock_cleanup:
+                        raise _OwnerLockFileCleanupError("sidecar owner lock file cleanup failed")
                     raise StateStorageError("state root directory cleanup failed")
                 current_descriptor = next_descriptor
                 next_descriptor = -1
@@ -470,12 +624,19 @@ class StateStore:
         except (OSError, NotImplementedError):
             raise StateStorageError("state root directory setup failed") from None
         finally:
-            self._finish_descriptor_cleanup(
-                sys.exception(),
-                "state root directory cleanup failed",
-                next_descriptor,
-                current_descriptor,
-            )
+            if _owner_lock_cleanup:
+                self._finish_owner_lock_file_cleanup(
+                    sys.exception(),
+                    next_descriptor,
+                    current_descriptor,
+                )
+            else:
+                self._finish_descriptor_cleanup(
+                    sys.exception(),
+                    "state root directory cleanup failed",
+                    next_descriptor,
+                    current_descriptor,
+                )
 
     def _canonical_directory_matches(self, directory_descriptor: int) -> bool:
         canonical_descriptor = -1
@@ -656,6 +817,33 @@ class StateStore:
         except (OSError, NotImplementedError):
             return False
         return True
+
+    @staticmethod
+    def _finish_owner_lock_file_cleanup(
+        active_error: BaseException | None,
+        *file_descriptors: int,
+    ) -> None:
+        cleanup_failed = False
+        cleanup_control: BaseException | None = None
+        for file_descriptor in file_descriptors:
+            if file_descriptor < 0:
+                continue
+            try:
+                os.close(file_descriptor)
+            except BaseException as error:
+                if isinstance(error, Exception):
+                    cleanup_failed = True
+                elif cleanup_control is None:
+                    cleanup_control = error
+
+        if active_error is not None and not isinstance(active_error, Exception):
+            if cleanup_failed or cleanup_control is not None:
+                active_error.add_note("sidecar owner lock file cleanup failed")
+            return
+        if cleanup_control is not None:
+            raise cleanup_control
+        if cleanup_failed:
+            raise _OwnerLockFileCleanupError("sidecar owner lock file cleanup failed") from None
 
     @classmethod
     def _finish_descriptor_cleanup(
