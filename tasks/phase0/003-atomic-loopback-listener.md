@@ -135,23 +135,41 @@ atomic loopback listener tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Added a strict loopback-only listener primitive that validates exact port
+  inputs, configures one non-inheritable IPv4 TCP socket, binds and listens on
+  that same socket, and exposes fixed safe failure codes without retaining raw
+  exception context.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: final code review reported P0=0/P1=0/P2=0 after accepted tests
+  closed `SO_REUSEPORT`, raw exception context, unexpected extra allocation,
+  and cleanup process-control evidence gaps.
+- Reviewer 2: final test review reported P0=0/P1=0/P2=0 after accepted tests
+  covered exact-int subclasses, both port boundaries, every fallback setup and
+  process-control path, deterministic default selection, and exact public error
+  messages.
 
 Fixer:
-- TBD
+- Applied every accepted evidence finding. No production defect or scope change
+  was required after the initial implementation, and no finding was deferred.
 
 Quality Governor:
-- TBD
+- Final review reported P0=0/P1=0/P2=0, confirmed the three-file dirty set is
+  allowlisted and Phase 0 only, the sustained gate is open, no runtime/election/
+  storage/OTel behavior entered the slice, and existing `make test-phase0`
+  discovery remains honest.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: proves only atomic loopback port ownership, not a running sidecar
+- Command: focused listener tests on CPython 3.12/3.13; `make test-phase0`;
+  `make check`; phase0-sustained validator; candidate GitHub Actions matrix
+- Result: passed
+- Notes: focused listener tests passed 72/72 on both local Python versions;
+  `make test-phase0` passed 316 tests; `make check` passed 441 tests plus
+  format, lint, type, frontend, build, and agent checks; the gate validator
+  passed. Candidate CI is pending. This evidence proves only atomic loopback
+  listener ownership; it does not claim a running sidecar, singleton/reload, or
+  complete Phase 0 acceptance.
 
 ## Failure Queue Items
 
