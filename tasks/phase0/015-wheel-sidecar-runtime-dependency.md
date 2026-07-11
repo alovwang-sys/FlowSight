@@ -87,9 +87,16 @@ control-plane records; they do not expand the product-code allowlist above.
 - Do not explicitly install Uvicorn or any FlowSight runtime dependency in the
   isolated probe. The built FlowSight wheel must be its sole explicit install
   target; normal dependency resolution must supply the declared closure.
+- Do not build with `--no-isolation`, `--skip-dependency-check`, an alternate
+  backend installer, or a workspace build directory. Invoke the workspace
+  interpreter as `python -m build --wheel --installer pip` from the temporary
+  working directory against only the copied temporary source, retaining
+  default PEP 517 backend isolation. Backend-install pip receives the same
+  controlled environment and budgets as every other external command.
 - Do not inherit pip/user Python configuration into build or install commands.
   First remove every inherited `PIP_*` and `PYTHON*` variable plus
-  `VIRTUAL_ENV`, `HOME`, every `XDG_*` variable, `NETRC`, and `SSH_AUTH_SOCK`.
+  `VIRTUAL_ENV`, macOS `__PYVENV_LAUNCHER__`, `HOME`, every `XDG_*` variable,
+  `NETRC`, and `SSH_AUTH_SOCK`.
   Recreate `HOME`, XDG config/cache/data, and pip cache as empty paths inside
   the probe temporary directory; restore only the reviewed empty/user-site and
   pip controls. Disable all pip configuration with `PIP_CONFIG_FILE` set to the
@@ -104,8 +111,10 @@ control-plane records; they do not expand the product-code allowlist above.
   symlink, device, socket, or other non-regular input into the temporary build
   source. Do not use a requirements/constraints file, `--find-links`,
   `--extra-index-url`, `--no-deps`, or any second install requirement.
-- Do not start Uvicorn or open a socket in the probe. Importing the fixed
-  programmatic API is the only server behavior in this task.
+- Do not start Uvicorn or let test/probe code directly create, bind, or listen
+  on a socket. Importing the fixed programmatic API is the only server behavior
+  in this task. Only bounded build/pip HTTPS client resolution may use network
+  sockets; it is dependency-install evidence, never listener evidence.
 - Do not update FS-031 evidence or claim clean-wheel UI serving, singleton
   ownership, child startup, or complete Phase 0 acceptance.
 
@@ -120,24 +129,30 @@ control-plane records; they do not expand the product-code allowlist above.
   `wrapt==2.2.2`, in that order. Tests hard-code both complete lists so no other
   dependency can move or change unnoticed.
 - [ ] A self-contained automated probe copies only the repository's wheel build
-  inputs into a temporary source directory whose top level is exactly
-  `pyproject.toml` plus `flowsight/`. Eligible package inputs are regular,
+  inputs into a temporary source directory whose top level immediately before
+  the build is exactly `pyproject.toml` plus `flowsight/`; temporary
+  `build/`/`*.egg-info` generated there by the build are not inputs. Eligible
+  package inputs are regular,
   non-symlink Python files, `flowsight/py.typed`, and any existing regular
   `flowsight/static/index.html` or `flowsight/static/assets/**` package data;
-  caches and generated metadata are rejected. Resolved source, initially empty
-  wheel outdir, virtual environment, and probe cwd are distinct paths outside
-  the resolved workspace. The isolated build uses that temporary source as its
-  only source and produces exactly one regular, non-symlink
-  `flowsight-*.whl` in the outdir.
+  workspace caches and generated metadata are never copied or treated as
+  inputs, but their unrelated presence does not fail the allowlist copy.
+  Resolved source, initially empty wheel outdir, virtual environment, and probe
+  cwd are distinct paths outside the resolved workspace. The isolated build
+  uses that temporary source as its only source and produces exactly one
+  regular, non-symlink `flowsight-*.whl` in the outdir.
 - [ ] Every external command goes through one no-shell `Popen` runner with
   `start_new_session=True`, closed stdin, combined captured output, exact exit
   checking, and fixed total limits: build 180 seconds, venv 60 seconds, install
   240 seconds, and preflight/pip-check/postflight 30 seconds each. Timeout sends
   `SIGTERM` to the whole process group, waits at most one second, escalates to
-  `SIGKILL`, and reaps the leader within five seconds. A deterministic real
-  leader-plus-descendant regression proves both processes stop, escalation is
-  exercised, and pre-timeout output is present in the failure. Process-control
-  `BaseException` cleanup preserves the original exception identity.
+  `SIGKILL`, and reaps the leader within five seconds. Any other
+  `BaseException` after spawn performs the same bounded group cleanup before
+  preserving the original exception identity. A deterministic real
+  leader-plus-descendant regression proves the descendant is reaped, the
+  stubborn leader requires KILL escalation and is reaped, and pre-timeout
+  output is present in the failure. A separate live-process regression injects
+  a process-control exception and proves cleanup before identity propagation.
 - [ ] The fresh environment passes `pip check` without installing the
   repository's development extra or explicitly naming Uvicorn or another
   runtime dependency. Its install command uses pip isolated/non-interactive
@@ -166,17 +181,32 @@ control-plane records; they do not expand the product-code allowlist above.
 - [ ] The isolated interpreter observes installed Uvicorn version `0.51.0` and
   the installed FlowSight distribution metadata contains exactly one unmarked
   `Requires-Dist: uvicorn==0.51.0`, with no Uvicorn extra marker or duplicate.
-- [ ] Postflight proves the lexical `sys.executable` is the expected venv
-  launcher and resolved `sys.prefix` equals the new venv exactly (the launcher
-  itself may resolve through a base-interpreter symlink on macOS). Resolved
+- [ ] The new wheel contains exactly one FlowSight `METADATA` file with that
+  exact Uvicorn requirement. Installed FlowSight `METADATA` has the same bytes,
+  and its PEP 610 `direct_url.json` resolves exactly to the just-built wheel
+  with its matching SHA-256 archive hash. An old, editable, workspace, or
+  different wheel installation cannot satisfy the probe.
+- [ ] Postflight first sets `resolved_venv = venv_path.resolve()`, then proves
+  `Path(sys.executable) == resolved_venv / "bin" / "python"` without resolving
+  `sys.executable`, and proves `Path(sys.prefix).resolve() == resolved_venv`.
+  The launcher itself may resolve through a base-interpreter symlink on macOS.
+  Resolved
   `flowsight.__file__`, `flowsight.sidecar.__file__`, `uvicorn.__file__`, and
   both distributions' `METADATA`/`.dist-info` paths are contained by that exact
   prefix. Workspace, temporary source, and outdir are absent from `sys.path`
   and from every verified origin. All containment uses `Path.resolve()` and
   `Path.is_relative_to()`, never string-prefix matching.
 - [ ] The probe uses temporary directories, leaves no wheel/venv/build artifact
-  in the repository, invokes no shell, binds no socket, starts no server, and
-  contains no fallback to workspace source or an already-installed Uvicorn.
+  in the repository, invokes no shell, directly creates no socket, starts no
+  server, and contains no fallback to workspace source or an already-installed
+  Uvicorn. Static probe/source and exact command-array allowlists exclude
+  `Config()`/`Server()` construction, `run`/`serve`/`bind`/`listen`, editable or
+  alternate installs, requirements files, and extra install targets while
+  permitting only the declared build/pip HTTPS clients.
+- [ ] Deterministic tests run a hostile controlled environment through a real
+  child, reject symlink/special/generated build inputs, validate the exact
+  build/install/pip-check command arrays and unified runner cleanup, and prove
+  `make test-phase0` names this packaging probe exactly once.
 - [ ] `make test-phase0` includes the focused packaging probe. Focused tests,
   `make test-phase0`, `make check`, and the sustained Phase 0 gate pass locally.
   Every macOS/Linux × CPython 3.12/3.13 CI `make check` job collects and passes
@@ -239,21 +269,41 @@ Implementer:
 - TBD
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: contract adversary found five P1 gaps in CI wording, timeout-tree
+  cleanup evidence, inherited configuration/credential isolation, unchanged
+  dependency proof, and wheel/import provenance. The card now fixes local
+  versus matrix evidence, exact timeouts and a real descendant cleanup test,
+  a temporary HOME/XDG/pip environment, complete dependency lists, exact input
+  and install allowlists, and module plus dist-info containment. Final
+  P0/P1/P2 = 0 and GO after the lexical venv-launcher formula was made exact.
+- Reviewer 2: packaging design review confirmed the revised probe is
+  implementable on macOS/Linux and CPython 3.12/3.13. It clarified that the
+  exact temporary-source top level is a pre-build assertion and that workspace
+  caches/generated metadata are excluded from the copy rather than forbidden
+  from existing. After those wording fixes, final P0/P1/P2 = 0 and GO.
 
 Fixer:
-- TBD
+- Codex primary accepted all five P1 findings and both wording clarifications
+  before activation. No finding was deferred and no product scope or allowlist
+  was expanded.
 
 Quality Governor:
-- TBD
+- Codex primary confirmed one Phase 0 packaging/dependency slice, complete
+  dependencies, an open `phase0-sustained` prerequisite, and exactly the three
+  planned product/test files. The probe remains test infrastructure and stops
+  before child launch, server construction, listener, READY, SDK, storage,
+  telemetry, or UI behavior. P0/P1/P2 = 0 and GO.
 
 ## Verifier Evidence
 
-- Command: TBD
-- Result: TBD
-- Notes: TBD
+- Command: `.venv/bin/python scripts/validate_agent_system.py`; candidate
+  GitHub Actions matrix
+- Result: contract passed; implementation pending
+- Notes: the revised planned card passed agent-system validation and
+  [run 29164580755](https://github.com/alovwang-sys/FlowSight/actions/runs/29164580755)
+  across macOS/Linux and CPython 3.12/3.13. This is task-system evidence only;
+  it is not wheel, dependency, import, or Phase 0 product acceptance.
 
 ## Failure Queue Items
 
-- TBD
+- none
