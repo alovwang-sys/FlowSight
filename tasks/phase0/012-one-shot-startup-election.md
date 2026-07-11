@@ -6,7 +6,7 @@
 task_id: P0-012
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-004, P0-010, P0-011, TRIAL-004]
@@ -210,13 +210,13 @@ sleep-based race.
   budgets, every behavior-boundary expiry/rollback, cleanup arguments/results,
   process-control identity, no third discovery/acquire/cleanup retry, and no
   module retention after restoring fault seams.
-- [ ] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
+- [x] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
   error helpers, and rejects loops/comprehensions, mutable module state/defaults,
   dynamic owner close/fileno/adoption, raw lock/state/process/listener/channel/
   SQLite/runtime/policy calls, logging, output, callbacks, waiting, and caches.
   It verifies the public export identities without freezing an implementation
   snapshot or duplicating P0-004/P0-010 internal tests.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -273,9 +273,9 @@ Implementer:
 - Codex primary implemented the exact public election API, frozen dependency
   dispatch, one shared deadline, and the one-shot
   `discover -> acquire once -> discover` composition in product candidate
-  `ec7b6d9`; final test-boundary candidate `a13d70d` closes the positive static
-  allowlist plus opaque-malformed protocol evidence across preflight, clock,
-  discovery, acquire, and cleanup boundaries.
+  `ec7b6d9`; final test-boundary candidate `7c3724a` closes the positive static
+  allowlist plus opaque-malformed protocol evidence and the clock data-flow
+  proof across preflight, clock, discovery, acquire, and cleanup boundaries.
   The focused suite covers exact results/errors, every named deadline and
   process-control boundary, cleanup precedence, real locks, privacy, and the
   semantic static boundary without duplicating P0-004/P0-010 internals.
@@ -295,24 +295,29 @@ Adversarial Reviewer:
   named seams, caller-context suppression, fixed-note fallback, FD
   closure/reuse, opaque malformed results whose implicit protocols fail outside
   `Exception`, and a positive structural/raw-use allowlist; it contains no
-  `sys.settrace`. A final P1 remains open for arithmetic/call/attribute
-  false-green paths around the raw initial clock observation.
+  `sys.settrace`.
+- Reviewer 3 reproduced arithmetic/call/attribute and cross-helper false-green
+  channels, then independently verified that the final direct-read,
+  validation-dominance, unique-return, and caller-use constraints reject the
+  alias/list/binop/call/attribute mutation matrix. P0/P1/P2 = 0; no finding
+  remains open.
 
 Fixer:
 - Codex primary accepted every finding, removed the intermediate owner courier
   and dynamic caller-exception inference, made process-control note repair
   fail-safe without replacing the active exception, rejected global tracing,
   and replaced duplicate blacklist assertions with a contract-derived positive
-  structure/call boundary, then trapped item/iteration/hash/order/coercion and
-  other implicit malformed-value protocols. No finding was deferred.
+  structure/call boundary, trapped implicit malformed-value protocols, and
+  proved the raw clock observation cannot escape validation or be repurposed
+  by the caller. No finding was deferred.
 
 Quality Governor:
-- Independent governor reported P0/P2 = 0 and one P1 for the candidate: only the
-  three product/test allowlist files changed, P0-004/P0-010 success
+- Independent governor reported P0/P1/P2 = 0 and GO for the final candidate:
+  only the three product/test allowlist files changed, P0-004/P0-010 success
   postconditions are trusted rather than repeated, and no process, listener,
   persistence, retry, wait, dependency, trial, fact, or scope override was
-  added, but the opaque initial-clock evidence did not yet close every raw-use
-  path that a broad `except Exception` could normalize.
+  added. The final AST evidence constrains safety-critical data flow rather than
+  snapshotting source text or unrelated implementation choices.
 
 ## Verifier Evidence
 
@@ -323,10 +328,13 @@ Quality Governor:
 - Notes: focused tests passed 137/137; `make test-phase0` passed 1,444 tests;
   embedded `make check` passed 1,569 tests plus formatting, lint, typing, and
   agent checks; the sustained Phase 0 gate passed on local CPython 3.13.5.
-  Intermediate candidate `a13d70d` passed
-  [run 29158253718](https://github.com/alovwang-sys/FlowSight/actions/runs/29158253718)
-  on its first attempt with jobs `86558868218` (Ubuntu 3.13), `86558868223`
-  (Ubuntu 3.12), `86558868219` (macOS 3.13), and `86558868232` (macOS 3.12).
+  Final candidate `7c3724a1043f67a836e8f97d5d7961ec9520248f` passed
+  [run 29159003076](https://github.com/alovwang-sys/FlowSight/actions/runs/29159003076)
+  on its first attempt with jobs `86560755045` (macOS 3.13), `86560755046`
+  (macOS 3.12), `86560755052` (Ubuntu 3.13), and `86560755073` (Ubuntu 3.12).
+  One earlier local full-gate attempt exceeded the existing TRIAL-005
+  `active_unscoped_target` microbenchmark threshold once; the exact failed test
+  and the complete sustained gate both passed on immediate rerun.
   The full check correctly retains the partial-scaffold limitation. This proves
   one incumbent-or-owner decision only; it does not prove waiting/re-contention,
   stale cleanup, requested-port policy, child launch/transfer, attachment,
@@ -334,7 +342,4 @@ Quality Governor:
 
 ## Failure Queue Items
 
-- P1: constrain every raw use of the initial clock observation and trap the
-  arithmetic/call/attribute reproducer paths so broad `except Exception`
-  cannot normalize an implicit-protocol invocation into a false-green deadline
-  result.
+- none
