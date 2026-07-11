@@ -9,6 +9,18 @@ from .listener import (
     bind_loopback_listener,
 )
 from .owner_lock import OwnerLock, OwnerLockError, OwnerLockErrorCode
+from .startup_channel import (
+    MAX_STARTUP_SIGNAL_BYTES,
+    STARTUP_CHANNEL_SCHEMA_VERSION,
+    StartupChannelError,
+    StartupChannelErrorCode,
+    StartupFailure,
+    StartupFailureCode,
+    StartupReader,
+    StartupReady,
+    StartupWriter,
+    open_startup_channel,
+)
 from .state import (
     LOOPBACK_HOST,
     MAX_STATE_BYTES,
@@ -24,6 +36,7 @@ from .state import (
 __all__ = [
     "LOOPBACK_HOST",
     "MAX_PRIVATE_BODY_BYTES",
+    "MAX_STARTUP_SIGNAL_BYTES",
     "MAX_STATE_BYTES",
     "DEFAULT_SIDECAR_PORT",
     "ListenerBindError",
@@ -33,12 +46,21 @@ __all__ = [
     "OwnerLockErrorCode",
     "PROTOCOL_VERSION",
     "STATE_SCHEMA_VERSION",
+    "STARTUP_CHANNEL_SCHEMA_VERSION",
     "InvalidStateError",
     "SidecarState",
     "StateBusyError",
     "StateStorageError",
     "StateStore",
+    "StartupChannelError",
+    "StartupChannelErrorCode",
+    "StartupFailure",
+    "StartupFailureCode",
+    "StartupReader",
+    "StartupReady",
+    "StartupWriter",
     "bind_loopback_listener",
     "create_sidecar_app",
+    "open_startup_channel",
     "probe_sidecar_health",
 ]

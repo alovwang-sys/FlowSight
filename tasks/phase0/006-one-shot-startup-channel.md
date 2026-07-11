@@ -47,6 +47,10 @@ its future launcher.
   StartupWriter)`, `StartupWriter.adopt_inherited(fd)`, `writer.send(message)`,
   and `reader.receive(timeout=0.5)`. Messages are exact `StartupReady` or
   `StartupFailure` instances; handles also provide `fileno()` and `close()`.
+- Within this channel, the safe ASCII `startup_id` subset is exactly 32
+  lowercase hexadecimal characters. This is deliberately narrower than the
+  general P0-001 state schema; a future launcher/generator must emit this exact
+  channel form.
 - Source of truth: MVP design section 4.2 and Phase 0, plus the TRIAL-004
   promotion requirements.
 
