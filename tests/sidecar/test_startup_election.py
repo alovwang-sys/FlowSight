@@ -313,7 +313,10 @@ def test_public_shape_exports_and_error_contract_are_exact() -> None:
     assert error_signature.parameters["code"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
 
 
-@pytest.mark.parametrize("invalid", [None, object(), "code", True])
+@pytest.mark.parametrize(
+    "invalid",
+    [None, object(), "code", True, pytest.param(_OpaqueMalformed(), id="opaque")],
+)
 def test_error_rejects_inexact_code(invalid: object) -> None:
     with pytest.raises(TypeError) as captured:
         OwnerElectionError(invalid)  # type: ignore[arg-type]
@@ -327,6 +330,12 @@ def test_error_rejects_inexact_code(invalid: object) -> None:
     [
         (None, TypeError, "store must be an exact StateStore"),
         (object(), TypeError, "store must be an exact StateStore"),
+        pytest.param(
+            _OpaqueMalformed(),
+            TypeError,
+            "store must be an exact StateStore",
+            id="opaque",
+        ),
     ],
 )
 def test_store_preflight_precedes_all_work(
@@ -361,6 +370,12 @@ def test_store_preflight_precedes_all_work(
         (30.0001, ValueError, "timeout must be finite, positive, and at most 30 seconds"),
         (math.nan, ValueError, "timeout must be finite, positive, and at most 30 seconds"),
         (math.inf, ValueError, "timeout must be finite, positive, and at most 30 seconds"),
+        pytest.param(
+            _OpaqueMalformed(),
+            TypeError,
+            "timeout must be a built-in int or float",
+            id="opaque",
+        ),
     ],
 )
 def test_timeout_preflight_precedes_all_work(
@@ -751,7 +766,15 @@ def test_deadline_failure_at_every_behavior_boundary(
 
 @pytest.mark.parametrize(
     "clock_failure",
-    [OSError(PRIVATE), True, 1, math.nan, math.inf, -math.inf],
+    [
+        OSError(PRIVATE),
+        True,
+        1,
+        math.nan,
+        math.inf,
+        -math.inf,
+        pytest.param(_OpaqueMalformed(), id="opaque"),
+    ],
 )
 def test_initial_clock_failure_shapes_are_fixed_deadline_errors(
     tmp_path: Path,
