@@ -26,6 +26,7 @@ from .startup_state import (
     StartupStateErrorCode,
     create_startup_state,
 )
+from .startup_verification import verify_ready_startup
 from .state import (
     LOOPBACK_HOST,
     MAX_STATE_BYTES,
@@ -71,4 +72,5 @@ __all__ = [
     "create_startup_state",
     "open_startup_channel",
     "probe_sidecar_health",
+    "verify_ready_startup",
 ]
