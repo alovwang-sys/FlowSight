@@ -6,7 +6,7 @@
 task_id: P0-015
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-014, TRIAL-004]
@@ -120,7 +120,7 @@ control-plane records; they do not expand the product-code allowlist above.
 
 ## Acceptance Criteria
 
-- [ ] `[project].dependencies` is exactly `fastapi==0.139.0`,
+- [x] `[project].dependencies` is exactly `fastapi==0.139.0`,
   `platformdirs==4.10.0`, `pydantic==2.13.4`, `starlette==1.3.1`, and one
   unmarked `uvicorn==0.51.0`, in that order. The `dev` extra is exactly
   `asgiref==3.11.1`, `build==1.5.1`, `mypy==2.2.0`,
@@ -128,7 +128,7 @@ control-plane records; they do not expand the product-code allowlist above.
   `opentelemetry-sdk==1.43.0`, `pytest==9.1.1`, `ruff==0.15.21`, and
   `wrapt==2.2.2`, in that order. Tests hard-code both complete lists so no other
   dependency can move or change unnoticed.
-- [ ] A self-contained automated probe copies only the repository's wheel build
+- [x] A self-contained automated probe copies only the repository's wheel build
   inputs into a temporary source directory whose top level immediately before
   the build is exactly `pyproject.toml` plus `flowsight/`; temporary
   `build/`/`*.egg-info` generated there by the build are not inputs. Eligible
@@ -141,7 +141,7 @@ control-plane records; they do not expand the product-code allowlist above.
   cwd are distinct paths outside the resolved workspace. The isolated build
   uses that temporary source as its only source and produces exactly one
   regular, non-symlink `flowsight-*.whl` in the outdir.
-- [ ] Every external command goes through one no-shell `Popen` runner with
+- [x] Every external command goes through one no-shell `Popen` runner with
   `start_new_session=True`, closed stdin, combined captured output, exact exit
   checking, and fixed total limits: build 180 seconds, venv 60 seconds, install
   240 seconds, and preflight/pip-check/postflight 30 seconds each. Timeout sends
@@ -153,13 +153,13 @@ control-plane records; they do not expand the product-code allowlist above.
   stubborn leader requires KILL escalation and is reaped, and pre-timeout
   output is present in the failure. A separate live-process regression injects
   a process-control exception and proves cleanup before identity propagation.
-- [ ] The fresh environment passes `pip check` without installing the
+- [x] The fresh environment passes `pip check` without installing the
   repository's development extra or explicitly naming Uvicorn or another
   runtime dependency. Its install command uses pip isolated/non-interactive
   mode, the explicit credential-free PyPI simple index, bounded retries and
   network timeout, disabled keyring, and the controlled environment defined
   above. Its only requirement token is the resolved newly built wheel.
-- [ ] The same controlled environment is passed to build, venv, pip, and both
+- [x] The same controlled environment is passed to build, venv, pip, and both
   isolated probes. After caller variables are removed it sets only reviewed
   `PIP_CONFIG_FILE`, `PIP_NO_INPUT`, `PIP_DISABLE_PIP_VERSION_CHECK`,
   `PIP_INDEX_URL`, `PIP_RETRIES`, `PIP_DEFAULT_TIMEOUT`,
@@ -167,26 +167,26 @@ control-plane records; they do not expand the product-code allowlist above.
   `PYTHONNOUSERSITE=1`, and temporary `HOME`/XDG paths in those namespaces.
   Tests inject hostile inherited configuration and credential paths and prove
   none survive.
-- [ ] Before installation, the fresh environment has neither a discoverable
+- [x] Before installation, the fresh environment has neither a discoverable
   import spec nor installed distribution metadata for `flowsight` or `uvicorn`.
   The later isolated probe proves its resolved `sys.prefix` is exactly the
   newly created virtual environment rather than merely a path prefix match.
-- [ ] From a temporary working directory, a child interpreter runs with `-I`,
+- [x] From a temporary working directory, a child interpreter runs with `-I`,
   empty `PYTHONPATH`, and `PYTHONNOUSERSITE=1`. It imports `flowsight.sidecar`
   and `uvicorn` from paths under that environment's exact `sys.prefix`, proves
   neither import resolves inside the workspace, temporary source, or wheel
   outdir, and imports exact public `uvicorn.Config` and `uvicorn.Server` class
   identities without instantiating either. An audit hook fails on any socket or
   subprocess event during these imports.
-- [ ] The isolated interpreter observes installed Uvicorn version `0.51.0` and
+- [x] The isolated interpreter observes installed Uvicorn version `0.51.0` and
   the installed FlowSight distribution metadata contains exactly one unmarked
   `Requires-Dist: uvicorn==0.51.0`, with no Uvicorn extra marker or duplicate.
-- [ ] The new wheel contains exactly one FlowSight `METADATA` file with that
+- [x] The new wheel contains exactly one FlowSight `METADATA` file with that
   exact Uvicorn requirement. Installed FlowSight `METADATA` has the same bytes,
   and its PEP 610 `direct_url.json` resolves exactly to the just-built wheel
   with its matching SHA-256 archive hash. An old, editable, workspace, or
   different wheel installation cannot satisfy the probe.
-- [ ] Postflight first sets `resolved_venv = venv_path.resolve()`, then proves
+- [x] Postflight first sets `resolved_venv = venv_path.resolve()`, then proves
   `Path(sys.executable) == resolved_venv / "bin" / "python"` without resolving
   `sys.executable`, and proves `Path(sys.prefix).resolve() == resolved_venv`.
   The launcher itself may resolve through a base-interpreter symlink on macOS.
@@ -196,18 +196,18 @@ control-plane records; they do not expand the product-code allowlist above.
   prefix. Workspace, temporary source, and outdir are absent from `sys.path`
   and from every verified origin. All containment uses `Path.resolve()` and
   `Path.is_relative_to()`, never string-prefix matching.
-- [ ] The probe uses temporary directories, leaves no wheel/venv/build artifact
+- [x] The probe uses temporary directories, leaves no wheel/venv/build artifact
   in the repository, invokes no shell, directly creates no socket, starts no
   server, and contains no fallback to workspace source or an already-installed
   Uvicorn. Static probe/source and exact command-array allowlists exclude
   `Config()`/`Server()` construction, `run`/`serve`/`bind`/`listen`, editable or
   alternate installs, requirements files, and extra install targets while
   permitting only the declared build/pip HTTPS clients.
-- [ ] Deterministic tests run a hostile controlled environment through a real
+- [x] Deterministic tests run a hostile controlled environment through a real
   child, reject symlink/special/generated build inputs, validate the exact
   build/install/pip-check command arrays and unified runner cleanup, and prove
   `make test-phase0` names this packaging probe exactly once.
-- [ ] `make test-phase0` includes the focused packaging probe. Focused tests,
+- [x] `make test-phase0` includes the focused packaging probe. Focused tests,
   `make test-phase0`, `make check`, and the sustained Phase 0 gate pass locally.
   Every macOS/Linux × CPython 3.12/3.13 CI `make check` job collects and passes
   the probe while retaining the current partial-scaffold limitation.
@@ -318,35 +318,23 @@ Quality Governor:
 
 ## Verifier Evidence
 
-- Command: `.venv/bin/python scripts/validate_agent_system.py`; candidate
-  GitHub Actions matrix
-- Result: contract passed; implementation pending
-- Notes: the revised planned card passed agent-system validation and
-  [run 29164580755](https://github.com/alovwang-sys/FlowSight/actions/runs/29164580755)
-  across macOS/Linux and CPython 3.12/3.13. This is task-system evidence only;
-  it is not wheel, dependency, import, or Phase 0 product acceptance.
-- Command: `.venv/bin/python -m pytest tests/packaging/test_wheel_runtime_dependency.py`
-- Result: 12 passed in 30.02 seconds
-- Command: `make test-phase0`
-- Result: 1890 passed in 44.08 seconds
-- Command: `make check`
-- Result: 2015 passed in 105.67 seconds; partial-scaffold limitation retained
-- Command: `make gate-phase0`
-- Result: 2015 passed in 91.07 seconds; `phase0-sustained` gate passed
-- Notes: local macOS CPython 3.13 evidence is complete. Cross-platform
-  implementation evidence is pending the pushed GitHub Actions matrix.
-- GitHub Actions: [run 29165605012](https://github.com/alovwang-sys/FlowSight/actions/runs/29165605012)
-- Result: macOS/Python 3.13 exposed one deterministic portability failure;
-  `killpg(pgid, 0)` returned `EPERM` while the killed group was awaiting
-  disappearance. The other three jobs were cancelled by matrix fail-fast.
-- Command: `.venv/bin/python -m pytest tests/packaging/test_wheel_runtime_dependency.py`
-- Result: 13 passed in 28.75 seconds after the portability fix
-- Command: `make check`
-- Result: 2016 passed in 85.69 seconds; partial-scaffold limitation retained
-- Command: `make gate-phase0`
-- Result: 2016 passed in 87.90 seconds; `phase0-sustained` gate passed
-- Notes: the implementation matrix rerun remains pending; the failed candidate
-  is retained as regression evidence rather than reported as acceptance.
+- Command: focused packaging tests; `make test-phase0`; `make check`;
+  `make gate-phase0`; pre-commit `make check-fast`; candidate GitHub Actions
+  matrix
+- Result: passed
+- Notes: the final focused probe passed 13/13, `make test-phase0` passed 1,891
+  tests, `make check` passed 2,016 tests, and `make gate-phase0` passed the same
+  suite plus `phase0-sustained` on local macOS CPython 3.13.5. Candidate
+  `fcb3b5f49a0509e5d75c3b37da52e6ab9ea053be` passed
+  [run 29165910826](https://github.com/alovwang-sys/FlowSight/actions/runs/29165910826)
+  with jobs `86578872691` (macOS 3.12), `86578872693` (Ubuntu 3.13),
+  `86578872706` (macOS 3.13), and `86578872708` (Ubuntu 3.12). Earlier
+  [run 29165605012](https://github.com/alovwang-sys/FlowSight/actions/runs/29165605012)
+  exposed the macOS `killpg(pgid, 0)` `EPERM` classification gap and is retained
+  as regression evidence, not acceptance. The final probe proves only the
+  installed runtime dependency and import surface; all child/server/UI and
+  complete Phase 0 claims remain excluded, and `make check` retains the
+  partial-scaffold limitation.
 
 ## Failure Queue Items
 
