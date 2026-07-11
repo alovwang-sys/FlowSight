@@ -5,6 +5,7 @@ import copy
 import errno
 import fcntl
 import gc
+import hashlib
 import json
 import os
 import pickle
@@ -2543,7 +2544,8 @@ def test_rejected_duplication_precedes_one_ambiguous_close_and_fd_reuse(
 
 def test_owner_lock_move_only_guards_have_exact_static_shape() -> None:
     source_path = Path(owner_lock_module.__file__)
-    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
     owner_classes = [
         node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "OwnerLock"
     ]
@@ -2651,4 +2653,34 @@ def test_owner_lock_move_only_guards_have_exact_static_shape() -> None:
             "subprocess",
             "threading",
         }
+    )
+
+    original_typing_import = "from typing import Final, Literal"
+    changed_typing_import = "from typing import Final, Literal, NoReturn"
+    assert source.count(changed_typing_import) == 1
+    baseline_source = source.replace(
+        changed_typing_import,
+        original_typing_import,
+        1,
+    )
+    move_only_methods = """    def __copy__(self) -> NoReturn:
+        raise TypeError("OwnerLock is move-only") from None
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        del memo
+        raise TypeError("OwnerLock is move-only") from None
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("OwnerLock is move-only") from None
+
+    def __reduce_ex__(self, protocol: object) -> NoReturn:
+        del protocol
+        raise TypeError("OwnerLock is move-only") from None
+
+"""
+    assert baseline_source.count(move_only_methods) == 1
+    baseline_source = baseline_source.replace(move_only_methods, "", 1)
+    # Exact P0-011 input source: only the import and method block above may differ.
+    assert hashlib.sha256(baseline_source.encode()).hexdigest() == (
+        "5a7170f9f4481dd59f7955f5ff9d793269ad35447944573e3401d06671187367"
     )
