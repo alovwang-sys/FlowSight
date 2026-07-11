@@ -6,7 +6,7 @@
 task_id: P0-001
 release: v1
 task_type: implementation
-status: in_progress
+status: review
 primary_phase: phase0
 impacted_phases: []
 depends_on: [TRIAL-001, TRIAL-004]
@@ -33,8 +33,11 @@ boundary that later sidecar election and SDK attachment can trust.
 
 - TRIAL-004 proved the state/lock architecture, but production code must live
   under `flowsight/` and may not import the spike package.
-- This slice deliberately stops before file locking, process launch, HTTP
-  listening, SQLite ownership, or OTel integration.
+- This slice deliberately stops before sidecar election and its long-lived
+  owner lock, process launch, HTTP listening, SQLite ownership, or OTel
+  integration. A short non-blocking state-mutation lock is part of the atomic
+  publish/compare/remove boundary; it never elects or represents the sidecar
+  owner.
 - Source of truth: MVP design sections 4.2, 4.4, 7.4, and Phase 0 in section 11.
 
 ## Related Fact IDs
@@ -62,23 +65,27 @@ The current task card and its verifier evidence are always writable control-plan
 ## Forbidden
 
 - Do not import production behavior from `spikes/sidecar_otel`.
-- Do not start a listener, child process, thread, queue, or SQLite connection.
+- Production code must not start a listener, child process, thread, queue, or
+  SQLite connection. Tests may use bounded helper threads/subprocesses only to
+  verify filesystem atomicity and cross-process lock behavior; they must not
+  implement lifecycle or election.
 - Do not add OTel, ingest, trace, tracepoint, or UI behavior.
 - Do not add Windows or free-threaded compatibility claims.
 - Do not expose capability tokens through repr, errors, or permissive file modes.
 
 ## Acceptance Criteria
 
-- [ ] The exact versioned state schema accepts only `127.0.0.1`, valid bounded
+- [x] The exact versioned state schema accepts only `127.0.0.1`, valid bounded
   built-in fields, and the supported protocol/state versions.
-- [ ] Capability tokens are omitted from repr, while wire round-trips preserve
+- [x] Capability tokens are omitted from repr, while wire round-trips preserve
   the exact authenticated discovery record.
-- [ ] Runtime directories are mode `0700`; lock/state/database paths are
+- [x] Runtime directories are mode `0700`; lock/state/database paths are
   project-scoped; an atomically published state file is mode `0600` and durable.
-- [ ] Missing, symlink/non-regular, insecure-mode, oversized, malformed, and
+- [x] Missing, symlink/non-regular, insecure-mode, oversized, malformed, and
   schema-invalid state records fail closed without leaking raw content.
-- [ ] Ownership-aware removal cannot delete a successor's state record.
-- [ ] `make test-phase0` runs the current production Phase 0 tests, and full
+- [x] Ownership-aware removal cannot delete a successor published through the
+  same cooperating `StateStore` mutation protocol.
+- [x] `make test-phase0` runs the current production Phase 0 tests, and full
   repository checks pass.
 
 ## No-Test Reason
@@ -119,24 +126,46 @@ production Phase 0 state and existing SDK/security/store tests pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Primary Codex agent: promoted a strict versioned `SidecarState` and a
+  descriptor-anchored, project-scoped `StateStore` with private permissions,
+  bounded fail-closed reads, durable atomic publication, and cooperative
+  ownership-aware removal. Added the honest `make test-phase0` target and 80
+  focused state-boundary tests.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: independent filesystem/security review found and replayed path
+  swap, macOS alias, durability-race, cleanup/token-chain, and descriptor-reuse
+  defects. All accepted findings received regression tests; the final review
+  reported no P0/P1/P2 findings with 80 focused tests green on 3.12/3.13.
+- Reviewer 2: independent test-evidence review required a second real
+  subprocess retry after lock release plus runtime-root replacement, cleanup
+  recovery, and exact field-limit coverage. The final review confirmed those
+  tests genuinely hit their contracts and reported no P0/P1/P2 findings.
 
 Fixer:
-- TBD
+- Primary Codex agent: applied only accepted findings, including canonical
+  ancestor anchoring, child-before-parent fsync for ordinary and raced creates,
+  single-close descriptor ownership, sanitized cleanup failures, and preserved
+  `KeyboardInterrupt`/`SystemExit` propagation.
 
 Quality Governor:
-- TBD
+- Independent governor: confirmed the implementation stays inside the Phase 0
+  filesystem/state slice and allowlist; production starts no lifecycle,
+  election, listener, thread/process, queue, SQLite, or OTel behavior. The task
+  wording now explicitly permits bounded test helpers without widening product
+  scope.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: first sustained Phase 0 product slice after all risk gates opened
+- Command: `make test-phase0`; Python 3.12 equivalent; `make gate-phase0`;
+  focused Ruff/mypy/state tests; `git diff --check`
+- Result: local candidate passed: 80 focused state tests and 177 Phase 0 slice
+  tests on macOS CPython 3.12 and 3.13; `make gate-phase0` passed with all 302
+  repository tests, format, lint, type, and agent-system checks green.
+- Notes: candidate SHA and Ubuntu/macOS x CPython 3.12/3.13 CI are pending. This
+  proves only the P0-001 state/filesystem slice; it is not complete Phase 0
+  lifecycle, election, SQLite ownership, bundled-UI, or release acceptance.
 
 ## Failure Queue Items
 
-- none
+- none; current-candidate four-job CI remains pending external evidence

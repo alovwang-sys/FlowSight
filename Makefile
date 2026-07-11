@@ -12,7 +12,7 @@ FRONTEND_PRESENT = test -e package.json || test -e package-lock.json || { \
 	fi; \
 }
 
-.PHONY: check check-fast check-agent check-product check-product-fast check-staged-files test test-agent test-product test-trial004 test-trial005 validate-agent-system test-hooks test-hooks-fast test-formatter test-allowlist test-product-detection test-validator gate-phase0 gate-phase1 gate-phase4 init guard
+.PHONY: check check-fast check-agent check-product check-product-fast check-staged-files test test-agent test-product test-phase0 test-trial004 test-trial005 validate-agent-system test-hooks test-hooks-fast test-formatter test-allowlist test-product-detection test-validator gate-phase0 gate-phase1 gate-phase4 init guard
 
 check: check-agent check-product
 
@@ -96,6 +96,9 @@ test-product:
 			npm test; \
 		fi; \
 	fi
+
+test-phase0:
+	$(PYTHON) -m pytest tests/test_sdk_skeleton.py tests/security/test_safe_summary.py tests/store/test_wal_writer.py tests/sidecar/test_state.py
 
 test-trial004:
 	$(PYTHON) -m pytest tests/spikes/test_sidecar_otel_lifecycle.py
