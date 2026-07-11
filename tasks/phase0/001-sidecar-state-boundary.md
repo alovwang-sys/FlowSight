@@ -6,7 +6,7 @@
 task_id: P0-001
 release: v1
 task_type: implementation
-status: review
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [TRIAL-001, TRIAL-004]
@@ -159,13 +159,18 @@ Quality Governor:
 
 - Command: `make test-phase0`; Python 3.12 equivalent; `make gate-phase0`;
   focused Ruff/mypy/state tests; `git diff --check`
-- Result: local candidate passed: 80 focused state tests and 177 Phase 0 slice
-  tests on macOS CPython 3.12 and 3.13; `make gate-phase0` passed with all 302
-  repository tests, format, lint, type, and agent-system checks green.
-- Notes: candidate SHA and Ubuntu/macOS x CPython 3.12/3.13 CI are pending. This
-  proves only the P0-001 state/filesystem slice; it is not complete Phase 0
-  lifecycle, election, SQLite ownership, bundled-UI, or release acceptance.
+- Result: passed
+- Notes: 80 focused state tests and 177 Phase 0 slice tests passed on macOS
+  CPython 3.12 and 3.13; `make gate-phase0` passed with all 302 repository tests,
+  format, lint, type, and agent-system checks green. Candidate
+  `095af8373c664ff4c4c3726d4df4c899972371ad` passed GitHub Actions run
+  `29138361882`: Ubuntu 3.12 job `86506877095`, macOS 3.12 job `86506877098`,
+  Ubuntu 3.13 job `86506877117`, and macOS 3.13 job `86506877124`. The run at
+  https://github.com/alovwang-sys/FlowSight/actions/runs/29138361882 proves the
+  exact candidate across the supported OS/Python matrix. This proves only the
+  P0-001 state/filesystem slice; it is not complete Phase 0 lifecycle, election,
+  SQLite ownership, bundled-UI, or release acceptance.
 
 ## Failure Queue Items
 
-- none; current-candidate four-job CI remains pending external evidence
+- none
