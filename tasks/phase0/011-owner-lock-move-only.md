@@ -207,26 +207,31 @@ move-only owner-lock tests and all repository checks pass
 
 Implementer:
 - Codex primary added only `NoReturn` plus the four fixed move-only guards and
-  the focused default-protocol safety evidence in candidate `b1680be`.
+  the focused default-protocol safety evidence in candidate `b1680be`. Follow-up
+  `a4eb753` froze the entire pre-task production source after an independent
+  reviewer found that method-only AST assertions left a false-green channel.
 
 Adversarial Reviewer:
 - Reviewer 1: boundary reviewer reported P0/P1/P2 = 0 after verifying exact
-  `from None` bodies,
-  unchanged P0-004 semantics, honest default-dispatch scope, and exception
-  context/privacy behavior.
-- Reviewer 2: test adversary strengthened object-count, no-I/O/no-output, active/closed,
-  descriptor-reuse, and exact-order AST checks; the primary consolidated its
-  concurrent draft before the final stable verification run.
+  `from None` bodies, unchanged P0-004 semantics, honest default-dispatch scope,
+  and exception context/privacy behavior.
+- Reviewer 2: test adversary strengthened object-count, no-I/O/no-output,
+  active/closed, descriptor-reuse, and exact-order AST checks, then reported one
+  P1 because class/module additions outside the four methods could evade those
+  checks. After the whole-source baseline fix, final review reported
+  P0/P1/P2 = 0 on CPython 3.12.11 and 3.13.5.
 
 Fixer:
 - Codex primary accepted the planning findings that custom dispatch and
   Python-managed caller context cannot be blocked, narrowed the contract,
-  removed duplicate concurrent test drafts, and found no remaining P0/P1/P2.
+  removed duplicate concurrent test drafts, and fixed the final AST false-green
+  with an exact P0-011 input-source SHA-256 after stripping only the allowed
+  import and four-method block. No finding was deferred.
 
 Quality Governor:
 - Independent governor: P0/P1/P2 = 0; confirmed the two-file product allowlist,
-  no P0-012/election behavior in the candidate, and no new trial, fact, rule,
-  dependency, or scope override requirement.
+  no P0-012/election behavior in final candidate `a4eb753`, and no new trial,
+  fact, rule, dependency, or scope override requirement.
 
 ## Verifier Evidence
 
@@ -237,11 +242,19 @@ Quality Governor:
 - Notes: focused tests passed 128/128; `make test-phase0` passed 1,307 tests;
   embedded `make check` passed 1,432 tests plus formatting, lint, typing, and
   agent checks; the sustained Phase 0 gate passed on local CPython 3.13.5.
-  Candidate `b1680be547a9f92ca6c98d3f7bf5896e939f1756` passed
+  Product candidate `b1680be547a9f92ca6c98d3f7bf5896e939f1756` passed
   [run 29155099578](https://github.com/alovwang-sys/FlowSight/actions/runs/29155099578)
   with jobs
   `86550798430` (macOS 3.13), `86550798433` (Ubuntu 3.12),
-  `86550798434` (macOS 3.12), and `86550798438` (Ubuntu 3.13).
+  `86550798434` (macOS 3.12), and `86550798438` (Ubuntu 3.13). Final
+  test-boundary candidate `a4eb7531fb9810dff3ada5568a5a5179c3bbfb86`
+  passed [run 29155213046](https://github.com/alovwang-sys/FlowSight/actions/runs/29155213046)
+  attempt 2. Attempt 1 passed macOS 3.12/3.13 and Ubuntu 3.12, while Ubuntu
+  3.13 hit an unrelated existing TRIAL-004 stop/lock-release timing failure
+  after 1,431 passing tests; the exact failed job was rerun as `86551792023`
+  and passed, making the run successful without a code change. Completion
+  commit `c44aed4c117bbe6b07a75e72f42832efd9f7e6c3` then passed control
+  [run 29155274462](https://github.com/alovwang-sys/FlowSight/actions/runs/29155274462).
   The full check correctly retains the partial-scaffold limitation. This proves
   default Python object duplication is blocked only; it does not prove
   election, discovery, process launch, attachment, or complete Phase 0.
