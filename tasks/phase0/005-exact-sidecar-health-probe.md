@@ -6,7 +6,7 @@
 task_id: P0-005
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-002, TRIAL-004]
@@ -81,29 +81,29 @@ control-plane records.
 
 ## Acceptance Criteria
 
-- [ ] The probe accepts only an exact `SidecarState` and a finite, positive,
+- [x] The probe accepts only an exact `SidecarState` and a finite, positive,
   bounded built-in timeout; invalid caller inputs fail before opening a
   connection.
-- [ ] It makes exactly one loopback request to `GET /internal/v1/health`, with
+- [x] It makes exactly one loopback request to `GET /internal/v1/health`, with
   exactly one expected `Host`, bearer Authorization, and zero-length body. The
   token never enters the target, body, Origin, stdout, stderr, repr, or errors.
-- [ ] Global `HTTPConnection` debug settings cannot print the capability token.
+- [x] Global `HTTPConnection` debug settings cannot print the capability token.
   Redirects are not followed and ordinary failure performs no automatic retry.
-- [ ] Success requires status 200 plus a response no larger than 4096 bytes
+- [x] Success requires status 200 plus a response no larger than 4096 bytes
   whose exact JSON fields, built-in types, and values match the supplied state:
   status, protocol/state versions, project/startup IDs, PID, host, and port.
-- [ ] Missing, extra, duplicate, wrong-type, or mismatched identity fields;
+- [x] Missing, extra, duplicate, wrong-type, or mismatched identity fields;
   non-object JSON; invalid UTF-8/JSON; non-200 responses; truncated framing;
   oversized responses; refusal; disconnect; and timeout all fail closed.
-- [ ] Ordinary transport/protocol failures return the fixed non-healthy outcome
+- [x] Ordinary transport/protocol failures return the fixed non-healthy outcome
   without retaining raw exceptions. `KeyboardInterrupt` and `SystemExit`
   propagate after single-attempt cleanup, with only a fixed cleanup note if
   necessary.
-- [ ] Connection/response cleanup occurs exactly once on every path; an
+- [x] Connection/response cleanup occurs exactly once on every path; an
   ambiguous resource is never retried after a reported close failure.
-- [ ] A real bounded loopback test proves the exact request and matching
+- [x] A real bounded loopback test proves the exact request and matching
   response. Tests wait for observable conditions with deadlines, not sleeps.
-- [ ] Focused tests, `make test-phase0`, and `make check` pass on CPython
+- [x] Focused tests, `make test-phase0`, and `make check` pass on CPython
   3.12/3.13 and the macOS/Linux CI matrix.
 
 The non-healthy result means only that this exact published startup was not
@@ -151,23 +151,49 @@ exact authenticated health-probe tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Added the exported one-shot health probe with strict input revalidation, an
+  exact token-safe request, one monotonic deadline, bounded HTTP/JSON parsing,
+  exact startup identity matching, and single-owner cleanup.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: found and closed ambiguous `HTTPResponse`/connection ownership,
+  per-operation timeout drift, integer-overflow input, response-header boundary,
+  control-byte, and packetization-dependent framing defects; final review
+  reported P0=0/P1=0/P2=0.
+- Reviewer 2: independently rechecked the final request, parser, schema/type,
+  deadline, privacy, process-control, cleanup, and real-loopback matrices and
+  found no remaining acceptance or scope gap.
 
 Fixer:
-- TBD
+- Applied every accepted finding: moved to one direct-socket owner with a total
+  deadline, made `Content-Length` framing deterministic, hardened malformed
+  header handling and forged-state validation, and added regression tests for
+  every corrected boundary. No finding was deferred.
 
 Quality Governor:
-- TBD
+- Final review reported P0=0/P1=0/P2=0. Candidate `3573a5e` changes exactly the
+  three allowlisted files and remains Phase 0-only: production performs one
+  bounded authenticated health probe and introduces no state I/O, listener
+  ownership, runtime/spawn, polling, election, SDK lifecycle, queue, SQLite, or
+  spike dependency. The sustained gate passes and the supported CI matrix is
+  green.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: proves one authenticated health probe only, not discovery or election
+- Command: focused health-probe tests; `make test-phase0`; `make check`;
+  `make gate-phase0`; pre-commit `make check-fast`; candidate GitHub Actions
+  matrix
+- Result: passed
+- Notes: focused tests passed 158/158 on local CPython 3.13; `make test-phase0`
+  passed 594 tests; `make check` and `make gate-phase0` each passed 719 tests
+  plus formatting, lint, typing, agent checks, and the sustained gate. Candidate
+  `3573a5ee529b8c39dfa54b9f3bfa9a720b8168aa` passed
+  [run 29144947589](https://github.com/alovwang-sys/FlowSight/actions/runs/29144947589):
+  macOS 3.13 job `86524788132`, macOS 3.12 job `86524788143`, Ubuntu 3.13 job
+  `86524788157`, and Ubuntu 3.12 job `86524788192`. The full check correctly
+  retains the partial-scaffold limitation. This evidence proves only one
+  authenticated exact-startup health probe; it does not prove state discovery,
+  election authority, sidecar launch/readiness, or complete Phase 0 acceptance.
 
 ## Failure Queue Items
 
