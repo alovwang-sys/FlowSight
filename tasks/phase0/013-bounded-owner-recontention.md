@@ -6,7 +6,7 @@
 task_id: P0-013
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-012, TRIAL-004]
@@ -128,7 +128,7 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   exact `SidecarState` or `OwnerLock` result is returned unchanged and ends the
   operation. The wrapper does not read fields, call `fileno`, close/release the
   owner, or make another clock/election/wait call after success.
-- [ ] Only an exact `OwnerLockError` carrying exact
+- [x] Only an exact `OwnerLockError` carrying exact
   `OwnerLockErrorCode.OWNER_LOCK_HELD` enters the wait path. Every other exact
   P0-004 or P0-012 error preserves identity/code/message/cause/context with zero
   wait/retry; derived, malformed, or ordinary private-seam failure becomes the
@@ -154,7 +154,7 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   contention object. A caller's already-active Python-managed `__context__` may
   remain, but fixed errors raised `from None` suppress it from formatted output.
   No path performs an extra wait/election after expiry.
-- [ ] Deterministic matrices cover immediate incumbent/winner, contention then
+- [x] Deterministic matrices cover immediate incumbent/winner, contention then
   incumbent/winner, repeated contention to expiry, every clock boundary,
   poll-capping, strict progress, exact error taxonomy/identity, malformed seam
   values, process-control, call order/budgets, no retained contention, and no
@@ -174,7 +174,7 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   retry loop. It rejects state/process/listener/channel/SQLite/runtime/SDK calls,
   owner inspection/cleanup/adoption, logging/output, callbacks, mutable state,
   comprehensions, async work, and caches without copying P0-012 internals.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -230,6 +230,9 @@ Implementer:
   of the post-wait remaining budget, and exact success/error transfer. The
   implementation adds no process, state mutation, descriptor handoff, runtime,
   SQLite, SDK, or telemetry behavior.
+- Replacement candidate `ce76bcb` restricts wait/error propagation to explicit
+  registered enum-member identities, so exact-type phantom `StrEnum` instances
+  with canonical-looking or private values become fixed election failure.
 
 Adversarial Reviewer:
 - Reviewer 1: pre-implementation contract review found early-return busy-loop,
@@ -250,35 +253,52 @@ Adversarial Reviewer:
   Final P0/P1/P2 = 0 and GO.
 - Reviewer 5: error adversary reproduced an exact-type phantom `StrEnum` member
   that was not a registered canonical error code. Candidate `b107a15` bare
-  re-raised it and exposed arbitrary code text, so one P1 remains open pending
-  identity-allowlist normalization and regression evidence.
+  re-raised it and exposed arbitrary code text. Replacement `ce76bcb` uses
+  complete registered-member identity allowlists; first-attempt and retry
+  phantom matrices pass. Final P0/P1/P2 = 0 and GO.
+- Reviewer 6: static adversary found the first identity evidence was
+  alias/dataflow-blind and did not prove enum-member completeness. The final
+  test binds every `error.code` read directly and uniquely to its inspected
+  variable, restricts every use to exact identity checks, and freezes the full
+  registered enum tuples. Final P0/P1/P2 = 0 and GO.
 
 Fixer:
 - Codex primary accepted all planned-contract and implementation findings,
   including safe missing-code handling, nested-helper rejection, no-sleep
-  frozen dispatch evidence, and exact-int timeout boundaries. None were
-  deferred.
+  frozen dispatch evidence, exact-int timeout boundaries, phantom-member
+  normalization, and alias-closed static evidence. None were deferred.
 
 Quality Governor:
 - Pre-implementation scope review confirmed one Phase 0 election-policy slice
   with no process/runtime/state/SDK expansion. Its two P2 wording/verification
   findings were task-owner approved and accepted immediately after activation;
-  observable behavior was unchanged. Final governance remains pending the open
-  phantom-code P1 and its replacement candidate evidence.
+  observable behavior was unchanged. Final review confirmed the replacement
+  remains inside the same two product/test allowlist files, adds no dependency
+  or scope override, and closes every recorded finding. P0/P1/P2 = 0 and GO.
 
 ## Verifier Evidence
 
 - Command: focused startup-wait tests; `make test-phase0`; `make gate-phase0`
   (including full `make check`); pre-commit `make check-fast`; candidate GitHub
   Actions matrix
-- Result: replacement candidate pending
-- Notes: focused tests passed 98/98; `make test-phase0` passed 1,542 tests;
-  embedded `make check` passed 1,667 tests plus formatting, lint, typing, and
+- Result: passed
+- Notes: focused tests passed 135/135; `make test-phase0` passed 1,579 tests;
+  embedded `make check` passed 1,704 tests plus formatting, lint, typing, and
   agent checks; the sustained Phase 0 gate passed on local CPython 3.13.5.
+  Replacement candidate `ce76bcb289a379a907e5b91250448f9b953a7109` passed
+  [run 29161101087](https://github.com/alovwang-sys/FlowSight/actions/runs/29161101087)
+  on its first attempt with jobs `86566221981` (macOS 3.12), `86566221988`
+  (Ubuntu 3.12), `86566222007` (Ubuntu 3.13), and `86566222039` (macOS 3.13).
   Intermediate candidate `b107a1590aed257076e1ed66a4e18a33b35bad37` passed
   [run 29160332404](https://github.com/alovwang-sys/FlowSight/actions/runs/29160332404)
   on its first attempt with jobs `86564216131` (Ubuntu 3.12), `86564216139`
   (Ubuntu 3.13), `86564216140` (macOS 3.13), and `86564216145` (macOS 3.12).
+  Completion-control run
+  [29160467690](https://github.com/alovwang-sys/FlowSight/actions/runs/29160467690)
+  first failed only Ubuntu 3.13 after 1,666 passes when the TRIAL-004 real
+  sidecar test observed removed state/dead health just before the owner lock was
+  released; the authorized failed-job rerun passed as job `86565326621`, and
+  attempt 2 completed successfully without a code or threshold change.
   The full check correctly retains the partial-scaffold limitation. This proves
   bounded re-contention policy only; it does not prove child launch/READY,
   descriptor handoff, state publication, requested-port policy, reload, SDK
@@ -286,6 +306,4 @@ Quality Governor:
 
 ## Failure Queue Items
 
-- P1: exact-type phantom `OwnerLockErrorCode`/`OwnerElectionErrorCode` members
-  must be treated as malformed private-seam failures; only registered canonical
-  member identities may authorize waiting or exact domain-error propagation.
+- none
