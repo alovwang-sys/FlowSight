@@ -347,6 +347,13 @@ def test_public_shape_and_export_are_exact() -> None:
         OwnerElectionErrorCode.OWNER_ELECTION_DEADLINE_FAILED,
         OwnerElectionErrorCode.OWNER_ELECTION_FAILED,
     )
+    assert tuple(OwnerLockErrorCode) == (
+        OwnerLockErrorCode.OWNER_LOCK_HELD,
+        OwnerLockErrorCode.OWNER_LOCK_STORAGE_FAILED,
+        OwnerLockErrorCode.INHERITED_OWNER_LOCK_INVALID,
+        OwnerLockErrorCode.OWNER_LOCK_CLEANUP_FAILED,
+        OwnerLockErrorCode.OWNER_LOCK_CLOSED,
+    )
     public_wait_names = [name for name in sidecar_package.__all__ if "wait" in name.lower()]
     assert public_wait_names == ["wait_for_owner_election"]
 
@@ -627,6 +634,43 @@ def test_wait_must_prove_the_full_requested_interval_without_busy_loop(
     assert _event_names(flow) == expected_names
 
 
+@pytest.mark.parametrize(
+    "post_second_wait",
+    [0.2, 0.21, 0.224999],
+    ids=["no-progress", "partial-progress", "almost-full-interval"],
+)
+def test_every_repeated_wait_must_prove_its_full_requested_interval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    post_second_wait: float,
+) -> None:
+    store = _store(tmp_path)
+    flow = _Flow(
+        clock_values=[0.0, 0.1, 0.126, 0.2, post_second_wait],
+        election_values=[_held(), _held()],
+        wait_values=[None, None],
+    )
+    flow.install(monkeypatch)
+
+    with pytest.raises(OwnerElectionError) as captured:
+        wait_for_owner_election(store, 1.0)
+    _assert_election_error(
+        captured.value,
+        OwnerElectionErrorCode.OWNER_ELECTION_DEADLINE_FAILED,
+    )
+    assert _event_names(flow) == [
+        "clock",
+        "elect",
+        "clock",
+        "wait",
+        "clock",
+        "elect",
+        "clock",
+        "wait",
+        "clock",
+    ]
+
+
 def test_repeated_contention_expires_instead_of_returning_last_contention(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -666,7 +710,9 @@ def test_repeated_contention_expires_instead_of_returning_last_contention(
     "error",
     [
         OwnerLockError(OwnerLockErrorCode.OWNER_LOCK_STORAGE_FAILED),
+        OwnerLockError(OwnerLockErrorCode.INHERITED_OWNER_LOCK_INVALID),
         OwnerLockError(OwnerLockErrorCode.OWNER_LOCK_CLEANUP_FAILED),
+        OwnerLockError(OwnerLockErrorCode.OWNER_LOCK_CLOSED),
         OwnerElectionError(OwnerElectionErrorCode.OWNER_ELECTION_FAILED),
         OwnerElectionError(OwnerElectionErrorCode.OWNER_ELECTION_DEADLINE_FAILED),
     ],
@@ -700,7 +746,11 @@ def test_exact_noncontention_domain_errors_preserve_full_identity_and_chain(
     "error",
     [
         OwnerLockError(OwnerLockErrorCode.OWNER_LOCK_STORAGE_FAILED),
+        OwnerLockError(OwnerLockErrorCode.INHERITED_OWNER_LOCK_INVALID),
+        OwnerLockError(OwnerLockErrorCode.OWNER_LOCK_CLEANUP_FAILED),
+        OwnerLockError(OwnerLockErrorCode.OWNER_LOCK_CLOSED),
         OwnerElectionError(OwnerElectionErrorCode.OWNER_ELECTION_FAILED),
+        OwnerElectionError(OwnerElectionErrorCode.OWNER_ELECTION_DEADLINE_FAILED),
     ],
 )
 def test_exact_noncontention_error_after_wait_preserves_identity_without_first_contention(
@@ -765,6 +815,20 @@ def _election_error_without_code() -> OwnerElectionError:
     return error
 
 
+def _phantom_owner_error_code(value: str) -> OwnerLockErrorCode:
+    code = str.__new__(OwnerLockErrorCode, value)
+    code._name_ = "PHANTOM"
+    code._value_ = value
+    return code
+
+
+def _phantom_election_error_code(value: str) -> OwnerElectionErrorCode:
+    code = str.__new__(OwnerElectionErrorCode, value)
+    code._name_ = "PHANTOM"
+    code._value_ = value
+    return code
+
+
 @pytest.mark.parametrize(
     "failure",
     [
@@ -785,13 +849,20 @@ def _election_error_without_code() -> OwnerElectionError:
         ),
     ],
 )
+@pytest.mark.parametrize("after_contention", [False, True], ids=["first", "retry"])
 def test_ordinary_derived_and_malformed_election_failures_become_fixed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     failure: BaseException,
+    after_contention: bool,
 ) -> None:
     store = _store(tmp_path)
-    flow = _Flow(clock_values=[0.0], election_values=[failure])
+    first_contention = _held() if after_contention else None
+    flow = _Flow(
+        clock_values=[0.0, 0.1, 0.126] if after_contention else [0.0],
+        election_values=[first_contention, failure] if first_contention is not None else [failure],
+        wait_values=[None] if after_contention else [],
+    )
     flow.install(monkeypatch)
 
     with pytest.raises(OwnerElectionError) as captured:
@@ -801,7 +872,62 @@ def test_ordinary_derived_and_malformed_election_failures_become_fixed(
         OwnerElectionErrorCode.OWNER_ELECTION_FAILED,
     )
     assert captured.value is not failure
-    assert _event_names(flow) == ["clock", "elect"]
+    if first_contention is not None:
+        assert captured.value.__context__ is not first_contention
+        assert captured.value.__cause__ is not first_contention
+    assert _event_names(flow) == (
+        ["clock", "elect", "clock", "wait", "clock", "elect"]
+        if after_contention
+        else ["clock", "elect"]
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OwnerLockError(_phantom_owner_error_code("OWNER_LOCK_HELD")),
+        OwnerLockError(_phantom_owner_error_code(PRIVATE)),
+        OwnerElectionError(_phantom_election_error_code("OWNER_ELECTION_FAILED")),
+        OwnerElectionError(_phantom_election_error_code(PRIVATE)),
+    ],
+    ids=[
+        "owner-canonical-value",
+        "owner-private-value",
+        "election-canonical-value",
+        "election-private-value",
+    ],
+)
+@pytest.mark.parametrize("after_contention", [False, True], ids=["first", "retry"])
+def test_exact_type_phantom_error_codes_are_fixed_without_wait_or_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: OwnerLockError | OwnerElectionError,
+    after_contention: bool,
+) -> None:
+    assert type(failure.code) in {OwnerLockErrorCode, OwnerElectionErrorCode}
+    first_contention = _held() if after_contention else None
+    flow = _Flow(
+        clock_values=[0.0, 0.1, 0.126] if after_contention else [0.0],
+        election_values=[first_contention, failure] if first_contention is not None else [failure],
+        wait_values=[None] if after_contention else [],
+    )
+    flow.install(monkeypatch)
+
+    with pytest.raises(OwnerElectionError) as captured:
+        wait_for_owner_election(_store(tmp_path), 1.0)
+    _assert_election_error(
+        captured.value,
+        OwnerElectionErrorCode.OWNER_ELECTION_FAILED,
+    )
+    assert captured.value is not failure
+    if first_contention is not None:
+        assert captured.value.__context__ is not first_contention
+        assert captured.value.__cause__ is not first_contention
+    assert _event_names(flow) == (
+        ["clock", "elect", "clock", "wait", "clock", "elect"]
+        if after_contention
+        else ["clock", "elect"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -816,13 +942,22 @@ def test_ordinary_derived_and_malformed_election_failures_become_fixed(
         pytest.param(_OpaqueMalformed(), id="opaque"),
     ],
 )
+@pytest.mark.parametrize("after_contention", [False, True], ids=["first", "retry"])
 def test_malformed_election_result_is_never_inspected_or_returned(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     malformed: object,
+    after_contention: bool,
 ) -> None:
     store = _store(tmp_path)
-    flow = _Flow(clock_values=[0.0], election_values=[malformed])
+    first_contention = _held() if after_contention else None
+    flow = _Flow(
+        clock_values=[0.0, 0.1, 0.126] if after_contention else [0.0],
+        election_values=[first_contention, malformed]
+        if first_contention is not None
+        else [malformed],
+        wait_values=[None] if after_contention else [],
+    )
     flow.install(monkeypatch)
 
     with pytest.raises(OwnerElectionError) as captured:
@@ -831,7 +966,14 @@ def test_malformed_election_result_is_never_inspected_or_returned(
         captured.value,
         OwnerElectionErrorCode.OWNER_ELECTION_FAILED,
     )
-    assert _event_names(flow) == ["clock", "elect"]
+    if first_contention is not None:
+        assert captured.value.__context__ is not first_contention
+        assert captured.value.__cause__ is not first_contention
+    assert _event_names(flow) == (
+        ["clock", "elect", "clock", "wait", "clock", "elect"]
+        if after_contention
+        else ["clock", "elect"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -994,6 +1136,12 @@ def test_clock_failure_at_every_boundary_is_fixed_deadline_failure(
             ["clock", "elect"],
         ),
         (
+            [0.0, 0.1, 0.126],
+            [_held(), _ProcessControl("retry-election")],
+            [None],
+            ["clock", "elect", "clock", "wait", "clock", "elect"],
+        ),
+        (
             [0.0, _ProcessControl("before-wait")],
             [_held()],
             [],
@@ -1015,6 +1163,7 @@ def test_clock_failure_at_every_boundary_is_fixed_deadline_failure(
     ids=[
         "initial-clock",
         "election",
+        "retry-election",
         "wait-admission-clock",
         "wait",
         "post-wait-clock",
@@ -1385,8 +1534,11 @@ def test_production_ast_stays_inside_bounded_retry_election_policy() -> None:
         ast.Global,
         ast.Lambda,
         ast.ListComp,
+        ast.Match,
         ast.NamedExpr,
         ast.Nonlocal,
+        ast.Eq,
+        ast.NotEq,
         ast.SetComp,
         ast.With,
         ast.Yield,
@@ -1408,6 +1560,40 @@ def test_production_ast_stays_inside_bounded_retry_election_policy() -> None:
         isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del))
         for node in ast.walk(tree)
     )
+
+    string_constants = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and type(node.value) is str
+    ]
+    assert sorted(string_constants) == sorted(
+        [
+            "Bounded retry policy for sidecar owner election contention.",
+            "Return one incumbent or owner after bounded contention retries.",
+            "timeout must be a built-in int or float",
+            "timeout must be finite, positive, and at most 30 seconds",
+            "timeout must be finite, positive, and at most 30 seconds",
+            "store must be an exact StateStore",
+        ]
+    )
+    assert not any(
+        isinstance(node, ast.Constant) and type(node.value) is bytes for node in ast.walk(tree)
+    )
+
+    tuple_nodes = [node for node in ast.walk(tree) if isinstance(node, ast.Tuple)]
+    assert len(tuple_nodes) == 3
+    stored_tuples = [node for node in tuple_nodes if isinstance(node.ctx, ast.Store)]
+    assert len(stored_tuples) == 1
+    assert [element.id for element in stored_tuples[0].elts if isinstance(element, ast.Name)] == [
+        "wait_started",
+        "wait_remaining",
+    ]
+    loaded_tuple_paths = [
+        [_attribute_path(element) for element in node.elts]
+        for node in tuple_nodes
+        if isinstance(node.ctx, ast.Load)
+    ]
+    assert sorted(loaded_tuple_paths) == sorted([["float", "float"], ["observed", "remaining"]])
 
     def call_path(call: ast.Call) -> str:
         path = _attribute_path(call.func)
@@ -1490,6 +1676,201 @@ def test_production_ast_stays_inside_bounded_retry_election_policy() -> None:
     assert frozen_wait_call.keywords == []
 
     public_scope = functions_by_name["wait_for_owner_election"]
+    parent_by_id = {
+        id(child): parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
+    }
+
+    stored_names = {
+        node.id
+        for node in ast.walk(public_scope)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    assert stored_names == {
+        "admitted_at",
+        "contention",
+        "deadline",
+        "elapsed",
+        "election_error_code",
+        "election_timeout",
+        "interval",
+        "malformed",
+        "next_observed",
+        "next_remaining",
+        "normalized_timeout",
+        "outcome",
+        "owner_error_code",
+        "started",
+        "wait_failed",
+        "wait_remaining",
+        "wait_result",
+        "wait_started",
+        "wait_window",
+    }
+
+    public_try_nodes = [node for node in ast.walk(public_scope) if isinstance(node, ast.Try)]
+    assert len(public_try_nodes) == 4
+    assert all(node.finalbody == [] for node in public_try_nodes)
+    handler_shapes = [
+        (
+            tuple((_attribute_path(handler.type), handler.name) for handler in node.handlers),
+            len(node.orelse),
+        )
+        for node in public_try_nodes
+    ]
+    assert (
+        handler_shapes.count(
+            (
+                (
+                    ("OwnerLockError", "error"),
+                    ("OwnerElectionError", "error"),
+                    ("Exception", None),
+                ),
+                0,
+            )
+        )
+        == 1
+    )
+    assert handler_shapes.count(((("Exception", None),), 0)) == 1
+    assert handler_shapes.count(((("Exception", None),), 1)) == 2
+
+    raw_store_loads = [
+        node
+        for node in ast.walk(public_scope)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id == "store"
+    ]
+    store_uses: list[str] = []
+    for node in raw_store_loads:
+        parent = parent_by_id[id(node)]
+        assert isinstance(parent, ast.Call)
+        if call_path(parent) == "type":
+            assert parent.args == [node]
+            assert parent.keywords == []
+            store_uses.append("type")
+            continue
+        assert call_path(parent) == "_resolve_owner_election"
+        assert len(parent.args) == 2
+        assert parent.args[0] is node
+        assert isinstance(parent.args[1], ast.Name)
+        assert parent.args[1].id == "election_timeout"
+        assert parent.keywords == []
+        store_uses.append("election")
+    assert store_uses.count("type") == 1
+    assert store_uses.count("election") == 1
+
+    raw_outcome_loads = [
+        node
+        for node in ast.walk(public_scope)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id == "outcome"
+    ]
+    outcome_uses: list[str] = []
+    for node in raw_outcome_loads:
+        parent = parent_by_id[id(node)]
+        if isinstance(parent, ast.Call):
+            assert call_path(parent) == "type"
+            assert parent.args == [node]
+            assert parent.keywords == []
+            outcome_uses.append("type")
+            continue
+        if isinstance(parent, ast.Return):
+            assert parent.value is node
+            outcome_uses.append("return")
+            continue
+        raise AssertionError("unsafe raw election outcome use")
+    assert outcome_uses.count("type") == 2
+    assert outcome_uses.count("return") == 1
+
+    raw_error_loads = [
+        node
+        for node in ast.walk(public_scope)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id == "error"
+    ]
+    error_uses: list[str] = []
+    for node in raw_error_loads:
+        parent = parent_by_id[id(node)]
+        if isinstance(parent, ast.Call):
+            assert call_path(parent) == "type"
+            assert parent.args == [node]
+            assert parent.keywords == []
+            error_uses.append("type")
+            continue
+        if isinstance(parent, ast.Attribute):
+            assert parent.value is node
+            assert parent.attr == "code"
+            assert isinstance(parent.ctx, ast.Load)
+            error_uses.append("code")
+            continue
+        raise AssertionError("unsafe raw election error use")
+    assert error_uses.count("type") == 2
+    assert error_uses.count("code") == 2
+
+    error_code_assignments: dict[str, ast.Assign] = {}
+    for node in ast.walk(public_scope):
+        if (
+            not isinstance(node, ast.Attribute)
+            or not isinstance(node.ctx, ast.Load)
+            or not isinstance(node.value, ast.Name)
+            or node.value.id != "error"
+            or node.attr != "code"
+        ):
+            continue
+        parent = parent_by_id[id(node)]
+        assert isinstance(parent, ast.Assign)
+        assert parent.value is node
+        assert len(parent.targets) == 1
+        target = parent.targets[0]
+        assert isinstance(target, ast.Name)
+        assert target.id in {"owner_error_code", "election_error_code"}
+        assert target.id not in error_code_assignments
+        error_code_assignments[target.id] = parent
+    assert set(error_code_assignments) == {"owner_error_code", "election_error_code"}
+
+    def assert_identity_code_uses(name: str, canonical_paths: set[str]) -> None:
+        uses = [
+            node
+            for node in ast.walk(public_scope)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id == name
+        ]
+        observed_paths: set[str] = set()
+        type_calls = 0
+        for node in uses:
+            parent = parent_by_id[id(node)]
+            if isinstance(parent, ast.Call):
+                assert call_path(parent) == "type"
+                assert parent.args == [node]
+                assert parent.keywords == []
+                type_calls += 1
+                continue
+            if isinstance(parent, ast.Compare):
+                assert parent.left is node
+                assert len(parent.ops) == 1
+                assert isinstance(parent.ops[0], ast.Is)
+                assert len(parent.comparators) == 1
+                path = _attribute_path(parent.comparators[0])
+                assert path in canonical_paths
+                observed_paths.add(path)
+                continue
+            raise AssertionError(f"unsafe raw {name} use")
+        assert type_calls == 1
+        assert observed_paths == canonical_paths
+
+    assert_identity_code_uses(
+        "owner_error_code",
+        {
+            "OwnerLockErrorCode.OWNER_LOCK_HELD",
+            "OwnerLockErrorCode.OWNER_LOCK_STORAGE_FAILED",
+            "OwnerLockErrorCode.INHERITED_OWNER_LOCK_INVALID",
+            "OwnerLockErrorCode.OWNER_LOCK_CLEANUP_FAILED",
+            "OwnerLockErrorCode.OWNER_LOCK_CLOSED",
+        },
+    )
+    assert_identity_code_uses(
+        "election_error_code",
+        {
+            "OwnerElectionErrorCode.OWNER_ELECTION_DEADLINE_FAILED",
+            "OwnerElectionErrorCode.OWNER_ELECTION_FAILED",
+        },
+    )
+
     elapsed_assignments = [
         node
         for node in ast.walk(public_scope)
@@ -1548,6 +1929,10 @@ def test_production_ast_stays_inside_bounded_retry_election_policy() -> None:
         "math.isfinite",
         "error.code",
         "OwnerLockErrorCode.OWNER_LOCK_HELD",
+        "OwnerLockErrorCode.OWNER_LOCK_STORAGE_FAILED",
+        "OwnerLockErrorCode.INHERITED_OWNER_LOCK_INVALID",
+        "OwnerLockErrorCode.OWNER_LOCK_CLEANUP_FAILED",
+        "OwnerLockErrorCode.OWNER_LOCK_CLOSED",
         "OwnerElectionErrorCode.OWNER_ELECTION_DEADLINE_FAILED",
         "OwnerElectionErrorCode.OWNER_ELECTION_FAILED",
     }

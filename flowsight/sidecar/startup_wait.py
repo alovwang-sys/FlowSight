@@ -128,8 +128,15 @@ def wait_for_owner_election(
                         malformed = True
                     elif owner_error_code is OwnerLockErrorCode.OWNER_LOCK_HELD:
                         contention = True
-                    else:
+                    elif (
+                        owner_error_code is OwnerLockErrorCode.OWNER_LOCK_STORAGE_FAILED
+                        or owner_error_code is OwnerLockErrorCode.INHERITED_OWNER_LOCK_INVALID
+                        or owner_error_code is OwnerLockErrorCode.OWNER_LOCK_CLEANUP_FAILED
+                        or owner_error_code is OwnerLockErrorCode.OWNER_LOCK_CLOSED
+                    ):
                         raise
+                    else:
+                        malformed = True
         except OwnerElectionError as error:
             if type(error) is not _OWNER_ELECTION_ERROR_TYPE:
                 malformed = True
@@ -139,9 +146,15 @@ def wait_for_owner_election(
                 except Exception:
                     malformed = True
                 else:
-                    if type(election_error_code) is _OWNER_ELECTION_ERROR_CODE_TYPE:
+                    if type(election_error_code) is not _OWNER_ELECTION_ERROR_CODE_TYPE:
+                        malformed = True
+                    elif (
+                        election_error_code is OwnerElectionErrorCode.OWNER_ELECTION_DEADLINE_FAILED
+                        or election_error_code is OwnerElectionErrorCode.OWNER_ELECTION_FAILED
+                    ):
                         raise
-                    malformed = True
+                    else:
+                        malformed = True
         except Exception:
             malformed = True
 
