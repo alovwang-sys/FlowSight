@@ -27,6 +27,11 @@ from .startup_channel import (
     open_startup_channel,
 )
 from .startup_discovery import discover_existing_startup
+from .startup_election import (
+    OwnerElectionError,
+    OwnerElectionErrorCode,
+    resolve_owner_election,
+)
 from .startup_state import (
     StartupStateError,
     StartupStateErrorCode,
@@ -56,6 +61,8 @@ __all__ = [
     "OwnerLock",
     "OwnerLockError",
     "OwnerLockErrorCode",
+    "OwnerElectionError",
+    "OwnerElectionErrorCode",
     "PROTOCOL_VERSION",
     "STATE_SCHEMA_VERSION",
     "STARTUP_CHANNEL_SCHEMA_VERSION",
@@ -82,5 +89,6 @@ __all__ = [
     "open_startup_channel",
     "probe_sidecar_health",
     "receive_startup_outcome",
+    "resolve_owner_election",
     "verify_ready_startup",
 ]
