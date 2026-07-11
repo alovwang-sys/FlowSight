@@ -6,7 +6,7 @@
 task_id: P0-016
 release: v1
 task_type: implementation
-status: planned
+status: in_progress
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-004, P0-006, P0-014, TRIAL-004]
@@ -325,7 +325,11 @@ Quality Governor:
 - Command: `.venv/bin/python -m pytest tests/sidecar/test_child_bootstrap.py`
 - Result: contract passed; implementation pending
 - Notes: `scripts/validate_agent_system.py`, `git diff --check`, and JSONL
-  parsing passed for the reviewed planned card and FSQ-0001 record. This is
+  parsing passed for the reviewed planned card and FSQ-0001 record. Planned
+  contract commit `39af3fe215ed4b767f5c0049f7958594f8158e3d` passed
+  [run 29166816747](https://github.com/alovwang-sys/FlowSight/actions/runs/29166816747)
+  with jobs `86581228477` (macOS 3.13), `86581228478` (macOS 3.12),
+  `86581228485` (Ubuntu 3.13), and `86581228492` (Ubuntu 3.12). This is
   task-system evidence only, not codec or Phase 0 product acceptance.
 
 ## Failure Queue Items
