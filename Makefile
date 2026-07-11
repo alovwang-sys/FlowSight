@@ -98,7 +98,7 @@ test-product:
 	fi
 
 test-phase0:
-	$(PYTHON) -m pytest tests/test_sdk_skeleton.py tests/security/test_safe_summary.py tests/store/test_wal_writer.py tests/sidecar
+	$(PYTHON) -m pytest tests/test_sdk_skeleton.py tests/security/test_safe_summary.py tests/store/test_wal_writer.py tests/sidecar tests/packaging/test_wheel_runtime_dependency.py
 
 test-trial004:
 	$(PYTHON) -m pytest tests/spikes/test_sidecar_otel_lifecycle.py

@@ -266,7 +266,12 @@ repository checks pass without claiming complete Phase 0 evidence
 ## Role Outputs
 
 Implementer:
-- TBD
+- Promoted only the existing exact `uvicorn==0.51.0` pin from the `dev` extra
+  to the ordered runtime dependency list, added the focused probe to
+  `test-phase0`, and implemented the self-contained clean-wheel install and
+  provenance probe. The runner uses one bounded process-group cleanup path for
+  timeouts and arbitrary `BaseException`, including the leader-exits-first
+  descendant case.
 
 Adversarial Reviewer:
 - Reviewer 1: contract adversary found five P1 gaps in CI wording, timeout-tree
@@ -281,11 +286,19 @@ Adversarial Reviewer:
   exact temporary-source top level is a pre-build assertion and that workspace
   caches/generated metadata are excluded from the copy rather than forbidden
   from existing. After those wording fixes, final P0/P1/P2 = 0 and GO.
+- Implementation adversarial review found three P1 gaps in the first candidate:
+  partial install-command assertions, an audit hook narrower than all socket
+  events, and a process-group cleanup branch that could miss a quiet stubborn
+  descendant after the leader exited. All three were fixed with exact command
+  tuples, `socket.*` rejection, and a real reverse-lifecycle regression. Two
+  independent final reviews reported P0/P1 = 0 and GO.
 
 Fixer:
 - Codex primary accepted all five P1 findings and both wording clarifications
   before activation. No finding was deferred and no product scope or allowlist
   was expanded.
+- Codex primary accepted every implementation P1 and added focused regressions;
+  no implementation finding was deferred.
 
 Quality Governor:
 - Codex primary confirmed one Phase 0 packaging/dependency slice, complete
@@ -293,6 +306,9 @@ Quality Governor:
   planned product/test files. The probe remains test infrastructure and stops
   before child launch, server construction, listener, READY, SDK, storage,
   telemetry, or UI behavior. P0/P1/P2 = 0 and GO.
+- The final diff remains inside the task card plus the exact three-file
+  allowlist, changes no version or dependency other than the Uvicorn move, and
+  retains the partial-scaffold limitation.
 
 ## Verifier Evidence
 
@@ -303,6 +319,16 @@ Quality Governor:
   [run 29164580755](https://github.com/alovwang-sys/FlowSight/actions/runs/29164580755)
   across macOS/Linux and CPython 3.12/3.13. This is task-system evidence only;
   it is not wheel, dependency, import, or Phase 0 product acceptance.
+- Command: `.venv/bin/python -m pytest tests/packaging/test_wheel_runtime_dependency.py`
+- Result: 12 passed in 30.02 seconds
+- Command: `make test-phase0`
+- Result: 1890 passed in 44.08 seconds
+- Command: `make check`
+- Result: 2015 passed in 105.67 seconds; partial-scaffold limitation retained
+- Command: `make gate-phase0`
+- Result: 2015 passed in 91.07 seconds; `phase0-sustained` gate passed
+- Notes: local macOS CPython 3.13 evidence is complete. Cross-platform
+  implementation evidence is pending the pushed GitHub Actions matrix.
 
 ## Failure Queue Items
 
