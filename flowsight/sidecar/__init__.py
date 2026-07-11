@@ -38,6 +38,7 @@ from .startup_state import (
     create_startup_state,
 )
 from .startup_verification import verify_ready_startup
+from .startup_wait import wait_for_owner_election
 from .state import (
     LOOPBACK_HOST,
     MAX_STATE_BYTES,
@@ -91,4 +92,5 @@ __all__ = [
     "receive_startup_outcome",
     "resolve_owner_election",
     "verify_ready_startup",
+    "wait_for_owner_election",
 ]
