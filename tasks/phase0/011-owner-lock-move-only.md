@@ -26,9 +26,9 @@ Phase 0
 
 ## Goal
 
-Prevent Python's standard `copy.copy`, `copy.deepcopy`, and default pickle
-reduction entry points from accidentally creating a second `OwnerLock` object
-that claims the same descriptor integer.
+Prevent unmodified standard-library `copy.copy`, `copy.deepcopy`, and default
+pickle reduction entry points from accidentally creating a second `OwnerLock`
+object that claims the same descriptor integer.
 
 ## Context
 
@@ -44,13 +44,18 @@ that claims the same descriptor integer.
   API begins returning that handle across a new ownership boundary.
 - The fixed public error text is exact and input-independent:
   `TypeError("OwnerLock is move-only")`; no new error enum or result type is
-  introduced.
+  introduced. Each guard raises it `from None` so Python suppresses an existing
+  caller exception from formatted traceback output.
 - This is a fail-fast API guard for cooperative same-process callers, not an
   adversarial Python security boundary. Its guarantees assume the class and
   stdlib dispatch registries are unmodified and no pre-populated deepcopy memo
   substitutes a result. It does not claim to defeat reflection, direct
   `object.__new__`, monkeypatching, a custom pickler dispatch table, an
-  externally registered reducer, or a caller-controlled finalizer.
+  externally registered reducer, a third-party serializer, direct descriptor
+  duplication, or a caller-controlled finalizer.
+- Python may attach a caller's already-active exception as `__context__` even
+  to an error raised `from None`. The guards neither inspect nor store that
+  caller-owned context; they only suppress it from formatted traceback output.
 - This task only hardens Python object duplication. It does not claim to make
   untrusted pickle input safe, and it does not change the existing
   `fork`/`exec` inherited-descriptor continuity explicitly supported by P0-004.
@@ -86,6 +91,8 @@ control-plane records; they do not expand the product-code allowlist above.
   or any alternate reconstruction path.
 - Do not import `copy`, `pickle`, `copyreg`, multiprocessing, subprocess, or
   serialization libraries in production. They are test-only callers.
+- Do not register, inspect, replace, or attempt to police caller-owned copy,
+  copyreg, Pickler, serializer, or private dispatch tables.
 - Do not add election, discovery, waiting, retry, stale-state cleanup, listener,
   startup channel, process launch, SQLite, SDK, OTel, UI, or lifecycle behavior.
 - Do not change dependencies, import spike code, mutate unrelated tests, or
@@ -99,16 +106,18 @@ control-plane records; they do not expand the product-code allowlist above.
   `OwnerLock.__reduce_ex__(self, protocol: object) -> NoReturn` methods exist
   with no defaults, varargs, kwargs, decorators, or alternate return path.
 - [ ] Each guard immediately raises exact input-independent
-  `TypeError("OwnerLock is move-only")`. The deepcopy memo and reduce protocol
-  inputs are only deleted as unused locals; they are not otherwise inspected,
-  mutated, represented, dynamically invoked, or intentionally retained.
+  `TypeError("OwnerLock is move-only") from None`. The deepcopy memo and reduce
+  protocol inputs are only deleted as unused locals; they are not otherwise
+  inspected, mutated, represented, dynamically invoked, or intentionally
+  retained.
 - [ ] A Cartesian active/closed-owner matrix covers `copy.copy`, default
   `copy.deepcopy`, all four direct guards, default `pickle.dumps`, protocol
   `-1`, and every protocol from `0` through `pickle.HIGHEST_PROTOCOL`. Every
   path fails with the fixed TypeError and returns no copy or serialized result.
   Closed owners remain closed and never reacquire, reopen, or touch a
-  descriptor. Where the running CPython exposes `copy.replace`, it naturally
-  rejects the owner without adding `__replace__`.
+  descriptor. In a separate compatibility probe, where the running CPython
+  exposes `copy.replace`, its own unsupported-type TypeError rejects the owner
+  without adding `__replace__`; that library error is not the fixed guard error.
 - [ ] On an active owner, the rejected standard paths leave the exact original
   descriptor, inode, inheritable flag, safe repr, and lock ownership unchanged;
   an independent contender is still rejected until the original closes. A
@@ -118,14 +127,19 @@ control-plane records; they do not expand the product-code allowlist above.
   work. These claims cover the exact built-in memo/protocol values supplied by
   stdlib plus direct-call opaque sentinels that the test retains strongly; they
   do not claim control over destruction of a hostile last-reference argument.
-  None of these rejected standard calls creates another supported handle, and
-  no memo, protocol, error, or temporary test object remains retained after the
-  caller releases the captured exception.
+  None of these rejected standard calls creates another supported handle in the
+  calling process, and no memo, protocol, error, or temporary test object
+  remains retained after the caller releases the captured exception. These
+  calling-process claims do not change P0-004's explicit `fork`/`exec`
+  inheritance contract.
 - [ ] Fixed public error surfaces (`type`, `str`, `repr`, and `args`) expose no
   path, descriptor, inode, errno, raw serializer detail, or caller memo/protocol
   value. The guard introduces no cause or note; context is absent when the
-  caller invokes it without an already-active exception. This is not a claim
-  against deliberate traceback/frame introspection.
+  caller invokes it without an already-active exception. With an already-active
+  caller exception, Python-managed `__context__` is permitted,
+  `__suppress_context__` is exact `True`, and formatted traceback output hides
+  the context. This is not a claim against deliberate traceback/frame
+  introspection.
 - [ ] Deterministic descriptor-reuse evidence proves no rejected duplication
   path closes the original or a replacement integer; the original still closes
   exactly once through existing P0-004 behavior and a successor can then
@@ -134,9 +148,9 @@ control-plane records; they do not expand the product-code allowlist above.
   the four new methods and their signatures. Apart from adding `NoReturn` to the
   existing typing import and adding those methods, production statements remain
   byte-for-byte unchanged. Each new body permits only deletion of its unused
-  `memo`/`protocol` input where present plus the fixed `TypeError` raise, with no
-  return, control flow, descriptor access, assignment, mutable state, dynamic
-  dispatch, serialization import, or additional public API.
+  `memo`/`protocol` input where present plus the fixed `TypeError` raise from
+  `None`, with no return, control flow, descriptor access, assignment, mutable
+  state, dynamic dispatch, serialization import, or additional public API.
 - [ ] All existing P0-004 owner-lock acquisition/adoption/context/exec-continuity
   tests remain unchanged and pass, along with focused tests, `make test-phase0`,
   `make check`, and the sustained Phase 0 gate on CPython 3.12/3.13 and the
@@ -153,6 +167,7 @@ Run:
 ```sh
 pytest tests/sidecar/test_owner_lock.py
 make test-phase0
+make check
 make gate-phase0
 ```
 

@@ -9,7 +9,7 @@ import stat
 import sys
 from enum import StrEnum
 from types import TracebackType
-from typing import Final, Literal
+from typing import Final, Literal, NoReturn
 
 from .state import StateStorageError, StateStore, _OwnerLockFileCleanupError
 
@@ -301,6 +301,20 @@ class OwnerLock:
     def __repr__(self) -> str:
         state = "active" if self._descriptor >= 0 else "closed"
         return f"<OwnerLock {state}>"
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("OwnerLock is move-only") from None
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        del memo
+        raise TypeError("OwnerLock is move-only") from None
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("OwnerLock is move-only") from None
+
+    def __reduce_ex__(self, protocol: object) -> NoReturn:
+        del protocol
+        raise TypeError("OwnerLock is move-only") from None
 
     def fileno(self) -> int:
         if self._descriptor < 0:

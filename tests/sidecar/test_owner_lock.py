@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import ast
+import copy
 import errno
 import fcntl
+import gc
 import json
 import os
+import pickle
 import selectors
 import socket
 import stat
 import subprocess
 import sys
 import time
+import traceback
+import weakref
+from collections.abc import Callable
 from enum import IntEnum
 from pathlib import Path
 from typing import BinaryIO, NoReturn
@@ -2157,3 +2164,491 @@ else:
     finally:
         for process in processes:
             _reap_process(process)
+
+
+_MOVE_ONLY_MESSAGE = "OwnerLock is move-only"
+
+
+class _OpaqueMoveOnlyInput:
+    __slots__ = ("label", "__weakref__")
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def __repr__(self) -> NoReturn:
+        raise AssertionError(f"{self.label} was represented")
+
+    def __bool__(self) -> NoReturn:
+        raise AssertionError(f"{self.label} truthiness was inspected")
+
+    def __index__(self) -> NoReturn:
+        raise AssertionError(f"{self.label} index was inspected")
+
+
+def _assert_move_only_error(error: BaseException, *forbidden: str) -> None:
+    assert type(error) is TypeError
+    assert error.args == (_MOVE_ONLY_MESSAGE,)
+    assert str(error) == _MOVE_ONLY_MESSAGE
+    assert repr(error) == f"TypeError({_MOVE_ONLY_MESSAGE!r})"
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert error.__suppress_context__ is True
+    assert getattr(error, "__notes__", None) is None
+    exposed = "\n".join((str(error), repr(error), repr(error.args)))
+    for value in forbidden:
+        assert value not in exposed
+
+
+def _expect_move_only(
+    operation: Callable[[], object],
+    *forbidden: str,
+) -> TypeError:
+    with pytest.raises(TypeError) as captured:
+        operation()
+    error = captured.value
+    _assert_move_only_error(error, *forbidden)
+    return error
+
+
+def _assert_deleted_traceback_local(error: BaseException, name: str) -> None:
+    traceback_cursor = error.__traceback__
+    assert traceback_cursor is not None
+    while traceback_cursor.tb_next is not None:
+        traceback_cursor = traceback_cursor.tb_next
+    assert name not in traceback_cursor.tb_frame.f_locals
+
+
+def _pickle_operation(owner: OwnerLock, protocol: int) -> Callable[[], bytes]:
+    def operation() -> bytes:
+        return pickle.dumps(owner, protocol=protocol)
+
+    return operation
+
+
+def _exact_owner_ids() -> set[int]:
+    gc.collect()
+    return {id(value) for value in gc.get_objects() if type(value) is OwnerLock}
+
+
+@pytest.mark.parametrize("closed", [False, True], ids=["active", "closed"])
+def test_owner_lock_default_copy_and_pickle_matrix_is_move_only(
+    tmp_path: Path,
+    closed: bool,
+) -> None:
+    store = _store(tmp_path)
+    owner = OwnerLock.acquire(store)
+    descriptor = owner.fileno()
+    metadata = os.fstat(descriptor)
+    inheritable = os.get_inheritable(descriptor)
+    expected_repr = "<OwnerLock active>"
+    replacement_descriptor = -1
+    if closed:
+        owner.close()
+        expected_repr = "<OwnerLock closed>"
+        replacement_descriptor = os.open(os.devnull, os.O_RDONLY)
+        if replacement_descriptor != descriptor:
+            promoted = os.dup2(replacement_descriptor, descriptor)
+            os.close(replacement_descriptor)
+            replacement_descriptor = promoted
+        assert replacement_descriptor == descriptor
+
+    memo_value = object()
+    memo: dict[int, object] = {sys.maxsize: memo_value}
+    memo_snapshot = dict(memo)
+    operations: list[tuple[str, Callable[[], object]]] = [
+        ("copy.copy", lambda: copy.copy(owner)),
+        ("copy.deepcopy", lambda: copy.deepcopy(owner)),
+        ("copy.deepcopy with memo", lambda: copy.deepcopy(owner, memo)),
+        ("direct __copy__", owner.__copy__),
+        ("direct __deepcopy__", lambda: owner.__deepcopy__(memo)),
+        ("direct __reduce__", owner.__reduce__),
+        ("direct __reduce_ex__", lambda: owner.__reduce_ex__(-1)),
+        ("pickle default", lambda: pickle.dumps(owner)),
+    ]
+    for protocol in [-1, *range(pickle.HIGHEST_PROTOCOL + 1)]:
+        operations.append(
+            (
+                f"pickle protocol {protocol}",
+                _pickle_operation(owner, protocol),
+            )
+        )
+
+    owner_ids = _exact_owner_ids()
+    try:
+        for label, operation in operations:
+            error = _expect_move_only(
+                operation,
+                str(store.lock_path),
+                str(descriptor),
+                label,
+            )
+            del error
+            assert _exact_owner_ids() == owner_ids, label
+            assert memo == memo_snapshot, label
+            assert repr(owner) == expected_repr, label
+
+        if closed:
+            assert replacement_descriptor >= 0
+            assert os.fstat(replacement_descriptor).st_mode
+            with pytest.raises(OwnerLockError) as captured_closed:
+                owner.fileno()
+            _assert_private_error(
+                captured_closed.value,
+                OwnerLockErrorCode.OWNER_LOCK_CLOSED,
+            )
+        else:
+            assert owner.fileno() == descriptor
+            current_metadata = os.fstat(descriptor)
+            assert (current_metadata.st_dev, current_metadata.st_ino) == (
+                metadata.st_dev,
+                metadata.st_ino,
+            )
+            assert os.get_inheritable(descriptor) is inheritable
+            with pytest.raises(OwnerLockError) as captured_held:
+                OwnerLock.acquire(store)
+            _assert_private_error(
+                captured_held.value,
+                OwnerLockErrorCode.OWNER_LOCK_HELD,
+            )
+    finally:
+        owner.close()
+        if replacement_descriptor >= 0:
+            try:
+                os.close(replacement_descriptor)
+            except OSError:
+                pass
+
+    successor = OwnerLock.acquire(store)
+    successor.close()
+
+
+def test_copy_replace_remains_unsupported_without_a_reconstruction_hook(
+    tmp_path: Path,
+) -> None:
+    replace = getattr(copy, "replace", None)
+    if replace is None:
+        return
+
+    store = _store(tmp_path)
+    owner = OwnerLock.acquire(store)
+    descriptor = owner.fileno()
+    owner_ids = _exact_owner_ids()
+    try:
+        assert "__replace__" not in OwnerLock.__dict__
+        with pytest.raises(TypeError) as captured:
+            replace(owner)
+        assert _MOVE_ONLY_MESSAGE not in str(captured.value)
+        assert str(descriptor) not in str(captured.value)
+        assert _exact_owner_ids() == owner_ids
+        assert owner.fileno() == descriptor
+    finally:
+        owner.close()
+
+
+def test_direct_guards_do_not_inspect_or_retain_opaque_inputs(tmp_path: Path) -> None:
+    owner = OwnerLock.acquire(_store(tmp_path))
+    owner_ids = _exact_owner_ids()
+
+    def exercise_guards() -> tuple[
+        weakref.ReferenceType[_OpaqueMoveOnlyInput],
+        weakref.ReferenceType[_OpaqueMoveOnlyInput],
+    ]:
+        memo_input = _OpaqueMoveOnlyInput("memo-secret")
+        protocol_input = _OpaqueMoveOnlyInput("protocol-secret")
+        memo_reference = weakref.ref(memo_input)
+        protocol_reference = weakref.ref(protocol_input)
+        deepcopy_error = _expect_move_only(
+            lambda: owner.__deepcopy__(memo_input),  # type: ignore[arg-type]
+            "memo-secret",
+        )
+        reduce_error = _expect_move_only(
+            lambda: owner.__reduce_ex__(protocol_input),
+            "protocol-secret",
+        )
+        _assert_deleted_traceback_local(deepcopy_error, "memo")
+        _assert_deleted_traceback_local(reduce_error, "protocol")
+        assert all(
+            value is not memo_input and value is not protocol_input
+            for value in vars(owner_lock_module).values()
+        )
+        del deepcopy_error, reduce_error
+        return memo_reference, protocol_reference
+
+    try:
+        memo_reference, protocol_reference = exercise_guards()
+        gc.collect()
+        assert memo_reference() is None
+        assert protocol_reference() is None
+        assert _exact_owner_ids() == owner_ids
+    finally:
+        owner.close()
+
+
+def test_move_only_error_suppresses_but_does_not_rewrite_caller_context(
+    tmp_path: Path,
+) -> None:
+    owner = OwnerLock.acquire(_store(tmp_path))
+    raw_detail = "caller-context-secret /private/context"
+    try:
+        try:
+            raise RuntimeError(raw_detail)
+        except RuntimeError as active_error:
+            with pytest.raises(TypeError) as captured:
+                owner.__copy__()
+            error = captured.value
+            assert type(error) is TypeError
+            assert error.args == (_MOVE_ONLY_MESSAGE,)
+            assert error.__cause__ is None
+            assert error.__context__ is active_error
+            assert error.__suppress_context__ is True
+            assert getattr(error, "__notes__", None) is None
+            rendered = "".join(traceback.format_exception(error))
+            assert _MOVE_ONLY_MESSAGE in rendered
+            assert raw_detail not in rendered
+    finally:
+        owner.close()
+
+
+def test_move_only_guards_make_no_owner_or_system_callouts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    owner = OwnerLock.acquire(_store(tmp_path))
+    unexpected_calls: list[str] = []
+    caplog.clear()
+
+    def unexpected(*args: object, **kwargs: object) -> NoReturn:
+        del args, kwargs
+        unexpected_calls.append("called")
+        raise AssertionError("move-only guard performed a forbidden callout")
+
+    try:
+        with monkeypatch.context() as patcher:
+            for attribute in ("fileno", "close", "__enter__", "__exit__", "__repr__"):
+                patcher.setattr(OwnerLock, attribute, unexpected)
+            for attribute in (
+                "_descriptor_is_exact_owner_file",
+                "_flock_status",
+                "_open_store_descriptor",
+                "_same_inode",
+                "_try_close",
+            ):
+                patcher.setattr(owner_lock_module, attribute, unexpected)
+            for attribute in (
+                "close",
+                "dup",
+                "dup2",
+                "fstat",
+                "get_inheritable",
+                "open",
+                "set_inheritable",
+                "unlink",
+            ):
+                patcher.setattr(owner_lock_module.os, attribute, unexpected)
+            for attribute in ("fcntl", "flock"):
+                patcher.setattr(owner_lock_module.fcntl, attribute, unexpected)
+
+            operations: tuple[Callable[[], object], ...] = (
+                lambda: copy.copy(owner),
+                lambda: copy.deepcopy(owner),
+                owner.__copy__,
+                lambda: owner.__deepcopy__({}),
+                owner.__reduce__,
+                lambda: owner.__reduce_ex__(pickle.HIGHEST_PROTOCOL),
+                lambda: pickle.dumps(owner, protocol=pickle.HIGHEST_PROTOCOL),
+            )
+            for operation in operations:
+                error = _expect_move_only(operation)
+                del error
+        assert unexpected_calls == []
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert output.err == ""
+        assert caplog.records == []
+        assert owner.fileno() >= 3
+    finally:
+        owner.close()
+
+
+def test_rejected_duplication_precedes_one_ambiguous_close_and_fd_reuse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store(tmp_path)
+    owner = OwnerLock.acquire(store)
+    descriptor = owner.fileno()
+    metadata = os.fstat(descriptor)
+    real_try_close = owner_lock_module._try_close
+    close_calls = 0
+    replacement_descriptor = -1
+
+    def ambiguous_close(file_descriptor: int) -> bool:
+        nonlocal close_calls, replacement_descriptor
+        if file_descriptor != descriptor:
+            return real_try_close(file_descriptor)
+        close_calls += 1
+        os.close(file_descriptor)
+        replacement_descriptor = os.open(os.devnull, os.O_RDONLY)
+        if replacement_descriptor != file_descriptor:
+            promoted = os.dup2(replacement_descriptor, file_descriptor)
+            os.close(replacement_descriptor)
+            replacement_descriptor = promoted
+        assert replacement_descriptor == descriptor
+        return False
+
+    try:
+        with monkeypatch.context() as patcher:
+            patcher.setattr(owner_lock_module, "_try_close", ambiguous_close)
+            operations: tuple[Callable[[], object], ...] = (
+                lambda: copy.copy(owner),
+                lambda: copy.deepcopy(owner),
+                lambda: pickle.dumps(owner, protocol=pickle.HIGHEST_PROTOCOL),
+            )
+            for operation in operations:
+                error = _expect_move_only(operation)
+                del error
+            assert close_calls == 0
+            assert replacement_descriptor == -1
+            assert owner.fileno() == descriptor
+
+            with pytest.raises(OwnerLockError) as captured:
+                owner.close()
+            _assert_private_error(
+                captured.value,
+                OwnerLockErrorCode.OWNER_LOCK_CLEANUP_FAILED,
+            )
+            owner.close()
+            assert close_calls == 1
+            assert replacement_descriptor == descriptor
+            assert os.fstat(replacement_descriptor).st_mode
+
+            successor = OwnerLock.acquire(store)
+            try:
+                successor_metadata = os.fstat(successor.fileno())
+                assert (successor_metadata.st_dev, successor_metadata.st_ino) == (
+                    metadata.st_dev,
+                    metadata.st_ino,
+                )
+                assert os.fstat(replacement_descriptor).st_mode
+            finally:
+                successor.close()
+        assert os.fstat(replacement_descriptor).st_mode
+    finally:
+        owner.close()
+        if replacement_descriptor >= 0:
+            os.close(replacement_descriptor)
+
+
+def test_owner_lock_move_only_guards_have_exact_static_shape() -> None:
+    source_path = Path(owner_lock_module.__file__)
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    owner_classes = [
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "OwnerLock"
+    ]
+    assert len(owner_classes) == 1
+    method_nodes = [
+        node
+        for node in owner_classes[0].body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    assert [node.name for node in method_nodes] == [
+        "__init__",
+        "_from_descriptor",
+        "acquire",
+        "adopt_inherited",
+        "__repr__",
+        "__copy__",
+        "__deepcopy__",
+        "__reduce__",
+        "__reduce_ex__",
+        "fileno",
+        "close",
+        "__enter__",
+        "__exit__",
+    ]
+    methods = {node.name: node for node in method_nodes}
+
+    expected_arguments: dict[str, list[tuple[str, str | None]]] = {
+        "__copy__": [("self", None)],
+        "__deepcopy__": [("self", None), ("memo", "dict[int, object]")],
+        "__reduce__": [("self", None)],
+        "__reduce_ex__": [("self", None), ("protocol", "object")],
+    }
+    deleted_argument = {
+        "__copy__": None,
+        "__deepcopy__": "memo",
+        "__reduce__": None,
+        "__reduce_ex__": "protocol",
+    }
+    for method_name, expected in expected_arguments.items():
+        method = methods[method_name]
+        assert isinstance(method, ast.FunctionDef)
+        assert method.decorator_list == []
+        assert method.args.posonlyargs == []
+        assert method.args.vararg is None
+        assert method.args.kwonlyargs == []
+        assert method.args.kw_defaults == []
+        assert method.args.kwarg is None
+        assert method.args.defaults == []
+        actual_arguments = [
+            (
+                argument.arg,
+                ast.unparse(argument.annotation) if argument.annotation is not None else None,
+            )
+            for argument in method.args.args
+        ]
+        assert actual_arguments == expected
+        assert method.returns is not None
+        assert ast.unparse(method.returns) == "NoReturn"
+
+        body = list(method.body)
+        expected_deleted = deleted_argument[method_name]
+        if expected_deleted is not None:
+            delete = body.pop(0)
+            assert isinstance(delete, ast.Delete)
+            assert len(delete.targets) == 1
+            target = delete.targets[0]
+            assert isinstance(target, ast.Name)
+            assert target.id == expected_deleted
+            assert isinstance(target.ctx, ast.Del)
+        assert len(body) == 1
+        raise_statement = body[0]
+        assert isinstance(raise_statement, ast.Raise)
+        assert isinstance(raise_statement.exc, ast.Call)
+        assert isinstance(raise_statement.exc.func, ast.Name)
+        assert raise_statement.exc.func.id == "TypeError"
+        assert raise_statement.exc.keywords == []
+        assert len(raise_statement.exc.args) == 1
+        message = raise_statement.exc.args[0]
+        assert isinstance(message, ast.Constant)
+        assert message.value == _MOVE_ONLY_MESSAGE
+        assert isinstance(raise_statement.cause, ast.Constant)
+        assert raise_statement.cause.value is None
+
+    typing_imports = [
+        node for node in tree.body if isinstance(node, ast.ImportFrom) and node.module == "typing"
+    ]
+    assert len(typing_imports) == 1
+    assert [(alias.name, alias.asname) for alias in typing_imports[0].names] == [
+        ("Final", None),
+        ("Literal", None),
+        ("NoReturn", None),
+    ]
+    imported_roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_roots.update(alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_roots.add(node.module.split(".", 1)[0])
+    assert imported_roots.isdisjoint(
+        {
+            "copy",
+            "copyreg",
+            "multiprocessing",
+            "pickle",
+            "subprocess",
+            "threading",
+        }
+    )
