@@ -60,52 +60,67 @@ slot. Consequently, v1 must not silently fall back to `sys.settrace`.
 
 ## Frozen Benchmark
 
-Harness identity:
-`sha256:3993fd75a45b1e14be3e04d56534928cadc928a92dce5af6473398e5c14c30e9`.
+PERF-001 supersedes only the timing decision contract. Schema v3 harness
+identity is
+`sha256:e3273869041f3b9bc8d4d65977a04e64f87e0c23268aa88586c7562d8e18e12e`.
 The digest covers the complete benchmark module, backend module, and shared
-safe-summary module, including orchestration, aggregation, constants, and
-budgets. The harness uses five warmups, 21 alternating baseline/active pairs,
-a nearest-rank p95, at least 50 ms calibration for the no-hit workload, 32,768
-calls per configured-but-unscoped sample, and 1,024 calls per captured-hit
-sample. GC is disabled uniformly during measurement and restored afterward.
-The timer excludes backend startup and cleanup so the cases measure steady
-execution cost.
+safe-summary module, including both clocks, orchestration, aggregation,
+constants, and budgets. The harness uses five warmups, 21 alternating
+baseline/active pairs, nearest-rank p95, at least 50 ms current-thread CPU
+calibration for the no-hit workload, 32,768 calls per
+configured-but-unscoped sample, and 1,024 calls per captured-hit sample. GC is
+disabled uniformly during measurement and restored afterward. Backend startup
+and cleanup remain outside each timed sample.
 
-One local macOS run produced:
+Every pair records two explicitly named clocks. `thread_time_ns` measures CPU
+consumed by the current benchmark thread and is the only calibration and budget
+input. `perf_counter_ns` remains a monotonic wall diagnostic that includes
+scheduler wait and is never read by a budget check. Clock implementation,
+resolution, monotonicity, and adjustability are emitted in report metadata.
 
-| Runtime and case | Median active ns/call | Median active/baseline | p95 active ns/call | p95 active/baseline |
+One serial local macOS run per runtime produced:
+
+| Runtime and case | Median thread-CPU | p95 thread-CPU | Median wall diagnostic | p95 wall diagnostic |
 | --- | ---: | ---: | ---: | ---: |
-| CPython 3.13.5, unconfigured code | — | 1.005 | — | 1.018 |
-| CPython 3.13.5, configured code outside a request | 6,290 | diagnostic only | 6,448 | diagnostic only |
-| CPython 3.13.5, captured hit | 74,604 | diagnostic only | 78,069 | diagnostic only |
-| CPython 3.12.11, unconfigured code | — | 1.000 | — | 1.066 |
-| CPython 3.12.11, configured code outside a request | 6,812 | diagnostic only | 7,908 | diagnostic only |
-| CPython 3.12.11, captured hit | 76,855 | diagnostic only | 81,425 | diagnostic only |
+| CPython 3.13.5, unconfigured code | 0.993× | 1.046× | 0.995× | 1.040× |
+| CPython 3.13.5, configured code outside a request | 4,412 ns/call | 4,594 ns/call | 4,448 ns/call | 4,670 ns/call |
+| CPython 3.13.5, captured hit | 54,554 ns/call | 60,632 ns/call | 55,225 ns/call | 61,505 ns/call |
+| CPython 3.12.11, unconfigured code | 0.999× | 1.017× | 0.999× | 1.018× |
+| CPython 3.12.11, configured code outside a request | 5,076 ns/call | 5,230 ns/call | 5,118 ns/call | 5,278 ns/call |
+| CPython 3.12.11, captured hit | 57,392 ns/call | 59,096 ns/call | 57,917 ns/call | 59,642 ns/call |
 
-Ratios compare different small workload shapes and are diagnostic, not a
-product SLA. The exact sink invariant is stronger evidence of what each case
-measures: all 26,624 expected scoped hits were observed, while calibration,
-unconfigured-code, and configured-but-unscoped cases emitted zero snapshots.
-
-The same harness enforces this frozen Phase 4 spike regression budget in every
-in-scope CI job:
+The six accepted numeric maxima are unchanged and now explicitly apply to
+thread CPU:
 
 | Case | Median maximum | p95 maximum |
 | --- | ---: | ---: |
-| Unconfigured code | 1.15× paired active/baseline | 1.75× paired active/baseline |
-| Configured code outside a request | 15,000 ns/call | 25,000 ns/call |
-| Captured hit | 200,000 ns/call | 300,000 ns/call |
+| Unconfigured code | 1.15× paired thread CPU | 1.75× paired thread CPU |
+| Configured code outside a request | 15,000 thread-CPU ns/call | 25,000 thread-CPU ns/call |
+| Captured hit | 200,000 thread-CPU ns/call | 300,000 thread-CPU ns/call |
 
-Both local runtimes pass all six checks. These limits are per callback/hit
-regression guards, not the Phase 5 10 ms request SLA, not a production
-queue/transport budget, and not permission to multiply the 300 µs ceiling by
-an arbitrary hit count. The immutable four-job CI matrix passed these limits.
-Any relaxation changes the digest and requires separate review.
+Both local runtimes pass all six checks. The exact sink invariant remains:
+all 26,624 expected scoped hits are observed, while calibration,
+unconfigured-code, and configured-but-unscoped cases emit zero snapshots.
+These limits are synchronous callback/hit CPU regression guards, not the Phase
+5 10 ms wall-clock request SLA, not a production queue/transport budget, and
+not permission to multiply the 300 µs ceiling by an arbitrary hit count.
 
-Benchmark suites and evidence runs must execute sequentially on the local host;
-running two timing harnesses concurrently invalidates their absolute metrics.
-The four CI matrix jobs are isolated runners, so each enforces the budget
-independently.
+The schema v2 digest
+`sha256:3993fd75a45b1e14be3e04d56534928cadc928a92dce5af6473398e5c14c30e9`
+and GitHub Actions run `29114712575` remain historical TRIAL-005 evidence, but
+they prove the old absolute-wall timing predicate and cannot prove schema v3.
+Three fresh-process serial v2 reproductions at host load 26--36/12 logical CPUs
+kept both paired no-hit ratios within budget while configured-unscoped median
+rose to 19.4--21.8 µs and captured-hit median to 271--385 µs. That isolated
+scheduler-sensitive wall time as the false-failure source without changing the
+tracepoint backend or thresholds. The schema v3 four-job immutable matrix is
+pending on the PERF-001 candidate commit.
+
+Benchmark suites and evidence runs must still execute sequentially. Any budget,
+decision-clock, workload, backend, or serializer change produces a new digest
+and requires separate review. Thread CPU excludes descheduling but still
+includes real execution cost; it does not expand support to other threads,
+Windows, free-threaded builds, or additional Python versions.
 
 ## Lifecycle and Isolation Contract
 
@@ -143,7 +158,7 @@ The user approved these as the candidate v1 contract on 2026-07-11:
 These reductions do not affect ordinary OTel spans or explicit
 `@flowsight.trace` spans for unsupported tracepoint shapes.
 
-## Local Evidence
+## Historical TRIAL-005 Schema v2 Local Evidence
 
 - CPython 3.13.5: `31 passed` in the focused harness.
 - Isolated CPython 3.12.11: the same `31 passed`.
@@ -169,10 +184,10 @@ These reductions do not affect ordinary OTel spans or explicit
 - Added closure free-variable/cell-variable evidence and narrowed coexistence
   claims to the synthetic mechanisms actually tested.
 
-The reviewed implementation is committed at
+The historical schema v2 reviewed implementation is committed at
 `9f195d33ba77f11bde103b91ba94fe5872c73591`. An independent verifier confirmed
 both focused runtimes and immutable `make check` (`217 passed`). Final matrix
-evidence comes from GitHub Actions run `29114712575`, which passed
+evidence for that schema comes from GitHub Actions run `29114712575`, which passed
 Ubuntu/macOS × CPython 3.12/3.13 on
 `d5893e3d09ccb9a9a9c3399fa649129664d38c3f`.
 
@@ -194,10 +209,24 @@ Ubuntu/macOS × CPython 3.12/3.13 on
   filter, or supported Python matrix changes; a changed digest is a different
   benchmark.
 
-## Final Matrix Evidence
+## Historical TRIAL-005 Schema v2 Final Matrix Evidence
 
 - Run: `https://github.com/alovwang-sys/FlowSight/actions/runs/29114712575`
 - Ubuntu 3.12: success, job `86435155825`
 - macOS 3.12: success, job `86435155866`
 - Ubuntu 3.13: success, job `86435155872`
 - macOS 3.13: success, job `86435155880`
+
+## PERF-001 Schema v3 Candidate Evidence
+
+- Digest:
+  `sha256:e3273869041f3b9bc8d4d65977a04e64f87e0c23268aa88586c7562d8e18e12e`
+- CPython 3.13.5 focused harness: `36 passed`.
+- Isolated CPython 3.12.11 focused harness: `36 passed`.
+- Full local `make check`: `222 passed`, with agent-system, format, lint, and
+  strict mypy checks passing first.
+- Two independent code/test reviews found no remaining P0/P1/P2 after the
+  baseline/active wall-routing, two-sided CPU calibration, exact six-check
+  mapping, real failure-message, and legacy-field regressions were added.
+- Immutable Ubuntu/macOS × CPython 3.12/3.13 schema v3 CI: pending candidate
+  commit and push. The historical run above does not satisfy this item.

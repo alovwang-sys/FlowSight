@@ -21,6 +21,7 @@ from types import FrameType, FunctionType
 import pytest
 
 import spikes.tracepoint_backend.backend as backend_module
+import spikes.tracepoint_backend.benchmark as benchmark_module
 from flowsight.security import safe_summary as benchmark_safe_summary
 from spikes.tracepoint_backend import (
     MonitoringTracepointBackend,
@@ -39,7 +40,7 @@ from spikes.tracepoint_backend.benchmark import (
 from spikes.tracepoint_backend.settrace_probe import run_naive_settrace_overlap_probe
 
 _EXPECTED_WORKLOAD_DIGEST = (
-    "sha256:3993fd75a45b1e14be3e04d56534928cadc928a92dce5af6473398e5c14c30e9"
+    "sha256:e3273869041f3b9bc8d4d65977a04e64f87e0c23268aa88586c7562d8e18e12e"
 )
 
 
@@ -1227,6 +1228,282 @@ async def test_naive_sys_settrace_async_overlap_corrupts_ownership_and_leaks_slo
     assert sys.gettrace() is None
 
 
+def _synthetic_budget_case(
+    *,
+    median_ratio: float = 1.0,
+    p95_ratio: float = 1.0,
+    median_active_ns: float = 1.0,
+    p95_active_ns: float = 1.0,
+) -> dict[str, object]:
+    return {
+        "median": {
+            "paired_thread_cpu_ratio_active_over_baseline": median_ratio,
+            "active_thread_cpu_ns_per_call": median_active_ns,
+        },
+        "p95_nearest_rank": {
+            "paired_thread_cpu_ratio_active_over_baseline": p95_ratio,
+            "active_thread_cpu_ns_per_call": p95_active_ns,
+        },
+    }
+
+
+def _all_failing_performance_budget() -> dict[str, object]:
+    return benchmark_module._performance_budget(
+        _synthetic_budget_case(median_ratio=1.16, p95_ratio=1.76),
+        _synthetic_budget_case(median_active_ns=15_001.0, p95_active_ns=25_001.0),
+        _synthetic_budget_case(median_active_ns=200_001.0, p95_active_ns=300_001.0),
+    )
+
+
+def test_scheduler_wait_changes_wall_diagnostics_without_changing_cpu_budget() -> None:
+    def timed_result(
+        thread_cpu_elapsed_ns: int,
+        monotonic_wall_elapsed_ns: int,
+    ) -> benchmark_module._TimedResult:
+        thread_cpu_ticks = iter((10_000, 10_000 + thread_cpu_elapsed_ns))
+        monotonic_wall_ticks = iter((20_000, 20_000 + monotonic_wall_elapsed_ns))
+        return benchmark_module._time_batch(
+            lambda seed: seed,
+            iterations=1,
+            seed=7,
+            thread_cpu_clock_ns=thread_cpu_ticks.__next__,
+            monotonic_wall_clock_ns=monotonic_wall_ticks.__next__,
+        )
+
+    def case(
+        active_thread_cpu_elapsed_ns: int,
+        *,
+        baseline_monotonic_wall_elapsed_ns: int,
+        active_monotonic_wall_elapsed_ns: int,
+    ) -> dict[str, object]:
+        pair = benchmark_module._PairResult(
+            repeat=0,
+            order="AB",
+            iterations=1,
+            baseline=timed_result(1_000, baseline_monotonic_wall_elapsed_ns),
+            active=timed_result(
+                active_thread_cpu_elapsed_ns,
+                active_monotonic_wall_elapsed_ns,
+            ),
+        )
+        assert pair.baseline.checksum == pair.active.checksum
+        return benchmark_module._case_json((pair,))
+
+    def budget(
+        *,
+        baseline_monotonic_wall_elapsed_ns: int,
+        active_monotonic_wall_elapsed_ns: int,
+    ) -> dict[str, object]:
+        return benchmark_module._performance_budget(
+            case(
+                1_100,
+                baseline_monotonic_wall_elapsed_ns=baseline_monotonic_wall_elapsed_ns,
+                active_monotonic_wall_elapsed_ns=active_monotonic_wall_elapsed_ns,
+            ),
+            case(
+                14_000,
+                baseline_monotonic_wall_elapsed_ns=baseline_monotonic_wall_elapsed_ns,
+                active_monotonic_wall_elapsed_ns=active_monotonic_wall_elapsed_ns,
+            ),
+            case(
+                190_000,
+                baseline_monotonic_wall_elapsed_ns=baseline_monotonic_wall_elapsed_ns,
+                active_monotonic_wall_elapsed_ns=active_monotonic_wall_elapsed_ns,
+            ),
+        )
+
+    quiet_budget = budget(
+        baseline_monotonic_wall_elapsed_ns=1_000,
+        active_monotonic_wall_elapsed_ns=1_000,
+    )
+    baseline_delayed_budget = budget(
+        baseline_monotonic_wall_elapsed_ns=5_000_000_000,
+        active_monotonic_wall_elapsed_ns=1_000,
+    )
+    active_delayed_budget = budget(
+        baseline_monotonic_wall_elapsed_ns=1_000,
+        active_monotonic_wall_elapsed_ns=5_000_000_000,
+    )
+    assert baseline_delayed_budget == quiet_budget
+    assert active_delayed_budget == quiet_budget
+    assert active_delayed_budget["passed"] is True
+    checks = active_delayed_budget["checks"]
+    assert isinstance(checks, dict)
+    assert all("thread_cpu" in name for name in checks)
+
+    quiet_case = case(
+        14_000,
+        baseline_monotonic_wall_elapsed_ns=1_000,
+        active_monotonic_wall_elapsed_ns=1_000,
+    )
+    scheduler_delayed_case = case(
+        14_000,
+        baseline_monotonic_wall_elapsed_ns=1_000,
+        active_monotonic_wall_elapsed_ns=5_000_000_000,
+    )
+    assert (
+        scheduler_delayed_case["median"]["active_monotonic_wall_ns_per_call"]
+        > quiet_case["median"]["active_monotonic_wall_ns_per_call"]
+    )
+    assert (
+        scheduler_delayed_case["median"]["active_thread_cpu_ns_per_call"]
+        == quiet_case["median"]["active_thread_cpu_ns_per_call"]
+    )
+    legacy_fields = {
+        "baseline_elapsed_ns",
+        "active_elapsed_ns",
+        "baseline_ns_per_call",
+        "active_ns_per_call",
+        "paired_ratio_active_over_baseline",
+        "overhead_ns_per_call",
+    }
+    for section_name in ("raw", "median", "p95_nearest_rank"):
+        section = scheduler_delayed_case[section_name]
+        assert isinstance(section, dict)
+        assert legacy_fields.isdisjoint(section)
+    pairs = scheduler_delayed_case["pairs"]
+    assert isinstance(pairs, list)
+    assert all(isinstance(pair, dict) and legacy_fields.isdisjoint(pair) for pair in pairs)
+    metadata = benchmark_module._metadata()
+    assert {"timer", "timer_monotonic", "timer_adjustable", "timer_resolution_seconds"}.isdisjoint(
+        metadata
+    )
+
+
+def test_cpu_overage_fails_even_when_wall_diagnostic_is_below_budget() -> None:
+    def case(active_thread_cpu_ns: int) -> dict[str, object]:
+        pair = benchmark_module._PairResult(
+            repeat=0,
+            order="AB",
+            iterations=1,
+            baseline=benchmark_module._TimedResult(
+                thread_cpu_elapsed_ns=1_000,
+                monotonic_wall_elapsed_ns=1_000,
+                checksum=1,
+            ),
+            active=benchmark_module._TimedResult(
+                thread_cpu_elapsed_ns=active_thread_cpu_ns,
+                monotonic_wall_elapsed_ns=1_000,
+                checksum=1,
+            ),
+        )
+        return benchmark_module._case_json((pair,))
+
+    performance_budget = benchmark_module._performance_budget(
+        case(1_000),
+        case(benchmark_module.UNSCOPED_MEDIAN_NS_PER_CALL_MAX + 1),
+        case(benchmark_module.HIT_MEDIAN_NS_PER_CALL_MAX + 1),
+    )
+    checks = performance_budget["checks"]
+    assert performance_budget["passed"] is False
+    assert checks["active_unscoped_target.median.active_thread_cpu_ns_per_call"]["passed"] is False
+    assert checks["active_hit.median.active_thread_cpu_ns_per_call"]["passed"] is False
+
+
+def test_frozen_cpu_budget_check_mapping_and_maxima_are_unchanged() -> None:
+    performance_budget = _all_failing_performance_budget()
+    checks = performance_budget["checks"]
+    expected = {
+        "active_no_hit.median.paired_thread_cpu_ratio_active_over_baseline": (
+            1.16,
+            1.15,
+            "ratio",
+        ),
+        "active_no_hit.p95_nearest_rank.paired_thread_cpu_ratio_active_over_baseline": (
+            1.76,
+            1.75,
+            "ratio",
+        ),
+        "active_unscoped_target.median.active_thread_cpu_ns_per_call": (
+            15_001.0,
+            15_000.0,
+            "ns_per_call",
+        ),
+        "active_unscoped_target.p95_nearest_rank.active_thread_cpu_ns_per_call": (
+            25_001.0,
+            25_000.0,
+            "ns_per_call",
+        ),
+        "active_hit.median.active_thread_cpu_ns_per_call": (
+            200_001.0,
+            200_000.0,
+            "ns_per_call",
+        ),
+        "active_hit.p95_nearest_rank.active_thread_cpu_ns_per_call": (
+            300_001.0,
+            300_000.0,
+            "ns_per_call",
+        ),
+    }
+    assert set(checks) == set(expected)
+    for name, (observed, maximum, unit) in expected.items():
+        assert checks[name] == {
+            "observed": observed,
+            "maximum": maximum,
+            "unit": unit,
+            "passed": False,
+        }
+
+
+def test_no_hit_calibration_uses_thread_cpu_not_monotonic_wall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_iterations: list[int] = []
+
+    def fake_measure_pair(**kwargs: object) -> benchmark_module._PairResult:
+        iterations = int(kwargs["iterations"])
+        repeat = int(kwargs["repeat"])
+        observed_iterations.append(iterations)
+        minimum = benchmark_module.CALIBRATION_MIN_THREAD_CPU_NS
+        thread_cpu_by_repeat = (
+            (minimum, 1),
+            (1, minimum),
+            (minimum, minimum),
+        )
+        baseline_thread_cpu_ns, active_thread_cpu_ns = thread_cpu_by_repeat[repeat]
+        wall_ns = minimum * 100 if repeat < 2 else 1
+        baseline = benchmark_module._TimedResult(
+            thread_cpu_elapsed_ns=baseline_thread_cpu_ns,
+            monotonic_wall_elapsed_ns=wall_ns,
+            checksum=repeat,
+        )
+        active = benchmark_module._TimedResult(
+            thread_cpu_elapsed_ns=active_thread_cpu_ns,
+            monotonic_wall_elapsed_ns=wall_ns,
+            checksum=repeat,
+        )
+        return benchmark_module._PairResult(
+            repeat=repeat,
+            order="AB",
+            iterations=iterations,
+            baseline=baseline,
+            active=active,
+        )
+
+    monkeypatch.setattr(benchmark_module, "_measure_pair", fake_measure_pair)
+    iterations, attempts = benchmark_module._calibrate_no_hit(
+        object(),
+        benchmark_module._SinkCounter(),
+    )
+    assert observed_iterations == [
+        benchmark_module.CALIBRATION_INITIAL_ITERATIONS,
+        benchmark_module.CALIBRATION_INITIAL_ITERATIONS * 2,
+        benchmark_module.CALIBRATION_INITIAL_ITERATIONS * 4,
+    ]
+    assert iterations == benchmark_module.CALIBRATION_INITIAL_ITERATIONS * 4
+    assert len(attempts) == 3
+
+
+def test_performance_budget_failure_message_lists_each_failed_check() -> None:
+    performance_budget = _all_failing_performance_budget()
+    message = benchmark_module._performance_budget_failure_message(performance_budget)
+    checks = performance_budget["checks"]
+    assert isinstance(checks, dict)
+    for name, check in checks.items():
+        expected = f"{name}: observed={check['observed']!r}, maximum={check['maximum']!r}"
+        assert message.count(expected) == 1
+
+
 def test_frozen_benchmark_schema_and_deterministic_counts() -> None:
     report = run_benchmark()
     assert report["schema_version"] == SCHEMA_VERSION
@@ -1252,7 +1529,15 @@ def test_frozen_benchmark_schema_and_deterministic_counts() -> None:
     assert report["sink_count"]["observed"] == expected_hits
     assert report["sink_count"]["measured_unscoped_target_observed"] == 0
     assert report["sink_count"]["exact"] is True
-    assert report["performance_budget"]["passed"] is True
-    assert len(report["performance_budget"]["checks"]) == 6
-    assert report["calibration"]["minimum_reached_by_both_cases"] is True
+    performance_budget = report["performance_budget"]
+    assert performance_budget["passed"] is True, (
+        benchmark_module._performance_budget_failure_message(performance_budget)
+    )
+    assert performance_budget["measurement_clock"] == "thread_time_ns"
+    assert performance_budget["monotonic_wall_diagnostic_only"] is True
+    assert len(performance_budget["checks"]) == 6
+    assert all("thread_cpu" in name for name in performance_budget["checks"])
+    assert report["calibration"]["minimum_thread_cpu_reached_by_both_cases"] is True
+    assert report["metadata"]["thread_cpu_clock"]["used_for_performance_budget"] is True
+    assert report["metadata"]["monotonic_wall_clock"]["diagnostic_only"] is True
     assert report["config"]["gc_restored_after"] is True

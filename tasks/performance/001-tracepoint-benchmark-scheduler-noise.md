@@ -6,7 +6,7 @@
 task_id: PERF-001
 release: v1
 task_type: spike
-status: in_progress
+status: review
 primary_phase: phase4
 impacted_phases: []
 depends_on: [TRIAL-005]
@@ -80,13 +80,13 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] Every timed pair records thread CPU time and diagnostic monotonic wall
+- [x] Every timed pair records thread CPU time and diagnostic monotonic wall
   time; all six unchanged thresholds are evaluated from thread CPU metrics.
-- [ ] Deterministic fake-clock tests prove scheduler wait changes wall
+- [x] Deterministic fake-clock tests prove scheduler wait changes wall
   diagnostics without changing the CPU-budget decision.
-- [ ] A failed budget assertion names each failed check with observed and maximum
+- [x] A failed budget assertion names each failed check with observed and maximum
   values instead of exposing only an aggregate boolean.
-- [ ] The new schema/digest and supersession rationale are recorded consistently
+- [x] The new schema/digest and supersession rationale are recorded consistently
   in the benchmark, result, and MVP design.
 - [ ] CPython 3.12/3.13 focused tests, `make check`, and isolated Ubuntu/macOS x
   CPython 3.12/3.13 CI pass without changing tracepoint support claims.
@@ -129,24 +129,40 @@ all six unchanged CPU-time budgets and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Primary Codex agent with a delegated implementation pass: added explicit
+  current-thread CPU and monotonic-wall fields, CPU-only calibration/budget
+  routing, schema v3 metadata, and deterministic regressions.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: independent code review found no P0/P1/P2 after confirming clock
+  order, CPU-only decision paths, unchanged maxima, diagnostics, and 3.12/3.13
+  API compatibility.
+- Reviewer 2: test adversary found four P1 and one P2 possible false-green
+  paths; after baseline/active wall independence, two-sided CPU calibration,
+  exact six-check mapping, real failure-message, and legacy-field tests were
+  added, final re-review found no remaining P0/P1/P2.
 
 Fixer:
-- TBD
+- Primary Codex agent: accepted every test finding without changing runtime
+  code or thresholds and added the five corresponding deterministic guards.
 
 Quality Governor:
-- TBD
+- Independent review approved the Phase 4 boundary, allowlist, unchanged safety
+  and support contracts, and candidate submission without a new scope approval.
+  Its evidence-label P2 was fixed by separating historical schema v2 sections
+  from schema v3 candidate evidence. Completion remains gated on a new matrix.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: task created from the TOOL-005 full-check failure and three controlled
-  fresh-process reproductions
+- Command: `.venv/bin/python -m pytest tests/spikes/test_tracepoint_backend.py`;
+  `/tmp/flowsight-trial004-py312/bin/python -m pytest tests/spikes/test_tracepoint_backend.py`;
+  `make check`
+- Result: local candidate passed; immutable schema v3 matrix pending
+- Notes: CPython 3.13.5 and 3.12.11 each passed 36 focused tests with digest
+  `sha256:e3273869041f3b9bc8d4d65977a04e64f87e0c23268aa88586c7562d8e18e12e`;
+  `make check` passed all agent/static checks and 222 tests. Two final reviews
+  found no remaining P0/P1/P2. Candidate commit and four-job CI are still
+  required before the last acceptance item, spike decision, and completion.
 
 ## Failure Queue Items
 

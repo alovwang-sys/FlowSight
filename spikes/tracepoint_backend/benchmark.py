@@ -2,7 +2,8 @@
 
 The harness intentionally has no tuning flags.  A result is comparable only when
 ``schema_version`` and ``workload_digest`` match, so every workload and sampling
-constant is kept in this module and included in the digest.
+constant is kept in this module and included in the digest. Performance decisions
+use current-thread CPU time; monotonic wall time remains diagnostic only.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import sys
 import sysconfig
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from time import get_clock_info, perf_counter_ns
+from time import get_clock_info, perf_counter_ns, thread_time_ns
 from typing import cast
 
 from flowsight.security import safe_summary as benchmark_safe_summary
@@ -29,10 +30,10 @@ from .backend import (
     TracepointSpec,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 WARMUP_REPEATS = 5
 PAIRED_REPEATS = 21
-CALIBRATION_MIN_NS = 50_000_000
+CALIBRATION_MIN_THREAD_CPU_NS = 50_000_000
 CALIBRATION_INITIAL_ITERATIONS = 64
 CALIBRATION_MAX_ITERATIONS = 1 << 30
 HIT_ITERATIONS = 1_024
@@ -55,6 +56,7 @@ _VARIABLE_NAMES = ("watched",)
 _PAIR_SEED_MULTIPLIER = 1_000_003
 
 Workload = Callable[[int], int]
+NanosecondClock = Callable[[], int]
 
 
 def _no_hit_workload(seed: int) -> int:
@@ -83,7 +85,8 @@ def _run_batch(workload: Workload, iterations: int, seed: int) -> int:
 
 @dataclass(frozen=True, slots=True)
 class _TimedResult:
-    elapsed_ns: int
+    thread_cpu_elapsed_ns: int
+    monotonic_wall_elapsed_ns: int
     checksum: int
 
 
@@ -96,20 +99,36 @@ class _PairResult:
     active: _TimedResult
 
     def as_json(self) -> dict[str, object]:
-        baseline_ns_per_call = self.baseline.elapsed_ns / self.iterations
-        active_ns_per_call = self.active.elapsed_ns / self.iterations
+        baseline_thread_cpu_ns_per_call = self.baseline.thread_cpu_elapsed_ns / self.iterations
+        active_thread_cpu_ns_per_call = self.active.thread_cpu_elapsed_ns / self.iterations
+        baseline_monotonic_wall_ns_per_call = (
+            self.baseline.monotonic_wall_elapsed_ns / self.iterations
+        )
+        active_monotonic_wall_ns_per_call = self.active.monotonic_wall_elapsed_ns / self.iterations
         return {
             "repeat": self.repeat,
             "order": self.order,
             "iterations": self.iterations,
-            "baseline_elapsed_ns": self.baseline.elapsed_ns,
-            "active_elapsed_ns": self.active.elapsed_ns,
-            "baseline_ns_per_call": baseline_ns_per_call,
-            "active_ns_per_call": active_ns_per_call,
-            "paired_ratio_active_over_baseline": (
-                self.active.elapsed_ns / self.baseline.elapsed_ns
+            "baseline_thread_cpu_elapsed_ns": self.baseline.thread_cpu_elapsed_ns,
+            "active_thread_cpu_elapsed_ns": self.active.thread_cpu_elapsed_ns,
+            "baseline_thread_cpu_ns_per_call": baseline_thread_cpu_ns_per_call,
+            "active_thread_cpu_ns_per_call": active_thread_cpu_ns_per_call,
+            "paired_thread_cpu_ratio_active_over_baseline": (
+                self.active.thread_cpu_elapsed_ns / self.baseline.thread_cpu_elapsed_ns
             ),
-            "overhead_ns_per_call": active_ns_per_call - baseline_ns_per_call,
+            "thread_cpu_overhead_ns_per_call": (
+                active_thread_cpu_ns_per_call - baseline_thread_cpu_ns_per_call
+            ),
+            "baseline_monotonic_wall_elapsed_ns": (self.baseline.monotonic_wall_elapsed_ns),
+            "active_monotonic_wall_elapsed_ns": self.active.monotonic_wall_elapsed_ns,
+            "baseline_monotonic_wall_ns_per_call": baseline_monotonic_wall_ns_per_call,
+            "active_monotonic_wall_ns_per_call": active_monotonic_wall_ns_per_call,
+            "paired_monotonic_wall_ratio_active_over_baseline": (
+                self.active.monotonic_wall_elapsed_ns / self.baseline.monotonic_wall_elapsed_ns
+            ),
+            "monotonic_wall_overhead_ns_per_call": (
+                active_monotonic_wall_ns_per_call - baseline_monotonic_wall_ns_per_call
+            ),
         }
 
 
@@ -164,13 +183,28 @@ def _workload_digest() -> str:
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
-def _time_batch(workload: Workload, iterations: int, seed: int) -> _TimedResult:
-    started_ns = perf_counter_ns()
+def _time_batch(
+    workload: Workload,
+    iterations: int,
+    seed: int,
+    *,
+    thread_cpu_clock_ns: NanosecondClock = thread_time_ns,
+    monotonic_wall_clock_ns: NanosecondClock = perf_counter_ns,
+) -> _TimedResult:
+    monotonic_wall_started_ns = monotonic_wall_clock_ns()
+    thread_cpu_started_ns = thread_cpu_clock_ns()
     checksum = _run_batch(workload, iterations, seed)
-    elapsed_ns = perf_counter_ns() - started_ns
-    if elapsed_ns <= 0:
+    thread_cpu_elapsed_ns = thread_cpu_clock_ns() - thread_cpu_started_ns
+    monotonic_wall_elapsed_ns = monotonic_wall_clock_ns() - monotonic_wall_started_ns
+    if thread_cpu_elapsed_ns <= 0:
+        raise RuntimeError("thread_time_ns did not advance during a benchmark sample")
+    if monotonic_wall_elapsed_ns <= 0:
         raise RuntimeError("perf_counter_ns did not advance during a benchmark sample")
-    return _TimedResult(elapsed_ns=elapsed_ns, checksum=checksum)
+    return _TimedResult(
+        thread_cpu_elapsed_ns=thread_cpu_elapsed_ns,
+        monotonic_wall_elapsed_ns=monotonic_wall_elapsed_ns,
+        checksum=checksum,
+    )
 
 
 def _new_backend(
@@ -260,12 +294,14 @@ def _calibrate_no_hit(
         )
         attempts.append(pair.as_json())
         if (
-            pair.baseline.elapsed_ns >= CALIBRATION_MIN_NS
-            and pair.active.elapsed_ns >= CALIBRATION_MIN_NS
+            pair.baseline.thread_cpu_elapsed_ns >= CALIBRATION_MIN_THREAD_CPU_NS
+            and pair.active.thread_cpu_elapsed_ns >= CALIBRATION_MIN_THREAD_CPU_NS
         ):
             return iterations, attempts
         if iterations >= CALIBRATION_MAX_ITERATIONS:
-            raise RuntimeError("could not calibrate both no-hit cases to at least 50ms")
+            raise RuntimeError(
+                "could not calibrate both no-hit cases to at least 50ms thread CPU time"
+            )
         iterations = min(iterations * 2, CALIBRATION_MAX_ITERATIONS)
         attempt += 1
 
@@ -286,36 +322,104 @@ def _case_json(pairs: Sequence[_PairResult]) -> dict[str, object]:
     if any(pair.iterations != iterations for pair in pairs):
         raise ValueError("benchmark case pairs must use one frozen iteration count")
 
-    baseline_ns_per_call = [pair.baseline.elapsed_ns / iterations for pair in pairs]
-    active_ns_per_call = [pair.active.elapsed_ns / iterations for pair in pairs]
-    paired_ratios = [pair.active.elapsed_ns / pair.baseline.elapsed_ns for pair in pairs]
-    overhead_ns_per_call = [
+    baseline_thread_cpu_ns_per_call = [
+        pair.baseline.thread_cpu_elapsed_ns / iterations for pair in pairs
+    ]
+    active_thread_cpu_ns_per_call = [
+        pair.active.thread_cpu_elapsed_ns / iterations for pair in pairs
+    ]
+    paired_thread_cpu_ratios = [
+        pair.active.thread_cpu_elapsed_ns / pair.baseline.thread_cpu_elapsed_ns for pair in pairs
+    ]
+    thread_cpu_overhead_ns_per_call = [
         active - baseline
-        for baseline, active in zip(baseline_ns_per_call, active_ns_per_call, strict=True)
+        for baseline, active in zip(
+            baseline_thread_cpu_ns_per_call,
+            active_thread_cpu_ns_per_call,
+            strict=True,
+        )
+    ]
+    baseline_monotonic_wall_ns_per_call = [
+        pair.baseline.monotonic_wall_elapsed_ns / iterations for pair in pairs
+    ]
+    active_monotonic_wall_ns_per_call = [
+        pair.active.monotonic_wall_elapsed_ns / iterations for pair in pairs
+    ]
+    paired_monotonic_wall_ratios = [
+        pair.active.monotonic_wall_elapsed_ns / pair.baseline.monotonic_wall_elapsed_ns
+        for pair in pairs
+    ]
+    monotonic_wall_overhead_ns_per_call = [
+        active - baseline
+        for baseline, active in zip(
+            baseline_monotonic_wall_ns_per_call,
+            active_monotonic_wall_ns_per_call,
+            strict=True,
+        )
     ]
     return {
         "iterations": iterations,
         "sample_count": len(pairs),
         "raw": {
             "order": [pair.order for pair in pairs],
-            "baseline_elapsed_ns": [pair.baseline.elapsed_ns for pair in pairs],
-            "active_elapsed_ns": [pair.active.elapsed_ns for pair in pairs],
-            "baseline_ns_per_call": baseline_ns_per_call,
-            "active_ns_per_call": active_ns_per_call,
-            "paired_ratio_active_over_baseline": paired_ratios,
-            "overhead_ns_per_call": overhead_ns_per_call,
+            "baseline_thread_cpu_elapsed_ns": [
+                pair.baseline.thread_cpu_elapsed_ns for pair in pairs
+            ],
+            "active_thread_cpu_elapsed_ns": [pair.active.thread_cpu_elapsed_ns for pair in pairs],
+            "baseline_thread_cpu_ns_per_call": baseline_thread_cpu_ns_per_call,
+            "active_thread_cpu_ns_per_call": active_thread_cpu_ns_per_call,
+            "paired_thread_cpu_ratio_active_over_baseline": paired_thread_cpu_ratios,
+            "thread_cpu_overhead_ns_per_call": thread_cpu_overhead_ns_per_call,
+            "baseline_monotonic_wall_elapsed_ns": [
+                pair.baseline.monotonic_wall_elapsed_ns for pair in pairs
+            ],
+            "active_monotonic_wall_elapsed_ns": [
+                pair.active.monotonic_wall_elapsed_ns for pair in pairs
+            ],
+            "baseline_monotonic_wall_ns_per_call": baseline_monotonic_wall_ns_per_call,
+            "active_monotonic_wall_ns_per_call": active_monotonic_wall_ns_per_call,
+            "paired_monotonic_wall_ratio_active_over_baseline": (paired_monotonic_wall_ratios),
+            "monotonic_wall_overhead_ns_per_call": monotonic_wall_overhead_ns_per_call,
         },
         "median": {
-            "baseline_ns_per_call": statistics.median(baseline_ns_per_call),
-            "active_ns_per_call": statistics.median(active_ns_per_call),
-            "paired_ratio_active_over_baseline": statistics.median(paired_ratios),
-            "overhead_ns_per_call": statistics.median(overhead_ns_per_call),
+            "baseline_thread_cpu_ns_per_call": statistics.median(baseline_thread_cpu_ns_per_call),
+            "active_thread_cpu_ns_per_call": statistics.median(active_thread_cpu_ns_per_call),
+            "paired_thread_cpu_ratio_active_over_baseline": statistics.median(
+                paired_thread_cpu_ratios
+            ),
+            "thread_cpu_overhead_ns_per_call": statistics.median(thread_cpu_overhead_ns_per_call),
+            "baseline_monotonic_wall_ns_per_call": statistics.median(
+                baseline_monotonic_wall_ns_per_call
+            ),
+            "active_monotonic_wall_ns_per_call": statistics.median(
+                active_monotonic_wall_ns_per_call
+            ),
+            "paired_monotonic_wall_ratio_active_over_baseline": statistics.median(
+                paired_monotonic_wall_ratios
+            ),
+            "monotonic_wall_overhead_ns_per_call": statistics.median(
+                monotonic_wall_overhead_ns_per_call
+            ),
         },
         "p95_nearest_rank": {
-            "baseline_ns_per_call": _nearest_rank(baseline_ns_per_call, 0.95),
-            "active_ns_per_call": _nearest_rank(active_ns_per_call, 0.95),
-            "paired_ratio_active_over_baseline": _nearest_rank(paired_ratios, 0.95),
-            "overhead_ns_per_call": _nearest_rank(overhead_ns_per_call, 0.95),
+            "baseline_thread_cpu_ns_per_call": _nearest_rank(baseline_thread_cpu_ns_per_call, 0.95),
+            "active_thread_cpu_ns_per_call": _nearest_rank(active_thread_cpu_ns_per_call, 0.95),
+            "paired_thread_cpu_ratio_active_over_baseline": _nearest_rank(
+                paired_thread_cpu_ratios, 0.95
+            ),
+            "thread_cpu_overhead_ns_per_call": _nearest_rank(thread_cpu_overhead_ns_per_call, 0.95),
+            "baseline_monotonic_wall_ns_per_call": _nearest_rank(
+                baseline_monotonic_wall_ns_per_call, 0.95
+            ),
+            "active_monotonic_wall_ns_per_call": _nearest_rank(
+                active_monotonic_wall_ns_per_call, 0.95
+            ),
+            "paired_monotonic_wall_ratio_active_over_baseline": _nearest_rank(
+                paired_monotonic_wall_ratios, 0.95
+            ),
+            "monotonic_wall_overhead_ns_per_call": _nearest_rank(
+                monotonic_wall_overhead_ns_per_call, 0.95
+            ),
         },
         "pairs": [pair.as_json() for pair in pairs],
     }
@@ -337,53 +441,92 @@ def _performance_budget(
     hit_case: dict[str, object],
 ) -> dict[str, object]:
     definitions = {
-        "active_no_hit.median.paired_ratio_active_over_baseline": (
-            _case_metric(no_hit_case, "median", "paired_ratio_active_over_baseline"),
+        "active_no_hit.median.paired_thread_cpu_ratio_active_over_baseline": (
+            _case_metric(
+                no_hit_case,
+                "median",
+                "paired_thread_cpu_ratio_active_over_baseline",
+            ),
             NO_HIT_MEDIAN_RATIO_MAX,
+            "ratio",
         ),
-        "active_no_hit.p95_nearest_rank.paired_ratio_active_over_baseline": (
+        "active_no_hit.p95_nearest_rank.paired_thread_cpu_ratio_active_over_baseline": (
             _case_metric(
                 no_hit_case,
                 "p95_nearest_rank",
-                "paired_ratio_active_over_baseline",
+                "paired_thread_cpu_ratio_active_over_baseline",
             ),
             NO_HIT_P95_RATIO_MAX,
+            "ratio",
         ),
-        "active_unscoped_target.median.active_ns_per_call": (
-            _case_metric(unscoped_target_case, "median", "active_ns_per_call"),
+        "active_unscoped_target.median.active_thread_cpu_ns_per_call": (
+            _case_metric(
+                unscoped_target_case,
+                "median",
+                "active_thread_cpu_ns_per_call",
+            ),
             UNSCOPED_MEDIAN_NS_PER_CALL_MAX,
+            "ns_per_call",
         ),
-        "active_unscoped_target.p95_nearest_rank.active_ns_per_call": (
+        "active_unscoped_target.p95_nearest_rank.active_thread_cpu_ns_per_call": (
             _case_metric(
                 unscoped_target_case,
                 "p95_nearest_rank",
-                "active_ns_per_call",
+                "active_thread_cpu_ns_per_call",
             ),
             UNSCOPED_P95_NS_PER_CALL_MAX,
+            "ns_per_call",
         ),
-        "active_hit.median.active_ns_per_call": (
-            _case_metric(hit_case, "median", "active_ns_per_call"),
+        "active_hit.median.active_thread_cpu_ns_per_call": (
+            _case_metric(hit_case, "median", "active_thread_cpu_ns_per_call"),
             HIT_MEDIAN_NS_PER_CALL_MAX,
+            "ns_per_call",
         ),
-        "active_hit.p95_nearest_rank.active_ns_per_call": (
-            _case_metric(hit_case, "p95_nearest_rank", "active_ns_per_call"),
+        "active_hit.p95_nearest_rank.active_thread_cpu_ns_per_call": (
+            _case_metric(
+                hit_case,
+                "p95_nearest_rank",
+                "active_thread_cpu_ns_per_call",
+            ),
             HIT_P95_NS_PER_CALL_MAX,
+            "ns_per_call",
         ),
     }
     checks = {
         name: {
             "observed": observed,
             "maximum": maximum,
+            "unit": unit,
             "passed": observed <= maximum,
         }
-        for name, (observed, maximum) in definitions.items()
+        for name, (observed, maximum, unit) in definitions.items()
     }
     return {
         "kind": "TRIAL-005 Phase 4 spike regression guard",
         "not_a_request_sla": True,
+        "measurement_clock": "thread_time_ns",
+        "monotonic_wall_diagnostic_only": True,
         "checks": checks,
         "passed": all(bool(check["passed"]) for check in checks.values()),
     }
+
+
+def _performance_budget_failure_message(performance_budget: dict[str, object]) -> str:
+    checks = performance_budget.get("checks")
+    if not isinstance(checks, dict):
+        return "performance budget report is missing checks"
+
+    failures: list[str] = []
+    for name, check in checks.items():
+        if not isinstance(name, str) or not isinstance(check, dict):
+            continue
+        if check.get("passed") is False:
+            failures.append(
+                f"{name}: observed={check.get('observed')!r}, maximum={check.get('maximum')!r}"
+            )
+    if not failures:
+        return "performance budget failed without a named failed check"
+    return "performance budget failed: " + "; ".join(failures)
 
 
 def _gil_status() -> tuple[bool, bool, str]:
@@ -401,7 +544,8 @@ def _gil_status() -> tuple[bool, bool, str]:
 
 def _metadata() -> dict[str, object]:
     gil_enabled, free_threaded_build, gil_probe = _gil_status()
-    clock = get_clock_info("perf_counter")
+    thread_cpu_clock = get_clock_info("thread_time")
+    monotonic_wall_clock = get_clock_info("perf_counter")
     return {
         "python": platform.python_version(),
         "implementation": platform.python_implementation(),
@@ -418,10 +562,24 @@ def _metadata() -> dict[str, object]:
             and gil_enabled
             and not free_threaded_build
         ),
-        "timer": "perf_counter_ns",
-        "timer_monotonic": clock.monotonic,
-        "timer_adjustable": clock.adjustable,
-        "timer_resolution_seconds": clock.resolution,
+        "thread_cpu_clock": {
+            "timer": "thread_time_ns",
+            "scope": "current_benchmark_thread",
+            "used_for_calibration": True,
+            "used_for_performance_budget": True,
+            "implementation": thread_cpu_clock.implementation,
+            "monotonic": thread_cpu_clock.monotonic,
+            "adjustable": thread_cpu_clock.adjustable,
+            "resolution_seconds": thread_cpu_clock.resolution,
+        },
+        "monotonic_wall_clock": {
+            "timer": "perf_counter_ns",
+            "diagnostic_only": True,
+            "implementation": monotonic_wall_clock.implementation,
+            "monotonic": monotonic_wall_clock.monotonic,
+            "adjustable": monotonic_wall_clock.adjustable,
+            "resolution_seconds": monotonic_wall_clock.resolution,
+        },
     }
 
 
@@ -548,7 +706,7 @@ def run_benchmark() -> dict[str, object]:
             "warmup_repeats": WARMUP_REPEATS,
             "paired_repeats": PAIRED_REPEATS,
             "pair_order": "alternating AB/BA; A=baseline, B=active",
-            "calibration_min_ns": CALIBRATION_MIN_NS,
+            "calibration_min_thread_cpu_ns": CALIBRATION_MIN_THREAD_CPU_NS,
             "calibration_initial_iterations": CALIBRATION_INITIAL_ITERATIONS,
             "hit_iterations": HIT_ITERATIONS,
             "unscoped_target_iterations": UNSCOPED_TARGET_ITERATIONS,
@@ -563,7 +721,7 @@ def run_benchmark() -> dict[str, object]:
         "calibration": {
             "iterations": no_hit_iterations,
             "attempts": calibration_attempts,
-            "minimum_reached_by_both_cases": True,
+            "minimum_thread_cpu_reached_by_both_cases": True,
         },
         "cases": {
             "active_no_hit": no_hit_case,
