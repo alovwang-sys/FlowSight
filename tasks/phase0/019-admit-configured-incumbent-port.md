@@ -6,7 +6,7 @@
 task_id: P0-019
 release: v1
 task_type: implementation
-status: planned
+status: in_progress
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-010, P0-013, P0-014, TRIAL-004]
