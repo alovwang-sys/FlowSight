@@ -6,7 +6,7 @@
 task_id: P0-008
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-005, P0-006, P0-007, TRIAL-004]
@@ -112,56 +112,56 @@ That helper is test evidence, never lifecycle implementation.
 
 ## Acceptance Criteria
 
-- [ ] `verify_ready_startup()` accepts only exact `StateStore` and
+- [x] `verify_ready_startup()` accepts only exact `StateStore` and
   `StartupReady` objects plus an exact built-in `int` or `float` timeout. Wrong
   top-level types fail with fixed `TypeError` before field access, clock, load,
   or probe work.
-- [ ] Timeout is finite, positive, and at most the P0-005 maximum. Timeout and a
+- [x] Timeout is finite, positive, and at most the P0-005 maximum. Timeout and a
   freshly reconstructed READY are validated before clock/load/probe work;
   forged exact READY fields fail with a fixed context-free `ValueError` that
   contains no caller value.
-- [ ] One finite monotonic success-admission deadline starts before the first
+- [x] One finite monotonic success-admission deadline starts before the first
   load. A positive remaining duration is required before the probe, before the
   second load, and after final comparison; no late result can succeed. The card
   and API do not claim to interrupt or hard-bound either synchronous load.
-- [ ] The canonical unbound `StateStore.load` implementation is invoked exactly
+- [x] The canonical unbound `StateStore.load` implementation is invoked exactly
   once for `first_loaded`, without calling an instance-injected `load` callback.
   A separate exact `first_copy` reconstructed through `to_wire`/`from_wire`
   must be distinct from and fully equal to `first_loaded`, validating its values
   while the exact `first_loaded` object is retained for the probe. `None`,
   ordinary failure, an inexact result, or failed revalidation returns `None`.
-- [ ] READY must exactly match the first trusted state on startup ID, sidecar
+- [x] READY must exactly match the first trusted state on startup ID, sidecar
   PID, and port. Any mismatch returns `None` with zero health probes and zero
   second loads.
-- [ ] The P0-005 health probe is invoked exactly once with the exact
+- [x] The P0-005 health probe is invoked exactly once with the exact
   `first_loaded` object and the current positive remaining timeout. Only an
   exact `True` may continue;
   `False`, an inexact result, ordinary failure, or deadline exhaustion returns
   `None` without a second load.
-- [ ] After health succeeds within the admission deadline, the canonical load
+- [x] After health succeeds within the admission deadline, the canonical load
   is invoked exactly once more to obtain `second_loaded`, which must not be the
   same object as `first_loaded`. A separate exact `second_copy` revalidates its
   values and must be distinct from and fully equal to `second_loaded`; missing,
   inexact, invalid, same-object, or ordinary failure evidence returns `None`.
-- [ ] The two trusted states must be fully equal across every field, including
+- [x] The two trusted states must be fully equal across every field, including
   token, project, startup ID, PID, port, database path, timestamp, host, and
   protocol/schema versions. A token-only or timestamp-only rotation fails even
   when every READY scalar still matches.
-- [ ] Success returns the exact second loaded state, never the first or merely a
+- [x] Success returns the exact second loaded state, never the first or merely a
   reconstructed comparison copy. There is no third load, second probe, retained
   state/token cache, or hidden retry on any path.
-- [ ] After caller preflight, every ordinary clock/load/revalidation/probe/
+- [x] After caller preflight, every ordinary clock/load/revalidation/probe/
   comparison failure returns only `None`, with no log, output, repr, callback,
   retained exception, or secret detail. `KeyboardInterrupt` and `SystemExit`
   preserve identity at every stage; this wrapper adds no note, while an existing
   fixed cleanup note added inside P0-005 remains allowed.
-- [ ] Real published-state and bounded loopback-health composition plus
+- [x] Real published-state and bounded loopback-health composition plus
   deterministic call-order/race matrices prove `load -> probe -> load`, exact
   early exits, full-state rotation rejection, and second-object return identity.
   The only result remains `SidecarState | None`; static scope evidence proves the
   module returns or grants no election, cleanup, or launch authority and
   imports/calls no such behavior. Caller policy remains outside this task.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -211,24 +211,53 @@ fresh READY verification tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Added and exported one read-only `verify_ready_startup()` window with exact
+  caller preflight, a monotonic success-admission deadline, a frozen canonical
+  `StateStore.load` entrypoint, one P0-005 health probe, two independently
+  revalidated state loads, full-state equality, and exact second-object return.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: narrowed an overbroad canonical-load claim to the exact frozen
+  entrypoint boundary, found a READY-mismatch test that could falsely report
+  zero probes, and confirmed the direct probe counter closes it. Final review
+  reported P0=0/P1=0/P2=0.
+- Reviewer 2: found false-positive gaps in timeout errors, READY attribute
+  failures, revalidation collaborator results, forged-state ordering, and
+  loopback setup cleanup. After fixes, final review reported P0=0/P1=0/P2=0.
 
 Fixer:
-- TBD
+- Applied every accepted finding. The 135-test matrix now fixes exact error
+  types/messages, READY ordinary/process-control behavior, raw/derived/unequal
+  revalidation rejection at both load positions, direct zero-probe mismatch
+  evidence, full-field rotation, and deterministic whole-lifetime loopback
+  cleanup. No finding was deferred.
 
 Quality Governor:
-- TBD
+- Candidate `84015ba` changes exactly the three allowlisted product/test files.
+  Static and behavioral evidence keep the slice to one read-only verification
+  window with no election, cleanup, launch, state mutation, channel ownership,
+  retry, background work, or new authority result. The sustained gate and all
+  four supported CI combinations are green.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: proves one fresh READY verification window only, never election or
-  process authority
+- Command: focused startup-verification tests; `make test-phase0`;
+  `make gate-phase0` (including full `make check`); pre-commit
+  `make check-fast`; candidate GitHub Actions matrix
+- Result: passed
+- Notes: focused tests passed 135/135 on local CPython 3.13;
+  `make test-phase0` passed 1,021 tests; the final full check passed 1,146 tests
+  plus formatting, lint, typing, and agent checks, followed by the sustained
+  Phase 0 gate. Candidate
+  `84015ba1709e13f1db3f4e8e0b2ec512a84f3eac` passed
+  [run 29150056354](https://github.com/alovwang-sys/FlowSight/actions/runs/29150056354):
+  Ubuntu 3.12 job `86537998477`, Ubuntu 3.13 job `86537998482`, macOS 3.13 job
+  `86537998483`, and macOS 3.12 job `86537998489`. The real composition test
+  exercises P0-007 state generation/publication, P0-005 authenticated loopback
+  health, and P0-001 fresh reads on Darwin and Linux. The full check correctly
+  retains the partial-scaffold limitation. This evidence proves one fresh READY
+  verification window only; it does not grant election, stale cleanup, launch,
+  child ownership, or complete Phase 0 acceptance.
 
 ## Failure Queue Items
 
