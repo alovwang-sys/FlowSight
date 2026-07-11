@@ -6,7 +6,7 @@
 task_id: TOOL-005
 release: v1
 task_type: tooling
-status: blocked
+status: review
 primary_phase: phase0
 impacted_phases: [phase1, phase4]
 depends_on: [TOOL-004]
@@ -69,7 +69,7 @@ The current task card and its verifier evidence are always writable control-plan
 - [x] `check-product-fast` returns nonzero when a Python static command fails.
 - [x] `test-product` returns nonzero when its Python test command fails.
 - [x] A gate-style dependent target does not execute after its product-check prerequisite fails.
-- [ ] Existing Python-only/frontend detection cases and full repository checks pass.
+- [x] Existing Python-only/frontend detection cases and full repository checks pass.
 
 ## No-Test Reason
 
@@ -129,15 +129,14 @@ Quality Governor:
 
 - Command: `python3 scripts/agent/test_product_detection.py`; `make check-fast`;
   `make check`
-- Result: focused fixture and fast repository checks passed; full repository
-  check correctly returned nonzero at the existing TRIAL-005 performance guard
+- Result: passed
 - Notes: 7/7 fixture tests passed. The old Makefile replay failed exactly four
   new regressions. The fixed `make check` reached 216 passed/1 failed and exited
-  at `check-product` with `Error 1`, rather than continuing to a gate. Final
-  completion is blocked by PERF-001, the separately scoped Phase 4 benchmark
-  fix, and then a clean full repository run.
+  at `check-product` with `Error 1`, rather than continuing to a gate. After
+  PERF-001 corrected that separately scoped benchmark, the exact candidate tree
+  passed `make check` with 222 tests; GitHub Actions run `29135246585` also
+  passed Ubuntu/macOS x CPython 3.12/3.13 with the TOOL-005 fix present.
 
 ## Failure Queue Items
 
-- PERF-001: the frozen TRIAL-005 benchmark uses scheduler-sensitive absolute
-  wall time for four checks and fails under sustained host contention.
+- none; PERF-001 resolved and verified the previously queued benchmark failure
