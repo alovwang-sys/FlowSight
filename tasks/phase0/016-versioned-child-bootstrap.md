@@ -6,7 +6,7 @@
 task_id: P0-016
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-004, P0-006, P0-014, TRIAL-004]
@@ -137,13 +137,13 @@ control-plane records; they do not expand the product-code allowlist above.
 
 ## Acceptance Criteria
 
-- [ ] `CHILD_BOOTSTRAP_SCHEMA_VERSION` is the exact built-in integer `1`.
+- [x] `CHILD_BOOTSTRAP_SCHEMA_VERSION` is the exact built-in integer `1`.
   The constant, `SidecarChildBootstrap`, `encode_sidecar_child_bootstrap`, and
   `decode_sidecar_child_bootstrap` are identical `flowsight.sidecar` exports,
   occur exactly once each in `__all__`, and have the fixed signatures above. No
   alternate constructor, decoder, command builder, environment builder, or
   descriptor-owner surface is added.
-- [ ] The canonical argv suffix is one exact built-in tuple containing exactly
+- [x] The canonical argv suffix is one exact built-in tuple containing exactly
   these eight exact built-in strings in order:
   `flowsight-sidecar-bootstrap-v1`, `project-root=<value>`,
   `runtime-root=<value>`, `project-id=<value>`,
@@ -155,7 +155,7 @@ control-plane records; they do not expand the product-code allowlist above.
   Production captures the canonical `os.fsencode` implementation at import;
   public attribute replacement cannot redirect it, while a private fault seam
   exists only to prove exact-byte failures and the 9216/9217 boundary.
-- [ ] Encoding accepts only an exact `SidecarRuntimeConfig`. It reads its five
+- [x] Encoding accepts only an exact `SidecarRuntimeConfig`. It reads its five
   exact scalar fields without dynamic attribute dispatch, re-runs the canonical
   `prepare_sidecar_runtime_config` factory exactly once from the snapshotted
   config project root, requested port, and startup timeout, and requires all
@@ -168,12 +168,12 @@ control-plane records; they do not expand the product-code allowlist above.
   Production captures the canonical factory at import; replacing the public
   package attribute cannot redirect it, while a private seam remains fault
   injection only.
-- [ ] `owner_lock_fd` and `startup_writer_fd` each accept only exact built-in
+- [x] `owner_lock_fd` and `startup_writer_fd` each accept only exact built-in
   integers in `3..2147483647` and must differ. `bool`, subclasses, coercible
   values, negative/stdio/overflow values, and equal descriptors fail before any
   later work. The codec performs no descriptor syscall and does not require the
   integers to identify currently open descriptors.
-- [ ] Decoding accepts only an exact built-in tuple of eight exact built-in
+- [x] Decoding accepts only an exact built-in tuple of eight exact built-in
   strings. It rejects a list/subclass, missing/extra/reordered/duplicate fields,
   unknown version or key, NUL/control text, over-budget bytes, noncanonical
   decimal or float spellings, decimal leading signs/zeroes, invalid
@@ -182,7 +182,7 @@ control-plane records; they do not expand the product-code allowlist above.
   decoder uses fixed positions and removes each exact field prefix once; it
   never uses a generic split, mapping, or key lookup that can reinterpret `=`
   inside a supported path.
-- [ ] The decoder treats transmitted `project-id` and `runtime-root` only as
+- [x] The decoder treats transmitted `project-id` and `runtime-root` only as
   consistency proofs. It calls `prepare_sidecar_runtime_config` exactly once
   with the transmitted project root, requested port, and timeout only after the
   complete tuple/type/count/byte-budget/key/order, canonical port/float/FD,
@@ -193,7 +193,7 @@ control-plane records; they do not expand the product-code allowlist above.
   disagreement, and noncanonical aliases fail closed. Replacing one directory
   with another at the same canonical path is not detectable by this lexical
   protocol and is not claimed.
-- [ ] `None`, port `0`, and explicit ports remain distinct. Ports `0`, `1`, and
+- [x] `None`, port `0`, and explicit ports remain distinct. Ports `0`, `1`, and
   `65535`, independently fixed project identities, temporary absolute roots,
   symlink aliases at encoding time, paths containing `=`, spaces, multibyte
   characters and supported surrogateescape text, and representative timeout
@@ -202,7 +202,7 @@ control-plane records; they do not expand the product-code allowlist above.
   filesystem-name normalization beyond P0-014 canonical preparation. Decimal
   and `float.hex` parsing does not accept alternate spellings that normalize to
   the same value.
-- [ ] `SidecarChildBootstrap` is an exact immutable slot-only result with only
+- [x] `SidecarChildBootstrap` is an exact immutable slot-only result with only
   `config`, `owner_lock_fd`, and `startup_writer_fd`; direct construction is
   rejected, repr is exactly `<SidecarChildBootstrap>`, and the fixed
   copy/deepcopy/reduce/reduce-ex/getstate hooks and mutation are rejected with
@@ -211,7 +211,7 @@ control-plane records; they do not expand the product-code allowlist above.
   an unrelated serializer. A successful
   result retains only the newly re-derived exact configuration and two exact
   integers, never the input tuple or an encoding/decoder callback.
-- [ ] Ordinary validation, encoding, parsing, path/configuration, and result
+- [x] Ordinary validation, encoding, parsing, path/configuration, and result
   construction failures become exactly
   `ValueError("sidecar child bootstrap is invalid")`. It is constructed and
   raised `from None` only after leaving an internal `except` suite and deleting
@@ -222,12 +222,12 @@ control-plane records; they do not expand the product-code allowlist above.
   suppresses it and production never reads or caches it. `KeyboardInterrupt`,
   `SystemExit`, and every other non-`Exception` `BaseException` preserve
   identity and stop all later work.
-- [ ] Success and every failure leave all caller-owned objects and descriptors
+- [x] Success and every failure leave all caller-owned objects and descriptors
   untouched. Tests and static evidence prove there is no socket/subprocess,
   state mutation, startup channel I/O, descriptor adoption/close/dup/fstat/
   inheritable change, FastAPI/Uvicorn, SDK, storage, OTel, async/thread, time,
   logging/output, cache, callback, spike import, or network behavior.
-- [ ] Deterministic tests cover the complete public shape, canonical vectors,
+- [x] Deterministic tests cover the complete public shape, canonical vectors,
   exact type/range/ordering matrices, byte budget boundaries, config
   re-derivation and provenance, hostile objects, non-retention, process-control
   at every dependency seam, fixed-error privacy, project/runtime filesystem
@@ -236,7 +236,7 @@ control-plane records; they do not expand the product-code allowlist above.
   prove 9217 bytes fail before the configuration factory and exactly 9216 bytes
   reach the next lexical stage without claiming that a real filesystem permits
   a 9216-byte project path.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on local CPython and the macOS/Linux x CPython 3.12/3.13 CI matrix.
 
 ## No-Test Reason
@@ -348,20 +348,23 @@ Quality Governor:
 
 - Command: focused child-bootstrap/runtime-config tests; `make test-phase0`;
   `make check`; `make gate-phase0`; candidate GitHub Actions matrix
-- Result: local verification passed; candidate matrix pending
+- Result: passed
 - Notes: the final focused suite passed 513 tests and `make test-phase0` passed
   2,105 tests. `make gate-phase0` ran the complete `make check` path with 2,230
-  passing tests and then passed the
-  `phase0-sustained` gate on local macOS CPython 3.13.5. Ruff format/lint,
+  passing tests and then passed the `phase0-sustained` gate on local macOS
+  CPython 3.13.5. Ruff format/lint,
   strict mypy, `scripts/validate_agent_system.py`, `git diff --check`, and JSONL
-  parsing passed for the reviewed planned card and FSQ-0001 record. Planned
+  parsing passed for the reviewed card and FSQ-0001 record. Implementation
+  candidate `b961653a17f171da751edeceb353711cc1a30319` passed
+  [run 29168092092](https://github.com/alovwang-sys/FlowSight/actions/runs/29168092092)
+  with jobs `86584611628` (Ubuntu 3.12), `86584611629` (Ubuntu 3.13),
+  `86584611634` (macOS 3.12), and `86584611635` (macOS 3.13). Planned
   contract commit `39af3fe215ed4b767f5c0049f7958594f8158e3d` passed
   [run 29166816747](https://github.com/alovwang-sys/FlowSight/actions/runs/29166816747)
   with jobs `86581228477` (macOS 3.13), `86581228478` (macOS 3.12),
   `86581228485` (Ubuntu 3.13), and `86581228492` (Ubuntu 3.12). This is
-  task-system evidence only, not codec or Phase 0 product acceptance. Candidate
-  implementation matrix evidence will be recorded only after the pushed commit
-  completes successfully on macOS/Linux and CPython 3.12/3.13.
+  retained as task-system evidence only, not codec or Phase 0 product
+  acceptance. FSQ-0001 did not recur in the candidate matrix.
 
 ## Failure Queue Items
 
