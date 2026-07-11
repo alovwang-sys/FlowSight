@@ -6,7 +6,7 @@
 task_id: P0-012
 release: v1
 task_type: implementation
-status: complete
+status: in_progress
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-004, P0-010, P0-011, TRIAL-004]
@@ -210,13 +210,13 @@ sleep-based race.
   budgets, every behavior-boundary expiry/rollback, cleanup arguments/results,
   process-control identity, no third discovery/acquire/cleanup retry, and no
   module retention after restoring fault seams.
-- [x] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
+- [ ] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
   error helpers, and rejects loops/comprehensions, mutable module state/defaults,
   dynamic owner close/fileno/adoption, raw lock/state/process/listener/channel/
   SQLite/runtime/policy calls, logging, output, callbacks, waiting, and caches.
   It verifies the public export identities without freezing an implementation
   snapshot or duplicating P0-004/P0-010 internal tests.
-- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -295,7 +295,8 @@ Adversarial Reviewer:
   named seams, caller-context suppression, fixed-note fallback, FD
   closure/reuse, opaque malformed results whose implicit protocols fail outside
   `Exception`, and a positive structural/raw-use allowlist; it contains no
-  `sys.settrace`. No review finding remains open.
+  `sys.settrace`. A final P1 remains open for arithmetic/call/attribute
+  false-green paths around the raw initial clock observation.
 
 Fixer:
 - Codex primary accepted every finding, removed the intermediate owner courier
@@ -306,11 +307,12 @@ Fixer:
   other implicit malformed-value protocols. No finding was deferred.
 
 Quality Governor:
-- Independent governor reported P0/P1/P2 = 0 and GO for the candidate: only the
+- Independent governor reported P0/P2 = 0 and one P1 for the candidate: only the
   three product/test allowlist files changed, P0-004/P0-010 success
   postconditions are trusted rather than repeated, and no process, listener,
   persistence, retry, wait, dependency, trial, fact, or scope override was
-  added.
+  added, but the opaque initial-clock evidence did not yet close every raw-use
+  path that a broad `except Exception` could normalize.
 
 ## Verifier Evidence
 
@@ -321,7 +323,7 @@ Quality Governor:
 - Notes: focused tests passed 137/137; `make test-phase0` passed 1,444 tests;
   embedded `make check` passed 1,569 tests plus formatting, lint, typing, and
   agent checks; the sustained Phase 0 gate passed on local CPython 3.13.5.
-  Final candidate `a13d70d` passed
+  Intermediate candidate `a13d70d` passed
   [run 29158253718](https://github.com/alovwang-sys/FlowSight/actions/runs/29158253718)
   on its first attempt with jobs `86558868218` (Ubuntu 3.13), `86558868223`
   (Ubuntu 3.12), `86558868219` (macOS 3.13), and `86558868232` (macOS 3.12).
@@ -332,4 +334,7 @@ Quality Governor:
 
 ## Failure Queue Items
 
-- none
+- P1: constrain every raw use of the initial clock observation and trap the
+  arithmetic/call/attribute reproducer paths so broad `except Exception`
+  cannot normalize an implicit-protocol invocation into a false-green deadline
+  result.
