@@ -6,7 +6,7 @@
 task_id: P0-012
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-004, P0-010, P0-011, TRIAL-004]
@@ -210,13 +210,13 @@ sleep-based race.
   budgets, every behavior-boundary expiry/rollback, cleanup arguments/results,
   process-control identity, no third discovery/acquire/cleanup retry, and no
   module retention after restoring fault seams.
-- [ ] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
+- [x] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
   error helpers, and rejects loops/comprehensions, mutable module state/defaults,
   dynamic owner close/fileno/adoption, raw lock/state/process/listener/channel/
   SQLite/runtime/policy calls, logging, output, callbacks, waiting, and caches.
   It verifies the public export identities without freezing an implementation
   snapshot or duplicating P0-004/P0-010 internal tests.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -273,8 +273,9 @@ Implementer:
 - Codex primary implemented the exact public election API, frozen dependency
   dispatch, one shared deadline, and the one-shot
   `discover -> acquire once -> discover` composition in product candidate
-  `ec7b6d9`; final test-boundary candidate `7faf300` closes the positive static
-  allowlist and opaque-malformed-result evidence.
+  `ec7b6d9`; final test-boundary candidate `a13d70d` closes the positive static
+  allowlist plus opaque-malformed protocol evidence across preflight, clock,
+  discovery, acquire, and cleanup boundaries.
   The focused suite covers exact results/errors, every named deadline and
   process-control boundary, cleanup precedence, real locks, privacy, and the
   semantic static boundary without duplicating P0-004/P0-010 internals.
@@ -292,15 +293,17 @@ Adversarial Reviewer:
   proposed global-tracing test that violated the agent rules. The final suite
   proves full event prefixes, deadline/process-control/cleanup matrices through
   named seams, caller-context suppression, fixed-note fallback, FD
-  closure/reuse, opaque malformed results, and a positive structural allowlist;
-  it contains no `sys.settrace`. No review finding remains open.
+  closure/reuse, opaque malformed results whose implicit protocols fail outside
+  `Exception`, and a positive structural/raw-use allowlist; it contains no
+  `sys.settrace`. No review finding remains open.
 
 Fixer:
 - Codex primary accepted every finding, removed the intermediate owner courier
   and dynamic caller-exception inference, made process-control note repair
   fail-safe without replacing the active exception, rejected global tracing,
   and replaced duplicate blacklist assertions with a contract-derived positive
-  structure/call boundary. No finding was deferred.
+  structure/call boundary, then trapped item/iteration/hash/order/coercion and
+  other implicit malformed-value protocols. No finding was deferred.
 
 Quality Governor:
 - Independent governor reported P0/P1/P2 = 0 and GO for the candidate: only the
@@ -315,20 +318,18 @@ Quality Governor:
   `make gate-phase0` (including full `make check`); pre-commit
   `make check-fast`; candidate GitHub Actions matrix
 - Result: passed
-- Notes: focused tests passed 133/133; `make test-phase0` passed 1,440 tests;
-  embedded `make check` passed 1,565 tests plus formatting, lint, typing, and
+- Notes: focused tests passed 137/137; `make test-phase0` passed 1,444 tests;
+  embedded `make check` passed 1,569 tests plus formatting, lint, typing, and
   agent checks; the sustained Phase 0 gate passed on local CPython 3.13.5.
-  Final candidate `7faf300b886f1ece80c0be8441cf79291b17ab68` passed
-  [run 29157887780](https://github.com/alovwang-sys/FlowSight/actions/runs/29157887780)
-  on its first attempt with jobs `86557940451` (macOS 3.13), `86557940457`
-  (Ubuntu 3.12), `86557940470` (macOS 3.12), and `86557940473` (Ubuntu 3.13).
-  The full check correctly retains the partial-scaffold limitation. This proves one
-  incumbent-or-owner decision only; it does not prove waiting/re-contention,
+  Final candidate `a13d70d` passed
+  [run 29158253718](https://github.com/alovwang-sys/FlowSight/actions/runs/29158253718)
+  on its first attempt with jobs `86558868218` (Ubuntu 3.13), `86558868223`
+  (Ubuntu 3.12), `86558868219` (macOS 3.13), and `86558868232` (macOS 3.12).
+  The full check correctly retains the partial-scaffold limitation. This proves
+  one incumbent-or-owner decision only; it does not prove waiting/re-contention,
   stale cleanup, requested-port policy, child launch/transfer, attachment,
   reload, or complete Phase 0.
 
 ## Failure Queue Items
 
-- P1: opaque malformed-result evidence must also reject item access, iteration,
-  hashing, ordering, and other implicit protocols that a broad `except
-  Exception` could otherwise normalize into the expected fixed error.
+- none
