@@ -6,7 +6,7 @@
 task_id: P0-013
 release: v1
 task_type: implementation
-status: complete
+status: in_progress
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-012, TRIAL-004]
@@ -128,7 +128,7 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   exact `SidecarState` or `OwnerLock` result is returned unchanged and ends the
   operation. The wrapper does not read fields, call `fileno`, close/release the
   owner, or make another clock/election/wait call after success.
-- [x] Only an exact `OwnerLockError` carrying exact
+- [ ] Only an exact `OwnerLockError` carrying exact
   `OwnerLockErrorCode.OWNER_LOCK_HELD` enters the wait path. Every other exact
   P0-004 or P0-012 error preserves identity/code/message/cause/context with zero
   wait/retry; derived, malformed, or ordinary private-seam failure becomes the
@@ -154,7 +154,7 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   contention object. A caller's already-active Python-managed `__context__` may
   remain, but fixed errors raised `from None` suppress it from formatted output.
   No path performs an extra wait/election after expiry.
-- [x] Deterministic matrices cover immediate incumbent/winner, contention then
+- [ ] Deterministic matrices cover immediate incumbent/winner, contention then
   incumbent/winner, repeated contention to expiry, every clock boundary,
   poll-capping, strict progress, exact error taxonomy/identity, malformed seam
   values, process-control, call order/budgets, no retained contention, and no
@@ -174,7 +174,7 @@ bounded joins. They may not use sleep-based races or start a subprocess.
   retry loop. It rejects state/process/listener/channel/SQLite/runtime/SDK calls,
   owner inspection/cleanup/adoption, logging/output, callbacks, mutable state,
   comprehensions, async work, and caches without copying P0-012 internals.
-- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -248,6 +248,10 @@ Adversarial Reviewer:
   After fixes, the suite proves every function is top-level, uses identity plus
   AST evidence without sleeping, and covers `31` plus a huge exact integer.
   Final P0/P1/P2 = 0 and GO.
+- Reviewer 5: error adversary reproduced an exact-type phantom `StrEnum` member
+  that was not a registered canonical error code. Candidate `b107a15` bare
+  re-raised it and exposed arbitrary code text, so one P1 remains open pending
+  identity-allowlist normalization and regression evidence.
 
 Fixer:
 - Codex primary accepted all planned-contract and implementation findings,
@@ -259,20 +263,19 @@ Quality Governor:
 - Pre-implementation scope review confirmed one Phase 0 election-policy slice
   with no process/runtime/state/SDK expansion. Its two P2 wording/verification
   findings were task-owner approved and accepted immediately after activation;
-  observable behavior was unchanged. Final allowed-file and diff review found
-  only the three named product/test files plus this control record, no scope
-  override or dependency change, and P0/P1/P2 = 0 with GO.
+  observable behavior was unchanged. Final governance remains pending the open
+  phantom-code P1 and its replacement candidate evidence.
 
 ## Verifier Evidence
 
 - Command: focused startup-wait tests; `make test-phase0`; `make gate-phase0`
   (including full `make check`); pre-commit `make check-fast`; candidate GitHub
   Actions matrix
-- Result: passed
+- Result: replacement candidate pending
 - Notes: focused tests passed 98/98; `make test-phase0` passed 1,542 tests;
   embedded `make check` passed 1,667 tests plus formatting, lint, typing, and
   agent checks; the sustained Phase 0 gate passed on local CPython 3.13.5.
-  Candidate `b107a1590aed257076e1ed66a4e18a33b35bad37` passed
+  Intermediate candidate `b107a1590aed257076e1ed66a4e18a33b35bad37` passed
   [run 29160332404](https://github.com/alovwang-sys/FlowSight/actions/runs/29160332404)
   on its first attempt with jobs `86564216131` (Ubuntu 3.12), `86564216139`
   (Ubuntu 3.13), `86564216140` (macOS 3.13), and `86564216145` (macOS 3.12).
@@ -283,4 +286,6 @@ Quality Governor:
 
 ## Failure Queue Items
 
-- none
+- P1: exact-type phantom `OwnerLockErrorCode`/`OwnerElectionErrorCode` members
+  must be treated as malformed private-seam failures; only registered canonical
+  member identities may authorize waiting or exact domain-error propagation.
