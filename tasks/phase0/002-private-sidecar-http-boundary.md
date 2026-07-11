@@ -6,7 +6,7 @@
 task_id: P0-002
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, TRIAL-004]
@@ -74,28 +74,28 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] An exact `SidecarState` with an ASCII URL-safe bearer token builds a
+- [x] An exact `SidecarState` with an ASCII URL-safe bearer token builds a
   docs-disabled FastAPI app without starting runtime infrastructure; invalid
   token shapes fail with a fixed error that does not echo the value.
-- [ ] Every HTTP request requires exactly one expected Host before dispatch;
+- [x] Every HTTP request requires exactly one expected Host before dispatch;
   exact `/internal/v1` and `/api/v1` roots plus every descendant also require
   exactly one matching bearer capability token before the first ASGI receive,
   route dispatch, or body validator.
-- [ ] Every non-safe browser method under `/api/v1` (anything other than
+- [x] Every non-safe browser method under `/api/v1` (anything other than
   GET/HEAD/OPTIONS) requires exactly one matching Origin, while internal SDK
   writes do not require a browser Origin.
-- [ ] Private request bodies are capped at 1 MiB before FastAPI parsing;
+- [x] Private request bodies are capped at 1 MiB before FastAPI parsing;
   Content-Length accepts only decimal digits and must exactly match received
   bytes; every Transfer-Encoding is rejected; duplicates, overflow, invalid
   ASGI messages, and disconnects do not dispatch and, while send remains
   available, return fixed non-sensitive errors.
-- [ ] The only shipped route is `GET /internal/v1/health`; its exact keys are
+- [x] The only shipped route is `GET /internal/v1/health`; its exact keys are
   `status`, protocol/state versions, project/startup IDs, sidecar PID, host, and
   port. Its serialized response remains at most 4 KiB for maximum-length
   multibyte IDs. It contains no token, database/storage/writer, producer/lease,
   or SQLite owner fields, and fixed faults/404/405 emit no CORS allow-origin
   header.
-- [ ] `make test-phase0` discovers all production sidecar tests, and full
+- [x] `make test-phase0` discovers all production sidecar tests, and full
   repository checks pass.
 
 ## No-Test Reason
@@ -165,21 +165,19 @@ Quality Governor:
 
 ## Verifier Evidence
 
-- Command: `.venv/bin/python -m pytest -q tests/sidecar/test_app.py`
-- Result: passed, 67 tests on CPython 3.13.5
-- Command: `uv run --isolated --python 3.12 --extra dev python -m pytest -q tests/sidecar/test_app.py`
-- Result: passed, 67 tests on CPython 3.12
-- Command: `make test-phase0`
-- Result: passed, 244 tests
-- Command: `make check`
-- Result: passed, 369 tests plus format, lint, type, frontend, build, and agent checks;
-  the command correctly reports that the present partial scaffold is not full
-  Phase 0 acceptance evidence
-- Command: `.venv/bin/python scripts/validate_agent_system.py --gate phase0-sustained`
+- Command: focused app tests on CPython 3.12/3.13; `make test-phase0`;
+  `make check`; phase0-sustained validator; candidate GitHub Actions matrix
 - Result: passed
-- Candidate CI: pending for the committed SHA
-- Notes: this evidence promotes only the P0-002 private HTTP application
-  boundary slice; it does not claim complete Phase 0 acceptance
+- Notes: focused app tests passed 67/67 on both Python versions;
+  `make test-phase0` passed 244 tests; `make check` passed 369 tests plus
+  format, lint, type, frontend, build, and agent checks; the gate validator
+  passed. Candidate `36a52467fc0bd3840c8daef5c109c199a9f84574`
+  passed [run 29140238771](https://github.com/alovwang-sys/FlowSight/actions/runs/29140238771):
+  Ubuntu 3.13 job `86511823219`, macOS 3.13 job `86511823221`, macOS 3.12 job
+  `86511823223`, and Ubuntu 3.12 job `86511823225`. `make check` correctly
+  reports that the present partial scaffold is not full Phase 0 acceptance
+  evidence. This completes only the P0-002 private HTTP application-boundary
+  slice; it does not claim complete Phase 0 acceptance.
 
 ## Failure Queue Items
 
