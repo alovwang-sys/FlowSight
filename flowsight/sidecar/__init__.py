@@ -9,6 +9,11 @@ from .listener import (
     bind_loopback_listener,
 )
 from .owner_lock import OwnerLock, OwnerLockError, OwnerLockErrorCode
+from .startup_admission import (
+    StartupAdmissionError,
+    StartupAdmissionErrorCode,
+    receive_startup_outcome,
+)
 from .startup_channel import (
     MAX_STARTUP_SIGNAL_BYTES,
     STARTUP_CHANNEL_SCHEMA_VERSION,
@@ -60,6 +65,8 @@ __all__ = [
     "StateStore",
     "StartupChannelError",
     "StartupChannelErrorCode",
+    "StartupAdmissionError",
+    "StartupAdmissionErrorCode",
     "StartupFailure",
     "StartupFailureCode",
     "StartupReader",
@@ -72,5 +79,6 @@ __all__ = [
     "create_startup_state",
     "open_startup_channel",
     "probe_sidecar_health",
+    "receive_startup_outcome",
     "verify_ready_startup",
 ]
