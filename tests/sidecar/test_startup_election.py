@@ -1391,6 +1391,315 @@ def test_production_ast_stays_inside_one_shot_election_boundary() -> None:
     source_path = Path(election_module.__file__)
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
 
+    top_level_imports = [
+        node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
+    assert {id(node) for node in top_level_imports} == {
+        id(node) for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
+    }
+    imported_names: list[tuple[str, int, str | None, str, str | None]] = []
+    for node in top_level_imports:
+        if isinstance(node, ast.Import):
+            imported_names.extend(
+                ("import", 0, None, alias.name, alias.asname) for alias in node.names
+            )
+        else:
+            imported_names.extend(
+                ("from", node.level, node.module, alias.name, alias.asname) for alias in node.names
+            )
+    assert len(imported_names) == 14
+    assert set(imported_names) == {
+        ("from", 0, "__future__", "annotations", None),
+        ("import", 0, None, "math", None),
+        ("import", 0, None, "time", None),
+        ("from", 0, "enum", "StrEnum", None),
+        ("from", 0, "typing", "Final", None),
+        ("from", 0, "typing", "Literal", None),
+        ("from", 0, "typing", "NoReturn", None),
+        ("from", 0, "typing", "cast", None),
+        ("from", 1, "health", "MAX_HEALTH_PROBE_TIMEOUT_SECONDS", None),
+        ("from", 1, "owner_lock", "OwnerLock", None),
+        ("from", 1, "owner_lock", "OwnerLockError", None),
+        ("from", 1, "startup_discovery", "discover_existing_startup", None),
+        ("from", 1, "state", "SidecarState", None),
+        ("from", 1, "state", "StateStore", None),
+    }
+
+    structural_functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    assert len(structural_functions) == 15
+    assert {node.name for node in structural_functions} == {
+        "_validate_timeout",
+        "_discover_startup",
+        "_acquire_owner",
+        "_exit_owner",
+        "_read_monotonic",
+        "_observe_monotonic",
+        "_remaining",
+        "_new_error",
+        "_raise_error",
+        "_attempt_discovery",
+        "_attempt_release",
+        "_release_normal",
+        "_release_pending",
+        "_release_process_control",
+        "resolve_owner_election",
+    }
+    structural_classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
+    assert len(structural_classes) == 2
+    assert {node.name for node in structural_classes} == {
+        "OwnerElectionErrorCode",
+        "OwnerElectionError",
+    }
+    classes_by_name = {node.name: node for node in structural_classes}
+    error_code_class = classes_by_name["OwnerElectionErrorCode"]
+    error_class = classes_by_name["OwnerElectionError"]
+    assert [_attribute_path(base) for base in error_code_class.bases] == ["StrEnum"]
+    assert [_attribute_path(base) for base in error_class.bases] == ["RuntimeError"]
+    assert error_code_class.keywords == []
+    assert error_class.keywords == []
+    code_bindings = [node for node in error_code_class.body if isinstance(node, ast.Assign)]
+    assert len(code_bindings) == 2
+    assert {
+        node.targets[0].id
+        for node in code_bindings
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+    } == {
+        "OWNER_ELECTION_DEADLINE_FAILED",
+        "OWNER_ELECTION_FAILED",
+    }
+    for binding in code_bindings:
+        assert len(binding.targets) == 1
+        assert isinstance(binding.targets[0], ast.Name)
+        assert isinstance(binding.value, ast.Constant)
+        assert binding.value.value == binding.targets[0].id
+    assert all(isinstance(node, (ast.Expr, ast.Assign)) for node in error_code_class.body)
+    error_methods = [node for node in error_class.body if isinstance(node, ast.FunctionDef)]
+    assert [node.name for node in error_methods] == ["__init__"]
+    assert all(isinstance(node, (ast.Expr, ast.FunctionDef)) for node in error_class.body)
+    assert {id(node) for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)} == {
+        id(node) for node in [*structural_functions, *error_methods]
+    }
+    assert {id(node) for node in ast.walk(tree) if isinstance(node, ast.ClassDef)} == {
+        id(node) for node in structural_classes
+    }
+    assert not any(isinstance(node, ast.AsyncFunctionDef) for node in ast.walk(tree))
+    for definition in [*structural_functions, *error_methods, *structural_classes]:
+        assert definition.decorator_list == []
+
+    structural_assignments: list[ast.Assign | ast.AnnAssign] = []
+    assignment_names: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign):
+            assert isinstance(node.target, ast.Name)
+            assert node.value is not None
+            structural_assignments.append(node)
+            assignment_names.append(node.target.id)
+        elif isinstance(node, ast.Assign):
+            assert len(node.targets) == 1
+            assert isinstance(node.targets[0], ast.Name)
+            structural_assignments.append(node)
+            assignment_names.append(node.targets[0].id)
+    assert len(assignment_names) == 9
+    assert set(assignment_names) == {
+        "_STATE_STORE_TYPE",
+        "_SIDECAR_STATE_TYPE",
+        "_OWNER_LOCK_TYPE",
+        "_OWNER_LOCK_ERROR_TYPE",
+        "_DISCOVER_EXISTING_STARTUP",
+        "_OWNER_LOCK_ACQUIRE",
+        "_OWNER_LOCK_EXIT",
+        "_OWNER_CLEANUP_NOTE",
+        "_ReleaseStatus",
+    }
+    assignment_by_name = dict(zip(assignment_names, structural_assignments, strict=True))
+    expected_binding_paths = {
+        "_STATE_STORE_TYPE": "StateStore",
+        "_SIDECAR_STATE_TYPE": "SidecarState",
+        "_OWNER_LOCK_TYPE": "OwnerLock",
+        "_OWNER_LOCK_ERROR_TYPE": "OwnerLockError",
+        "_DISCOVER_EXISTING_STARTUP": "discover_existing_startup",
+        "_OWNER_LOCK_ACQUIRE": "OwnerLock.acquire",
+        "_OWNER_LOCK_EXIT": "OwnerLock.__exit__",
+    }
+    for name, expected_path in expected_binding_paths.items():
+        assignment = assignment_by_name[name]
+        assert isinstance(assignment, ast.AnnAssign)
+        assert isinstance(assignment.annotation, ast.Name)
+        assert assignment.annotation.id == "Final"
+        assert assignment.value is not None
+        assert _attribute_path(assignment.value) == expected_path
+    note_assignment = assignment_by_name["_OWNER_CLEANUP_NOTE"]
+    assert isinstance(note_assignment, ast.AnnAssign)
+    assert isinstance(note_assignment.annotation, ast.Name)
+    assert note_assignment.annotation.id == "Final"
+    assert isinstance(note_assignment.value, ast.Constant)
+    assert note_assignment.value.value == "sidecar owner lock cleanup failed"
+    release_status_assignment = assignment_by_name["_ReleaseStatus"]
+    assert isinstance(release_status_assignment, ast.Assign)
+    assert isinstance(release_status_assignment.value, ast.Subscript)
+    assert isinstance(release_status_assignment.value.value, ast.Name)
+    assert release_status_assignment.value.value.id == "Literal"
+    assert isinstance(release_status_assignment.value.slice, ast.Tuple)
+    release_status_values = release_status_assignment.value.slice.elts
+    assert all(isinstance(node, ast.Constant) for node in release_status_values)
+    assert [node.value for node in release_status_values] == [
+        "released",
+        "owner_error",
+        "failed",
+    ]
+
+    assert isinstance(tree.body[0], ast.Expr)
+    assert isinstance(tree.body[0].value, ast.Constant)
+    assert type(tree.body[0].value.value) is str
+    allowed_top_level = {
+        id(tree.body[0]),
+        *(id(node) for node in top_level_imports),
+        *(id(node) for node in structural_assignments),
+        *(id(node) for node in structural_classes),
+        *(id(node) for node in structural_functions),
+    }
+    assert {id(node) for node in tree.body} == allowed_top_level
+
+    mutable_or_dynamic_nodes = (
+        ast.Call,
+        ast.List,
+        ast.Dict,
+        ast.Set,
+        ast.ListComp,
+        ast.DictComp,
+        ast.SetComp,
+        ast.GeneratorExp,
+    )
+    for assignment in structural_assignments:
+        assigned_value = assignment.value
+        assert assigned_value is not None
+        assert not any(
+            isinstance(descendant, mutable_or_dynamic_nodes)
+            for descendant in ast.walk(assigned_value)
+        )
+    for function in [*structural_functions, *error_methods]:
+        defaults = [*function.args.defaults, *function.args.kw_defaults]
+        assert not any(
+            isinstance(descendant, mutable_or_dynamic_nodes)
+            for default in defaults
+            if default is not None
+            for descendant in ast.walk(default)
+        )
+
+    def normalized_call_path(call: ast.Call) -> str:
+        receiver = _attribute_path(call.func)
+        if receiver is not None:
+            return receiver
+        assert isinstance(call.func, ast.Attribute)
+        assert isinstance(call.func.value, ast.Call)
+        assert _attribute_path(call.func.value.func) == "super"
+        return f"super().{call.func.attr}"
+
+    scopes: dict[str, ast.FunctionDef] = {
+        **{node.name: node for node in structural_functions},
+        "OwnerElectionError.__init__": error_methods[0],
+    }
+    permitted_calls = {
+        "OwnerElectionError.__init__": {
+            "type",
+            "TypeError",
+            "super",
+            "super().__init__",
+        },
+        "_validate_timeout": {
+            "type",
+            "TypeError",
+            "ValueError",
+            "float",
+            "cast",
+            "math.isfinite",
+        },
+        "_discover_startup": {"_DISCOVER_EXISTING_STARTUP"},
+        "_acquire_owner": {"_OWNER_LOCK_ACQUIRE"},
+        "_exit_owner": {"_OWNER_LOCK_EXIT"},
+        "_read_monotonic": {"time.monotonic"},
+        "_observe_monotonic": {"_read_monotonic", "type", "math.isfinite"},
+        "_remaining": {"_observe_monotonic", "math.isfinite"},
+        "_new_error": {"OwnerElectionError"},
+        "_raise_error": {"_new_error"},
+        "_attempt_discovery": {"_discover_startup"},
+        "_attempt_release": {"type", "_exit_owner"},
+        "_release_normal": {"_attempt_release", "_raise_error"},
+        "_release_pending": {"_attempt_release", "_raise_error"},
+        "_release_process_control": {
+            "_attempt_release",
+            "BaseException.add_note",
+            "BaseException.__setattr__",
+        },
+        "resolve_owner_election": {
+            "type",
+            "TypeError",
+            "_validate_timeout",
+            "_observe_monotonic",
+            "_raise_error",
+            "math.isfinite",
+            "_remaining",
+            "_attempt_discovery",
+            "_acquire_owner",
+            "_new_error",
+            "_release_process_control",
+            "_release_pending",
+            "_release_normal",
+        },
+    }
+    calls_by_scope: dict[str, list[str]] = {}
+    scoped_calls: set[int] = set()
+    for scope_name, scope in scopes.items():
+        calls = [node for node in ast.walk(scope) if isinstance(node, ast.Call)]
+        scoped_calls.update(id(node) for node in calls)
+        calls_by_scope[scope_name] = [normalized_call_path(node) for node in calls]
+        assert set(calls_by_scope[scope_name]) <= permitted_calls[scope_name]
+    assert scoped_calls == {id(node) for node in ast.walk(tree) if isinstance(node, ast.Call)}
+    assert calls_by_scope["_discover_startup"].count("_DISCOVER_EXISTING_STARTUP") == 1
+    assert calls_by_scope["_acquire_owner"].count("_OWNER_LOCK_ACQUIRE") == 1
+    assert calls_by_scope["_exit_owner"].count("_OWNER_LOCK_EXIT") == 1
+    assert calls_by_scope["_attempt_discovery"].count("_discover_startup") == 1
+    assert calls_by_scope["_attempt_release"].count("_exit_owner") == 1
+    assert calls_by_scope["resolve_owner_election"].count("_attempt_discovery") == 2
+    assert calls_by_scope["resolve_owner_election"].count("_acquire_owner") == 1
+    assert calls_by_scope["resolve_owner_election"].count("_release_normal") == 1
+    assert calls_by_scope["resolve_owner_election"].count("_release_pending") == 2
+    assert calls_by_scope["resolve_owner_election"].count("_release_process_control") == 1
+    for helper in ("_release_normal", "_release_pending", "_release_process_control"):
+        assert calls_by_scope[helper].count("_attempt_release") == 1
+
+    def normalized_attribute_path(attribute: ast.Attribute) -> str:
+        receiver = _attribute_path(attribute)
+        if receiver is not None:
+            return receiver
+        assert isinstance(attribute.value, ast.Call)
+        assert _attribute_path(attribute.value.func) == "super"
+        return f"super().{attribute.attr}"
+
+    load_attributes = {
+        normalized_attribute_path(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)
+    }
+    assert load_attributes <= {
+        "OwnerLock.acquire",
+        "OwnerLock.__exit__",
+        "math.isfinite",
+        "time.monotonic",
+        "OwnerElectionErrorCode.OWNER_ELECTION_DEADLINE_FAILED",
+        "OwnerElectionErrorCode.OWNER_ELECTION_FAILED",
+        "BaseException.add_note",
+        "BaseException.__setattr__",
+        "super().__init__",
+    }
+    stored_attributes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store)
+    ]
+    assert len(stored_attributes) == 1
+    assert _attribute_path(stored_attributes[0]) == "self.code"
+
     imports = {
         node.module
         for node in ast.walk(tree)
