@@ -6,7 +6,7 @@
 task_id: P0-012
 release: v1
 task_type: implementation
-status: complete
+status: in_progress
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-004, P0-010, P0-011, TRIAL-004]
@@ -210,13 +210,13 @@ sleep-based race.
   budgets, every behavior-boundary expiry/rollback, cleanup arguments/results,
   process-control identity, no third discovery/acquire/cleanup retry, and no
   module retention after restoring fault seams.
-- [x] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
+- [ ] Static evidence permits only the fixed clock/discovery/acquire/cleanup and
   error helpers, and rejects loops/comprehensions, mutable module state/defaults,
   dynamic owner close/fileno/adoption, raw lock/state/process/listener/channel/
   SQLite/runtime/policy calls, logging, output, callbacks, waiting, and caches.
   It verifies the public export identities without freezing an implementation
   snapshot or duplicating P0-004/P0-010 internal tests.
-- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass on CPython 3.12/3.13 and the macOS/Linux CI matrix.
 
 ## No-Test Reason
@@ -327,4 +327,9 @@ Quality Governor:
 
 ## Failure Queue Items
 
-- none
+- P1: the committed AST test is still blacklist-based and permits extra private
+  helpers, module aliases/caches, nested definitions, and aliased forbidden
+  calls. Replace it with a contract-derived positive structural boundary.
+- Governance: remove the `sys.settrace` line-interrupt test because FlowSight's
+  agent rules prohibit enabling global interpreter tracing; retain deterministic
+  process-control coverage through the named private clock/discovery seams.
