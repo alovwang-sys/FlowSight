@@ -68,22 +68,33 @@ The current task card and its verifier evidence are always writable control-plan
   or UI behavior.
 - Do not add a permissive CORS policy or treat loopback as authentication.
 - Do not log, return, or expose the capability token or database path.
+- Do not accept a service, writer, lease, or storage object in the app factory,
+  and do not ship a write-probe route.
 - Do not import production behavior from `spikes/sidecar_otel`.
 
 ## Acceptance Criteria
 
-- [ ] The exact `SidecarState` builds a docs-disabled FastAPI app without
-  starting runtime infrastructure.
-- [ ] Every `/internal/v1/` and `/api/v1/` request requires exactly one matching
-  Host and bearer capability token before route dispatch.
-- [ ] Browser write requests under `/api/v1/` also require exactly one matching
-  Origin, while internal SDK writes do not require a browser Origin.
+- [ ] An exact `SidecarState` with an ASCII URL-safe bearer token builds a
+  docs-disabled FastAPI app without starting runtime infrastructure; invalid
+  token shapes fail with a fixed error that does not echo the value.
+- [ ] Every HTTP request requires exactly one expected Host before dispatch;
+  exact `/internal/v1` and `/api/v1` roots plus every descendant also require
+  exactly one matching bearer capability token before the first ASGI receive,
+  route dispatch, or body validator.
+- [ ] Every non-safe browser method under `/api/v1` (anything other than
+  GET/HEAD/OPTIONS) requires exactly one matching Origin, while internal SDK
+  writes do not require a browser Origin.
 - [ ] Private request bodies are capped at 1 MiB before FastAPI parsing;
-  duplicate/invalid lengths, overflow, mismatch, invalid ASGI messages, and
-  disconnects fail with fixed non-sensitive errors.
-- [ ] The authenticated health response contains only bounded public sidecar
-  identity/status fields and no token or database path; responses emit no CORS
-  allow-origin header.
+  Content-Length accepts only decimal digits and must exactly match received
+  bytes; every Transfer-Encoding is rejected; duplicates, overflow, invalid
+  ASGI messages, and disconnects do not dispatch and, while send remains
+  available, return fixed non-sensitive errors.
+- [ ] The only shipped route is `GET /internal/v1/health`; its exact keys are
+  `status`, protocol/state versions, project/startup IDs, sidecar PID, host, and
+  port. Its serialized response remains at most 4 KiB for maximum-length
+  multibyte IDs. It contains no token, database/storage/writer, producer/lease,
+  or SQLite owner fields, and fixed faults/404/405 emit no CORS allow-origin
+  header.
 - [ ] `make test-phase0` discovers all production sidecar tests, and full
   repository checks pass.
 
@@ -113,6 +124,8 @@ private ASGI authentication/body-boundary tests and all repository checks pass
   the outer ASGI boundary rather than only in route dependencies.
 - Duplicate Host, Authorization, Origin, or Content-Length headers can create
   request-smuggling or policy ambiguity if accepted.
+- A non-private UI/static path still needs exact Host validation to prevent a
+  future DNS-rebinding bypass before the UI obtains its fragment token.
 - Error paths can accidentally echo a token-bearing header or enable CORS.
 
 ## Reviewer Focus
@@ -127,23 +140,46 @@ private ASGI authentication/body-boundary tests and all repository checks pass
 ## Role Outputs
 
 Implementer:
-- TBD
+- Added an inert docs-disabled FastAPI factory behind a raw ASGI boundary that
+  enforces global Host, private bearer capability, browser-write Origin, strict
+  request framing, and a pre-parser 1 MiB body cap. The only production route
+  is the bounded authenticated health response.
 
 Adversarial Reviewer:
-- Reviewer 1: TBD
-- Reviewer 2: TBD
+- Reviewer 1: final code review found no P0/P1/P2 issue after accepted fixes for
+  global Host enforcement, Transfer-Encoding rejection, token-shape validation,
+  tuple response-header sanitization, and replay receive-state preservation.
+- Reviewer 2: final test review found no P0/P1/P2 evidence gap after accepted
+  additions for inert lifespan execution, exact namespace roots, real
+  downstream/parser counters, multibyte health bounds, and raw response-header
+  privacy scans.
 
 Fixer:
-- TBD
+- Applied every accepted reviewer finding and reran the focused suite after the
+  final raw-header privacy assertion; no finding was deferred.
 
 Quality Governor:
-- TBD
+- Final review reported P0=0/P1=0/P2=0, confirmed the dirty set is allowlisted,
+  the production route set remains health-only, no later-phase behavior was
+  imported, and `make test-phase0` honestly discovers all sidecar product tests.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: promotes only the Phase 0 private HTTP application boundary
+- Command: `.venv/bin/python -m pytest -q tests/sidecar/test_app.py`
+- Result: passed, 67 tests on CPython 3.13.5
+- Command: `uv run --isolated --python 3.12 --extra dev python -m pytest -q tests/sidecar/test_app.py`
+- Result: passed, 67 tests on CPython 3.12
+- Command: `make test-phase0`
+- Result: passed, 244 tests
+- Command: `make check`
+- Result: passed, 369 tests plus format, lint, type, frontend, build, and agent checks;
+  the command correctly reports that the present partial scaffold is not full
+  Phase 0 acceptance evidence
+- Command: `.venv/bin/python scripts/validate_agent_system.py --gate phase0-sustained`
+- Result: passed
+- Candidate CI: pending for the committed SHA
+- Notes: this evidence promotes only the P0-002 private HTTP application
+  boundary slice; it does not claim complete Phase 0 acceptance
 
 ## Failure Queue Items
 
