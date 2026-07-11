@@ -101,6 +101,14 @@ class _OpaqueMalformed:
         del other
         self._invoked("reflected subtraction")
 
+    def __mul__(self, other: object) -> NoReturn:
+        del other
+        self._invoked("multiplication")
+
+    def __rmul__(self, other: object) -> NoReturn:
+        del other
+        self._invoked("reflected multiplication")
+
     def __call__(self, *args: object, **kwargs: object) -> NoReturn:
         del args, kwargs
         self._invoked("call")
@@ -1804,6 +1812,194 @@ def test_production_ast_stays_inside_one_shot_election_boundary() -> None:
             assert parent.value is node
             continue
         raise AssertionError("unsafe raw clock observation use")
+
+    observed_type_calls = [
+        parent_by_id[id(node)]
+        for node in raw_observed_loads
+        if isinstance(parent_by_id[id(node)], ast.Call)
+        and _attribute_path(parent_by_id[id(node)].func) == "type"
+    ]
+    observed_finite_calls = [
+        parent_by_id[id(node)]
+        for node in raw_observed_loads
+        if isinstance(parent_by_id[id(node)], ast.Call)
+        and _attribute_path(parent_by_id[id(node)].func) == "math.isfinite"
+    ]
+    observed_rollback_comparisons = [
+        parent_by_id[id(node)]
+        for node in raw_observed_loads
+        if isinstance(parent_by_id[id(node)], ast.Compare)
+    ]
+    observed_success_returns = [
+        parent_by_id[id(node)]
+        for node in raw_observed_loads
+        if isinstance(parent_by_id[id(node)], ast.Return)
+    ]
+    assert len(observed_type_calls) == 1
+    assert len(observed_finite_calls) == 1
+    assert len(observed_rollback_comparisons) == 1
+    assert len(observed_success_returns) == 1
+
+    type_call = observed_type_calls[0]
+    type_comparison = parent_by_id[id(type_call)]
+    assert isinstance(type_comparison, ast.Compare)
+    assert type_comparison.left is type_call
+    assert len(type_comparison.ops) == 1
+    assert isinstance(type_comparison.ops[0], ast.IsNot)
+    assert len(type_comparison.comparators) == 1
+    assert isinstance(type_comparison.comparators[0], ast.Name)
+    assert type_comparison.comparators[0].id == "float"
+
+    finite_call = observed_finite_calls[0]
+    finite_rejection = parent_by_id[id(finite_call)]
+    assert isinstance(finite_rejection, ast.UnaryOp)
+    assert isinstance(finite_rejection.op, ast.Not)
+    assert finite_rejection.operand is finite_call
+
+    value_rejection = parent_by_id[id(type_comparison)]
+    assert value_rejection is parent_by_id[id(finite_rejection)]
+    assert isinstance(value_rejection, ast.BoolOp)
+    assert isinstance(value_rejection.op, ast.Or)
+    assert value_rejection.values == [type_comparison, finite_rejection]
+    value_guard = parent_by_id[id(value_rejection)]
+    assert isinstance(value_guard, ast.If)
+    assert value_guard.test is value_rejection
+
+    rollback_comparison = observed_rollback_comparisons[0]
+    rollback_rejection = parent_by_id[id(rollback_comparison)]
+    assert isinstance(rollback_rejection, ast.BoolOp)
+    assert isinstance(rollback_rejection.op, ast.And)
+    assert len(rollback_rejection.values) == 2
+    assert rollback_rejection.values[1] is rollback_comparison
+    previous_check = rollback_rejection.values[0]
+    assert isinstance(previous_check, ast.Compare)
+    assert isinstance(previous_check.left, ast.Name)
+    assert previous_check.left.id == "previous"
+    assert len(previous_check.ops) == 1
+    assert isinstance(previous_check.ops[0], ast.IsNot)
+    assert len(previous_check.comparators) == 1
+    assert isinstance(previous_check.comparators[0], ast.Constant)
+    assert previous_check.comparators[0].value is None
+    rollback_guard = parent_by_id[id(rollback_rejection)]
+    assert isinstance(rollback_guard, ast.If)
+    assert rollback_guard.test is rollback_rejection
+
+    def is_none_return(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Constant)
+            and node.value.value is None
+        )
+
+    for guard in (value_guard, rollback_guard):
+        assert len(guard.body) == 1
+        assert is_none_return(guard.body[0])
+        assert guard.orelse == []
+
+    success_return = observed_success_returns[0]
+    assert parent_by_id[id(success_return)] is observe_scope
+    assert observe_scope.body[-1] is success_return
+    observe_try = parent_by_id[id(observed_assignment)]
+    assert isinstance(observe_try, ast.Try)
+    assert parent_by_id[id(observe_try)] is observe_scope
+    assert observe_try.body == [observed_assignment]
+    assert len(observe_try.handlers) == 1
+    observe_handler = observe_try.handlers[0]
+    assert isinstance(observe_handler.type, ast.Name)
+    assert observe_handler.type.id == "Exception"
+    assert observe_handler.name is None
+    assert len(observe_handler.body) == 1
+    assert is_none_return(observe_handler.body[0])
+    assert observe_try.orelse == []
+    assert observe_try.finalbody == []
+    assert {id(node) for node in ast.walk(observe_scope) if isinstance(node, ast.Return)} == {
+        id(observe_handler.body[0]),
+        id(value_guard.body[0]),
+        id(rollback_guard.body[0]),
+        id(success_return),
+    }
+    assert observe_scope.body.index(observe_try) < observe_scope.body.index(value_guard)
+    assert observe_scope.body.index(value_guard) < observe_scope.body.index(rollback_guard)
+    assert observe_scope.body.index(rollback_guard) < observe_scope.body.index(success_return)
+
+    resolve_scope = next(
+        function for function in structural_functions if function.name == "resolve_owner_election"
+    )
+    started_assignments = [
+        node
+        for node in ast.walk(resolve_scope)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "started"
+    ]
+    assert len(started_assignments) == 1
+    started_assignment = started_assignments[0]
+    assert isinstance(started_assignment.value, ast.Call)
+    assert _attribute_path(started_assignment.value.func) == "_observe_monotonic"
+    assert len(started_assignment.value.args) == 1
+    assert isinstance(started_assignment.value.args[0], ast.Constant)
+    assert started_assignment.value.args[0].value is None
+    assert started_assignment.value.keywords == []
+
+    raw_started_writes = [
+        node
+        for node in ast.walk(resolve_scope)
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and node.id == "started"
+    ]
+    assert len(raw_started_writes) == 1
+    assert raw_started_writes[0] is started_assignment.targets[0]
+
+    raw_started_loads = [
+        node
+        for node in ast.walk(resolve_scope)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id == "started"
+    ]
+    assert len(raw_started_loads) == 4
+    started_uses: set[str] = set()
+    for node in raw_started_loads:
+        parent = parent_by_id[id(node)]
+        if isinstance(parent, ast.BinOp):
+            assert isinstance(parent.op, ast.Add)
+            assert parent.left is node
+            assert isinstance(parent.right, ast.Name)
+            assert parent.right.id == "normalized_timeout"
+            started_uses.add("deadline-add")
+            continue
+        if isinstance(parent, ast.Compare):
+            if parent.left is node:
+                assert len(parent.ops) == 1
+                assert isinstance(parent.ops[0], ast.Is)
+                assert len(parent.comparators) == 1
+                assert isinstance(parent.comparators[0], ast.Constant)
+                assert parent.comparators[0].value is None
+                started_uses.add("initial-null")
+                continue
+            assert isinstance(parent.left, ast.Name)
+            assert parent.left.id == "deadline"
+            assert len(parent.ops) == 1
+            assert isinstance(parent.ops[0], ast.LtE)
+            assert parent.comparators == [node]
+            started_uses.add("deadline-order")
+            continue
+        if isinstance(parent, ast.Call):
+            assert _attribute_path(parent.func) == "_remaining"
+            assert len(parent.args) == 2
+            assert isinstance(parent.args[0], ast.Name)
+            assert parent.args[0].id == "deadline"
+            assert parent.args[1] is node
+            assert parent.keywords == []
+            started_uses.add("remaining")
+            continue
+        raise AssertionError("unsafe raw initial clock use")
+    assert started_uses == {
+        "initial-null",
+        "deadline-add",
+        "deadline-order",
+        "remaining",
+    }
 
     raw_collaborator_names = {
         "incumbent",
