@@ -6,7 +6,7 @@
 task_id: P0-017
 release: v1
 task_type: implementation
-status: planned
+status: in_progress
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-004, P0-006, P0-011, P0-014, P0-016, TRIAL-004]
@@ -344,9 +344,14 @@ Quality Governor:
 ## Verifier Evidence
 
 - Command: `.venv/bin/python scripts/validate_agent_system.py`; `git diff --check`
-- Result: passed for the reviewed planned contract
-- Notes: no product code has been changed; this is task-system evidence only,
-  not descriptor-adoption or Phase 0 product acceptance.
+- Result: reviewed planned contract passed; implementation pending
+- Notes: no product code has been changed. Planned contract commit
+  `4f53fa10c86658d99891ac094b3c99d9a7d9424d` passed
+  [run 29169104247](https://github.com/alovwang-sys/FlowSight/actions/runs/29169104247)
+  with jobs `86587218440` (macOS 3.13), `86587218452` (macOS 3.12),
+  `86587218457` (Ubuntu 3.12), and `86587218476` (Ubuntu 3.13). This is
+  task-system evidence only, not descriptor-adoption or Phase 0 product
+  acceptance.
 
 ## Failure Queue Items
 
