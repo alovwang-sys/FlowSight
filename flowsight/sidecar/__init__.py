@@ -26,6 +26,7 @@ from .startup_channel import (
     StartupWriter,
     open_startup_channel,
 )
+from .startup_discovery import discover_existing_startup
 from .startup_state import (
     StartupStateError,
     StartupStateErrorCode,
@@ -77,6 +78,7 @@ __all__ = [
     "bind_loopback_listener",
     "create_sidecar_app",
     "create_startup_state",
+    "discover_existing_startup",
     "open_startup_channel",
     "probe_sidecar_health",
     "receive_startup_outcome",
