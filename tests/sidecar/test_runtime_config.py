@@ -102,6 +102,7 @@ EXPECTED_SIDECAR_EXPORTS = (
     "StartupStateError",
     "StartupStateErrorCode",
     "StartupWriter",
+    "adopt_sidecar_child_descriptors",
     "bind_loopback_listener",
     "create_sidecar_app",
     "create_startup_state",
@@ -118,6 +119,7 @@ EXPECTED_SIDECAR_EXPORTS = (
 )
 EXPECTED_SIDECAR_SUBMODULES = {
     "app",
+    "child_adoption",
     "child_bootstrap",
     "health",
     "listener",

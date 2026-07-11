@@ -1,6 +1,7 @@
 """Production sidecar primitives."""
 
 from .app import MAX_PRIVATE_BODY_BYTES, create_sidecar_app
+from .child_adoption import adopt_sidecar_child_descriptors
 from .child_bootstrap import (
     CHILD_BOOTSTRAP_SCHEMA_VERSION,
     SidecarChildBootstrap,
@@ -93,6 +94,7 @@ __all__ = [
     "StartupStateError",
     "StartupStateErrorCode",
     "StartupWriter",
+    "adopt_sidecar_child_descriptors",
     "bind_loopback_listener",
     "create_sidecar_app",
     "create_startup_state",
