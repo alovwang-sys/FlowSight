@@ -70,14 +70,21 @@ altering, logging, or otherwise interpreting any bootstrap field.
 
 - `flowsight/sidecar/child_entry.py`
 - `tests/sidecar/test_child_entry.py`
+- `tests/sidecar/test_runtime_config.py`
 
 The current task card and its verifier evidence are always writable
 control-plane records; they do not expand the product-code allowlist above.
+
+`tests/sidecar/test_runtime_config.py` may change only to add
+`child_entry` to its exact private-sidecar-submodule expectation. Importing a
+new private child module necessarily registers that submodule on its parent
+package; this test-only amendment neither adds nor exports a public API.
 
 ## Expected Changed Files
 
 - `flowsight/sidecar/child_entry.py`
 - `tests/sidecar/test_child_entry.py`
+- `tests/sidecar/test_runtime_config.py`
 
 ## Forbidden
 
