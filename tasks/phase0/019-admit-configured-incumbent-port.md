@@ -6,7 +6,7 @@
 task_id: P0-019
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-010, P0-013, P0-014, TRIAL-004]
@@ -147,61 +147,61 @@ control-plane records; they do not expand the product-code allowlist above.
 
 ## Acceptance Criteria
 
-- [ ] `admit_configured_incumbent_port` is exported identically from
+- [x] `admit_configured_incumbent_port` is exported identically from
   `flowsight.sidecar`, occurs exactly once in `__all__`, has the fixed signature
   above, and is the only new production surface. It adds no public class,
   error taxonomy, result wrapper, constant, or alternate admission function.
-- [ ] Only exact `SidecarRuntimeConfig` and exact `SidecarState` inputs reach
+- [x] Only exact `SidecarRuntimeConfig` and exact `SidecarState` inputs reach
   slot work. Wrong config type fails with the fixed config `TypeError` before
   inspecting the incumbent; wrong incumbent type fails with the fixed
   incumbent `TypeError` before either slot getter. Derived, duck, proxy, or
   coercible inputs cannot run attribute/property/protocol dispatch.
-- [ ] Production captures the two canonical built-in slot getters at import
+- [x] Production captures the two canonical built-in slot getters at import
   and calls each exactly once through its own private delegate. Public package,
   module, or class-slot replacement cannot redirect dispatch. Private delegates
   may call the captured getter or synchronously fail before returning; they may
   not forge a successful value.
-- [ ] The requested port must be exact `None` or an exact built-in `int` in
+- [x] The requested port must be exact `None` or an exact built-in `int` in
   `0..65535`; the incumbent port must be an exact built-in `int` in `1..65535`.
   Missing, subclassed, boolean, out-of-range, or malformed exact-object slots
   fail closed with the fixed incompatibility error and no later work.
-- [ ] `requested_port is None` and exact `0` each accept incumbent boundary
+- [x] `requested_port is None` and exact `0` each accept incumbent boundary
   ports `1` and `65535` plus representative `4040`. No default-port or bind
   policy changes either rule.
-- [ ] Every explicit exact port in `1..65535` succeeds only when it equals the
+- [x] Every explicit exact port in `1..65535` succeeds only when it equals the
   incumbent port. Boundary matches `1 == 1` and `65535 == 65535` succeed;
   representative boundary and ordinary mismatches fail without retry,
   alternate result, or launch/election authority.
-- [ ] Every success returns the original exact `incumbent` object directly.
+- [x] Every success returns the original exact `incumbent` object directly.
   The result retains no config, requested-port scalar, callback, wrapper,
   store, timeout, deadline, or extra state copy; no work occurs after the exact
   state return is selected.
-- [ ] Every exact-object slot failure and explicit mismatch becomes exactly
+- [x] Every exact-object slot failure and explicit mismatch becomes exactly
   `RuntimeError("configured incumbent port is incompatible")`, raised `from
   None` only after internal slot/comparison frames and sensitive locals are
   gone. Without caller-active context, cause/context/notes are empty. A
   caller-active Python-managed context may remain only as suppressed context.
   Fixed error text, formatted output, and P0-019 traceback locals contain no
   config/state identity, requested/actual port, token, PID, or path.
-- [ ] Ordinary private getter failure is not retained after restoring the seam;
+- [x] Ordinary private getter failure is not retained after restoring the seam;
   synchronous `KeyboardInterrupt`, `SystemExit`, and a custom non-`Exception`
   `BaseException` preserve object identity, payload, notes, and dependency
   traceback with no later getter. Before propagation, every P0-019 frame has
   deleted config/state/port locals; production does not inspect or format the
   control. Caller-active `ValueError` and `KeyboardInterrupt` retain
   identity/notes unchanged across success, fixed failure, and process control.
-- [ ] Tests prove no stdout/stderr/log output, filesystem change, state
+- [x] Tests prove no stdout/stderr/log output, filesystem change, state
   mutation/serialization, network, lock, clock, wait, process, thread, async,
   callback, cache, or runtime behavior. The incumbent's complete field values
   and the config remain unchanged across every result.
-- [ ] A positive full-tree AST allowlist freezes exact imports, immutable
+- [x] A positive full-tree AST allowlist freezes exact imports, immutable
   captured slot dispatch, marker/helper/public surfaces, signatures, calls,
   raises, handler ownership, direct identity return, and absence of unreviewed
   nested definitions or mutable state. It rejects StateStore/discovery/health/
   election/wait/OwnerLock, other config/state fields, ports in error text,
   state methods, serialization, listener/channel/READY/process/SDK/storage/
   OTel/UI behavior, dynamic calls, logging, output, and mutation.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass locally and on the macOS/Linux x CPython 3.12/3.13 CI matrix.
 
 ## No-Test Reason
@@ -258,37 +258,55 @@ without creating election, owner, launch, listener, or runtime behavior
 ## Role Outputs
 
 Implementer:
-- Implementation pending. The planned slice contains only exact scalar port
-  admission and identity return.
+- Added the two-input pure port boundary with exact input checks, captured
+  canonical slot getters, exact integer/range policy, fixed non-secret errors,
+  process-control propagation with production-local cleanup, and direct
+  incumbent identity return. Exported only the fixed public helper.
+- Added focused behavioral, privacy, process-control, side-effect, public API,
+  malformed-value, hostile-protocol, and positive full-tree AST tests.
 
 Adversarial Reviewer:
-- Reviewer 1: P0/P1/P2 = 0, GO after verifying canonical built-in slot getter
-  capture, two-level sensitive-local cleanup, fixed-error reconstruction, and
-  direct identity return are jointly implementable.
-- Reviewer 2: boundary review selected the two-input port-only slice over an
-  integrated election/owner wrapper. It found process-control privacy and
-  future-deadline wording gaps; both were closed, and final review reported
-  P0/P1/P2 = 0 and GO.
+- Reviewer 1: found no production defect but reported P1=3/P2=1
+  test-survivable regressions: incumbent validation could collapse into
+  mismatch, hostile scalar protocols were not constrained, control injection
+  bypassed production reader frames, and one wrong-config privacy assertion
+  omitted its incumbent sentinel. Final review after the accepted fixes
+  reported P0/P1/P2 = 0 and GO.
+- Reviewer 2: independently verified runtime privacy, exception identity,
+  captured slot dispatch, malformed values, and exact identity return after the
+  fixes; final P0/P1/P2 = 0 and GO.
+- The Phase 0 scope reviewer confirmed the exact allowlist, AST policy, and
+  absence of lifecycle or non-goal drift; final P0/P1/P2 = 0 and GO.
 
 Fixer:
-- Accepted both contract findings: added the identity-preserved process-control
-  carveout with P0-019 local cleanup, and fixed one pre-work outer deadline
-  with remaining-only propagation for the future launcher. No production
-  implementation has started.
+- Made malformed incumbent checks independent of mismatch, including equal
+  boolean/int-subclass/float shapes; added hostile comparison/conversion/
+  truthiness objects with zero-dispatch assertions; injected process control at
+  captured getter constants so real reader frames are scrubbed; and tracked the
+  incumbent sentinel on wrong-config preflight. Production code was unchanged
+  by these accepted review fixes.
 
 Quality Governor:
-- P0/P1/P2 = 0, GO. Final audit confirmed the two-input port-policy-only Phase
-  0 boundary, four-file allowlist, fixed mismatch policy, and explicit future
-  launcher call-dominance/deadline obligations while deferring store, election,
-  owner transfer, launcher, listener, and runtime behavior.
+- P0/P1/P2 = 0, GO. Final audit confirmed the exact four-file product allowlist,
+  task-card-only control-plane update, Phase 0 port-policy boundary, AST policy,
+  and absence of store, election, owner, timeout, I/O, lifecycle, dependency,
+  Makefile, or v1 non-goal drift.
 
 ## Verifier Evidence
 
-- Command: `.venv/bin/python scripts/validate_agent_system.py`; `git diff --check`
+- Command: focused pytest; `make test-phase0`; `make gate-phase0`; Ruff; mypy;
+  agent-system, diff, and staged-file validation; candidate CI matrix
 - Result: passed
-- Notes: planned contract only; implementation has not started. Two independent
-  implementation/boundary reviewers and one scope-governance reviewer report
-  P0/P1/P2 = 0 and GO.
+- Notes: Focused tests passed 343 cases; `make test-phase0` passed 2273 cases;
+  and `make gate-phase0` ran the full `make check` path with 2398 passing tests
+  before `phase0-sustained` passed. The expected partial-scaffold notice
+  remained and was not reported as Phase 0 acceptance. The staged-file guard
+  admitted exactly the four indexed P0-019 product paths. Candidate commit
+  `03ba07ec416005eaa0ed4038b51afa44b5ed0469` passed GitHub Actions run
+  `29173530861` on Ubuntu and macOS with CPython 3.12/3.13; successful job IDs
+  were `86598483300`, `86598483301`, `86598483303`, and `86598483318`. Final
+  independent behavior, runtime/privacy, and Phase 0 scope reviews each
+  reported P0/P1/P2 = 0 and GO.
 
 ## Failure Queue Items
 
