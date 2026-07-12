@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import pickle
 import threading
+from copy import copy, deepcopy
 from pathlib import Path
 from typing import NoReturn
 
@@ -616,14 +618,14 @@ def test_reconstructed_launch_plan_cannot_duplicate_handoff_spawn_authority(
     try:
         first = runtime_module._owner_child_command(config, owner, writer, handoff)
         assert first is not None
-        copied = runtime_module._ChildLaunchPlan(first._argv, first._pass_fds, handoff)
+        with pytest.raises(TypeError):
+            runtime_module._ChildLaunchPlan(first._argv, first._pass_fds, handoff)
         monkeypatch.setattr(
             runtime_module,
             "_POPEN",
             lambda *_args, **_kwargs: calls.append(1) or _SpawnedProcess(),
         )
         assert runtime_module._spawn_isolated_child(first) is not None
-        assert runtime_module._spawn_isolated_child(copied) is None
         assert calls == [1]
     finally:
         owner.close()
@@ -712,16 +714,53 @@ def test_parent_retires_child_owned_handles_before_reaper_start(
     reader, writer = open_startup_channel()
     handoff = runtime_module._open_parent_handoff()
     assert handoff is not None
+    owner_fd = owner.fileno()
+    writer_fd = writer.fileno()
     handoff_reader = handoff._reader_fd
+    handoff_writer = handoff._writer_fd
     try:
         assert runtime_module._retire_parent_child_handles(owner, writer, handoff) is True
         with pytest.raises(OwnerLockError):
             owner.fileno()
         with pytest.raises(StartupChannelError):
             writer.fileno()
-        with pytest.raises(OSError):
-            os.fstat(handoff_reader)
+        for descriptor in (owner_fd, writer_fd, handoff_reader):
+            with pytest.raises(OSError):
+                os.fstat(descriptor)
+        assert os.fstat(handoff_writer)
     finally:
+        reader.close()
+        assert handoff.close_uncommitted() is True
+
+
+def test_parent_handoff_pipe_cannot_be_copied_to_duplicate_launch_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    reader, writer = open_startup_channel()
+    handoff = runtime_module._open_parent_handoff()
+    assert handoff is not None
+    try:
+        with pytest.raises(TypeError):
+            copy(handoff)
+        with pytest.raises(TypeError):
+            deepcopy(handoff)
+        with pytest.raises(TypeError):
+            pickle.dumps(handoff)
+        plan = runtime_module._owner_child_command(config, owner, writer, handoff)
+        assert plan is not None
+        with pytest.raises(TypeError):
+            copy(plan)
+        with pytest.raises(TypeError):
+            deepcopy(plan)
+        with pytest.raises(TypeError):
+            pickle.dumps(plan)
+    finally:
+        owner.close()
+        writer.close()
         reader.close()
         assert handoff.close_uncommitted() is True
 

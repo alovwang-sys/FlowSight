@@ -11,7 +11,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Final, Protocol, cast
+from typing import Final, NoReturn, Protocol, cast
 
 from .child_bootstrap import (
     SidecarChildBootstrap,
@@ -97,11 +97,35 @@ class _ParentHandoffPipe:
 
     __slots__ = ("_issued_plan", "_reader_fd", "_spawn_claimed", "_writer_fd")
 
+    _issued_plan: _ChildLaunchPlan | None
+    _reader_fd: int
+    _spawn_claimed: bool
+    _writer_fd: int
+
+    def __new__(cls, /, *args: object, **kwargs: object) -> NoReturn:
+        del cls, args, kwargs
+        raise TypeError("_ParentHandoffPipe must be opened internally") from None
+
     def __init__(self, reader_fd: int, writer_fd: int) -> None:
-        self._reader_fd = reader_fd
-        self._writer_fd = writer_fd
-        self._issued_plan: _ChildLaunchPlan | None = None
-        self._spawn_claimed = False
+        del self, reader_fd, writer_fd
+        raise TypeError("_ParentHandoffPipe must be opened internally") from None
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("_ParentHandoffPipe is move-only") from None
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        del memo
+        raise TypeError("_ParentHandoffPipe is move-only") from None
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("_ParentHandoffPipe cannot be serialized") from None
+
+    def __reduce_ex__(self, protocol: object) -> NoReturn:
+        del protocol
+        raise TypeError("_ParentHandoffPipe cannot be serialized") from None
+
+    def __getstate__(self) -> NoReturn:
+        raise TypeError("_ParentHandoffPipe cannot be serialized") from None
 
     def bind_plan(self, plan: _ChildLaunchPlan) -> bool:
         if (
@@ -163,17 +187,41 @@ class _ChildLaunchPlan:
 
     __slots__ = ("_argv", "_bound", "_handoff", "_pass_fds", "_spawn_attempted")
 
+    _argv: tuple[str, ...]
+    _bound: bool
+    _handoff: _ParentHandoffPipe
+    _pass_fds: tuple[int, int, int]
+    _spawn_attempted: bool
+
+    def __new__(cls, /, *args: object, **kwargs: object) -> NoReturn:
+        del cls, args, kwargs
+        raise TypeError("_ChildLaunchPlan must be issued internally") from None
+
     def __init__(
         self,
         argv: tuple[str, ...],
         pass_fds: tuple[int, int, int],
         handoff: _ParentHandoffPipe,
     ) -> None:
-        self._argv = argv
-        self._pass_fds = pass_fds
-        self._handoff = handoff
-        self._spawn_attempted = False
-        self._bound = handoff.bind_plan(self)
+        del self, argv, pass_fds, handoff
+        raise TypeError("_ChildLaunchPlan must be issued internally") from None
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("_ChildLaunchPlan is move-only") from None
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        del memo
+        raise TypeError("_ChildLaunchPlan is move-only") from None
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("_ChildLaunchPlan cannot be serialized") from None
+
+    def __reduce_ex__(self, protocol: object) -> NoReturn:
+        del protocol
+        raise TypeError("_ChildLaunchPlan cannot be serialized") from None
+
+    def __getstate__(self) -> NoReturn:
+        raise TypeError("_ChildLaunchPlan cannot be serialized") from None
 
     def take_command(self) -> tuple[tuple[str, ...], tuple[int, int, int]] | None:
         if self._spawn_attempted:
@@ -256,7 +304,12 @@ def _open_parent_handoff() -> _ParentHandoffPipe | None:
             except Exception:
                 pass
         return None
-    return _ParentHandoffPipe(promoted[0], promoted[1])
+    handoff = object.__new__(_ParentHandoffPipe)
+    handoff._reader_fd = promoted[0]
+    handoff._writer_fd = promoted[1]
+    handoff._issued_plan = None
+    handoff._spawn_claimed = False
+    return handoff
 
 
 class _WaitOnlyReaper:
@@ -589,11 +642,12 @@ def _owner_child_command(
         or not _CHILD_EXECUTABLE
     ):
         return None
-    plan = _ChildLaunchPlan(
-        (_CHILD_EXECUTABLE, "-I", "-m", _CHILD_ENTRY_MODULE, *suffix),
-        (owner_fd, writer_fd, handoff_reader_fd),
-        handoff,
-    )
+    plan = object.__new__(_ChildLaunchPlan)
+    plan._argv = (_CHILD_EXECUTABLE, "-I", "-m", _CHILD_ENTRY_MODULE, *suffix)
+    plan._pass_fds = (owner_fd, writer_fd, handoff_reader_fd)
+    plan._handoff = handoff
+    plan._spawn_attempted = False
+    plan._bound = handoff.bind_plan(plan)
     if not plan._bound:
         return None
     return plan
