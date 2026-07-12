@@ -6,10 +6,10 @@
 task_id: P0-024
 release: v1
 task_type: implementation
-status: in_progress
+status: blocked
 primary_phase: phase0
 impacted_phases: []
-depends_on: [P0-013, P0-014, P0-016, P0-019, P0-023, TRIAL-004]
+depends_on: [P0-013, P0-014, P0-016, P0-019, P0-023, P0-025, TRIAL-004]
 requires_gates: [phase0-sustained]
 opens_gates: []
 scope_override: none
@@ -31,6 +31,15 @@ returns an already-healthy compatible project sidecar or starts exactly one
 new sidecar child and admits its verified READY outcome. The operation is an
 internal sidecar primitive; a subsequent SDK-lifecycle task alone maps
 `FlowSight.init_app()` onto it.
+
+## Blocked By
+
+P0-025 must establish a child-side parent-handoff gate before this task can
+linearize direct-child reaping ahead of state publication. Two independent
+reviews proved the current P0-016/P0-023 protocol otherwise permits a
+concurrent caller to attach to a child that the original launcher later must
+terminate after a local handoff failure. No P0-024 product candidate is
+retained while that prerequisite is incomplete.
 
 ## Context
 
