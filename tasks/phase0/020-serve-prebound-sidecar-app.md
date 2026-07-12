@@ -6,7 +6,7 @@
 task_id: P0-020
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-002, P0-003, P0-007, P0-015, TRIAL-004]
@@ -221,12 +221,12 @@ control-plane records; they do not expand the product-code allowlist above.
 
 ## Acceptance Criteria
 
-- [ ] `serve_prebound_sidecar_app` is exported identically from
+- [x] `serve_prebound_sidecar_app` is exported identically from
   `flowsight.sidecar`, occurs exactly once in `__all__`, has the fixed signature
   above, and is the only new production surface. It adds no public class, error
   enum, result, handle, async variant, alternate server function, or callback
   beyond the exact required keyword-only `on_started` function.
-- [ ] Wrong state type fails first with the fixed state `TypeError`
+- [x] Wrong state type fails first with the fixed state `TypeError`
   without inspecting or closing the listener. Wrong listener type then fails
   with the fixed listener `TypeError` without reading state slots
   or calling app/Config/Server/close. Wrong startup-hook type fails next with its
@@ -238,7 +238,7 @@ control-plane records; they do not expand the product-code allowlist above.
   context. Derived, duck, proxy, bound-method, callable-object, and coercible
   inputs cannot run attribute, property, equality, representation, callability,
   or scalar protocol dispatch.
-- [ ] Exact-object preflight uses only captured canonical state slot getters,
+- [x] Exact-object preflight uses only captured canonical state slot getters,
   current-PID/main-thread/no-running-event-loop checks, and built-in socket
   operations. It reads only state `pid`, `host`, and `port`; every other field
   remains governed by P0-007's canonical-success contract and P0-002's app
@@ -250,7 +250,7 @@ control-plane records; they do not expand the product-code allowlist above.
   already-running-loop cases fail with the fixed compatibility `ValueError`
   before app/Config/Server/run. A real `asyncio.run` regression emits no
   un-awaited-coroutine warning.
-- [ ] Every ordinary incompatibility reconstructs its fixed error only after
+- [x] Every ordinary incompatibility reconstructs its fixed error only after
   internal preflight frames and sensitive locals are gone. The listener remains
   caller-owned and unchanged from its input condition after failure. When the
   input was a valid open P0-003 listener and only state/PID/port/thread/loop
@@ -258,7 +258,7 @@ control-plane records; they do not expand the product-code allowlist above.
   malformed input is not falsely claimed to become open or usable. A
   pre-transfer non-`Exception` preserves identity, payload, notes, and dependency
   traceback without cleanup or later work.
-- [ ] Entry into one outer cleanup guard after successful preflight is the sole
+- [x] Entry into one outer cleanup guard after successful preflight is the sole
   ownership-transfer boundary; no dependency call or mutable action occurs in
   the preflight-to-guard gap. Inside that guard the captured canonical app
   factory is called exactly once with the same state, and its result passes
@@ -268,7 +268,7 @@ control-plane records; they do not expand the product-code allowlist above.
   synchronously fail before returning. The one explicit test-only exception is
   a malformed `Server.run` result seam used solely to prove non-`None` fail-closed
   behavior; canonical success/provenance remains covered by the real child.
-- [ ] Config freezes exactly one safe local runtime: host `127.0.0.1`, the
+- [x] Config freezes exactly one safe local runtime: host `127.0.0.1`, the
   admitted state port, `uds=None`, `fd=None`, `loop="asyncio"`, `http="h11"`,
   `ws="none"`, `lifespan="off"`, `interface="asgi3"`, `env_file=None`,
   `reload=False`, `workers=1`, `proxy_headers=False`, an exact newly built empty
@@ -285,7 +285,7 @@ control-plane records; they do not expand the product-code allowlist above.
   Config attributes. `WEB_CONCURRENCY`, forwarded-IP, reload, or logging
   environment cannot change these values. The external real-child deadline is
   exactly 10 seconds and cannot be derived from a looser implementation value.
-- [ ] The private notifier contains the exact startup function and one one-shot
+- [x] The private notifier contains the exact startup function and one one-shot
   state only; it is passed directly as Config's `callback_notify`. Locked
   Uvicorn invokes it first from `on_tick(0)` after successful startup. It calls
   the startup function at most once with no arguments, requires the exact
@@ -298,33 +298,33 @@ control-plane records; they do not expand the product-code allowlist above.
   only completed Uvicorn startup; it is not an atomic continued-liveness or
   no-shutdown guarantee, and later READY admission still requires P0-008/P0-009
   health revalidation.
-- [ ] One captured canonical Server is constructed from that Config and its
+- [x] One captured canonical Server is constructed from that Config and its
   captured `run` is called exactly once with a newly built exact list of length
   one whose element is the same listener. No alternate bind/fd/socket path is
   reachable. A normal exact-`None` run result is the only success; any other
   return fails closed. The function blocks and exposes or retains no runtime
   handle or mutable side result.
-- [ ] After transfer, FlowSight performs exactly one canonical listener-close
+- [x] After transfer, FlowSight performs exactly one canonical listener-close
   attempt on every Python-managed outcome, including a normal return and every
   synchronous dependency failure. A successful close leaves the socket closed;
   Uvicorn closing first remains idempotent. An ordinary or ambiguous close
   failure becomes the same fixed runtime error without retry or false closure
   claim. Cleanup process control without an active control propagates unchanged.
-- [ ] Ordinary app/Config/Server/run/result/cleanup failures become exactly
+- [x] Ordinary app/Config/Server/run/result/cleanup failures become exactly
   `RuntimeError("prebound sidecar server failed")`, raised `from None` only
   after raw errors, state, listener, PID, port, app, config, and server locals
   are gone. Without caller-active context, cause/context/notes are empty; caller
   context may remain only as suppressed context. Fixed error text, formatted
   traceback, stdout/stderr, logs, and production-frame locals contain no
   sensitive identity/value, path, repr, raw exception, or dependency message.
-- [ ] Synchronous `KeyboardInterrupt`, `SystemExit`, and a custom direct
+- [x] Synchronous `KeyboardInterrupt`, `SystemExit`, and a custom direct
   `BaseException` from every captured post-transfer dependency preserve object
   identity, payload, notes, and dependency traceback after one cleanup attempt,
   with no later collaborator. Cleanup failure cannot replace the active control
   and may add only one fixed cleanup note. Caller-active `ValueError` and
   `KeyboardInterrupt` retain identity/notes across success, fixed failure, and
   process-control outcomes; all P0-020 production frames scrub sensitive locals.
-- [ ] Unit/fault tests prove ordering, captured provenance, exact Config kwargs,
+- [x] Unit/fault tests prove ordering, captured provenance, exact Config kwargs,
   malicious-environment immunity, same-socket run identity, no second
   network-listener allocation/bind/duplication, main-thread/no-running-loop
   policy, coroutine/generator-function preflight with zero warning output,
@@ -333,7 +333,7 @@ control-plane records; they do not expand the product-code allowlist above.
   retention, no output/log leakage, transfer ownership, cleanup arbitration,
   raw-error collection, and exact success/failure/control identities. Asyncio's
   internal wakeup socketpair is permitted and cannot satisfy listener evidence.
-- [ ] A bounded unpatched test-only child creates one real P0-003 listener and
+- [x] A bounded unpatched test-only child creates one real P0-003 listener and
   P0-007 state, sends bounded exact fixture data through a private inherited
   control pipe rather than argv/environment/stdout, forbids every later
   network-listener `socket.bind` through an audit hook, and calls production with
@@ -344,7 +344,7 @@ control-plane records; they do not expand the product-code allowlist above.
   token/server/date/CORS/output leakage, and no alternate endpoint. The fixture
   pipe is the only test-only state encoding carveout and has an exact schema,
   byte bound, one write, and one read.
-- [ ] Real child modes prove both Uvicorn signal contracts: a restored custom
+- [x] Real child modes prove both Uvicorn signal contracts: a restored custom
   SIGTERM handler verifies the listener is already closed when replay occurs,
   emits a private `SIGTERM_REPLAYED` marker, and returns; a separate marker after
   the production call proves the function then returned exact `None`. The
@@ -354,7 +354,7 @@ control-plane records; they do not expand the product-code allowlist above.
   on test failure, no child/process group survives, and the exact port can be
   rebound afterward. This is process/OS release evidence, not a claim of
   arbitrary Python-finally cleanup under fatal signals.
-- [ ] A positive full-tree AST allowlist freezes exact imports, immutable
+- [x] A positive full-tree AST allowlist freezes exact imports, immutable
   dependency/socket/state captures, constants, helpers, signatures, Config
   keyword set, notifier structure, calls/counts/owners, transfer point, handlers,
   cleanup arbitration, and exact-`None` return. It rejects production socket
@@ -362,7 +362,7 @@ control-plane records; they do not expand the product-code allowlist above.
   `uvicorn.run`, state/store/channel/owner/process/SDK/storage/OTel/UI/reload/
   multi-worker/WebSocket/proxy/logging/output/additional-callback/cache/background
   behavior, dynamic imports/calls, nested definitions, and mutable module state.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass locally and on the macOS/Linux x CPython 3.12/3.13 CI matrix. The
   partial-scaffold disclaimer remains explicit and is not Phase 0 acceptance.
 
@@ -440,15 +440,15 @@ Implementer:
   launcher, storage, SDK/OTel, UI, thread, task, or alternate listener path.
 
 Adversarial Reviewer:
-- Behavior reviewer froze exact HTTP, socket identity, signal replay, cleanup,
+- Reviewer 1: froze exact HTTP, socket identity, signal replay, cleanup,
   privacy, hook, Config, context, and dependency-fault evidence. Final review
   after removing unauthorized malformed-close seams and adding unconfounded
   canonical-run/close-only evidence reported P0/P1/P2 = 0 and GO.
-- Runtime reviewer verified locked Uvicorn Config/run/shutdown behavior,
+- Reviewer 2: verified locked Uvicorn Config/run/shutdown behavior,
   startup ordering, signal restore/replay, the main-thread/no-running-loop
   boundary, ownership transfer, exact physical close, and ordinary/control
   arbitration. Final review reported P0/P1/P2 = 0 and GO.
-- Scope/evidence reviewer confirmed the exact four-file allowlist plus task-card
+- The scope/evidence reviewer confirmed the exact four-file allowlist plus task-card
   record, the Phase 0 boundary, captured provenance, strict full-tree AST
   allowlist, and absence of unauthorized seams. Final review reported
   P0/P1/P2 = 0 and GO.
@@ -472,13 +472,19 @@ Quality Governor:
 
 - Command: focused Ruff/pytest/mypy checks; `make test-phase0`;
   `make gate-phase0`; `.venv/bin/python scripts/validate_agent_system.py`;
-  `git diff --check`
-- Result: passed; focused `441 passed`, Phase 0 `2415 passed`, full/gate
-  `2540 passed`, sustained Phase 0 gate passed
-- Notes: candidate implementation is locally ready for CI. Final independent
-  runtime, behavior/test, and Phase 0 scope reviews each report P0/P1/P2 = 0 and
-  GO after every accepted finding; macOS/Linux x CPython 3.12/3.13 candidate CI
-  remains pending before task completion.
+  `git diff --check`; candidate GitHub Actions matrix
+- Result: passed
+- Notes: focused checks passed 441 cases; `make test-phase0` passed 2415 cases;
+  and `make gate-phase0` ran the full check path with 2540 passing tests before
+  the sustained Phase 0 gate passed. Candidate commit
+  `6672a805b0d55bd7a969e2d91fdffc0fef509923`, run `29176705997`, jobs
+  `86607058955` (macOS 3.13), `86607058959` (Ubuntu 3.13), `86607058967`
+  (macOS 3.12), and `86607058968` (Ubuntu 3.12) all completed successfully.
+  Final independent runtime, behavior/test, and Phase 0 scope reviews each
+  report P0/P1/P2 = 0 and GO. The staged-file guard accepted only the four
+  allowed product/test paths plus this task-card control record. The expected
+  partial-scaffold notice remains explicit; these results are not reported as
+  complete Phase 0 acceptance.
 
 ## Failure Queue Items
 
