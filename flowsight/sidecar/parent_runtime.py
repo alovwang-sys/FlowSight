@@ -12,7 +12,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Final, Protocol, cast
 
-from .child_bootstrap import encode_sidecar_child_bootstrap
+from .child_bootstrap import (
+    SidecarChildBootstrap,
+    decode_sidecar_child_bootstrap,
+    encode_sidecar_child_bootstrap,
+)
 from .incumbent_port import admit_configured_incumbent_port
 from .owner_lock import OwnerLock
 from .runtime_config import SidecarRuntimeConfig, prepare_sidecar_runtime_config
@@ -38,13 +42,15 @@ _THREAD_START: Final = cast(Callable[[threading.Thread], object], threading.Thre
 _EVENT: Final = threading.Event
 _EVENT_SET: Final = cast(Callable[[threading.Event], object], threading.Event.set)
 _ENCODE_CHILD_BOOTSTRAP: Final = encode_sidecar_child_bootstrap
+_DECODE_CHILD_BOOTSTRAP: Final = decode_sidecar_child_bootstrap
+_BOOTSTRAP_TYPE: Final = SidecarChildBootstrap
 _OWNER_FILENO: Final = OwnerLock.fileno
 _WRITER_FILENO: Final = StartupWriter.fileno
 _CHILD_EXECUTABLE: Final = sys.executable
 _CHILD_ENTRY_MODULE: Final = "flowsight.sidecar.child_entry"
 _POPEN: Final = subprocess.Popen
-_PROCESS_TYPE: Final = subprocess.Popen
 _DEVNULL: Final = subprocess.DEVNULL
+_PIPE: Final = os.pipe
 _ISFINITE: Final = math.isfinite
 _FSPATH: Final = os.fspath
 _PREPARE_RUNTIME_CONFIG: Final = prepare_sidecar_runtime_config
@@ -81,6 +87,72 @@ class _Reaper(Protocol):
 
 class _OwnerCleanupFailure(Exception):
     pass
+
+
+class _ParentHandoffPipe:
+    """Private provenance for one child gate and its retained parent writer."""
+
+    __slots__ = ("_reader_fd", "_writer_fd")
+
+    def __init__(self, reader_fd: int, writer_fd: int) -> None:
+        self._reader_fd = reader_fd
+        self._writer_fd = writer_fd
+
+    def child_reader_fd(self) -> int | None:
+        if self._reader_fd < _MIN_DESCRIPTOR or self._writer_fd < _MIN_DESCRIPTOR:
+            return None
+        return self._reader_fd
+
+    def take_writer(self) -> int | None:
+        if self._writer_fd < _MIN_DESCRIPTOR:
+            return None
+        writer_fd = self._writer_fd
+        self._writer_fd = -1
+        return writer_fd
+
+    def retire_reader(self) -> bool:
+        reader_fd = self._reader_fd
+        if reader_fd < _MIN_DESCRIPTOR:
+            return False
+        self._reader_fd = -1
+        try:
+            result = _CLOSE(reader_fd)
+        except Exception:
+            return False
+        return result is None
+
+    def close_uncommitted(self) -> bool:
+        descriptors = (self._reader_fd, self._writer_fd)
+        self._reader_fd = -1
+        self._writer_fd = -1
+        closed = True
+        for descriptor in descriptors:
+            if descriptor < _MIN_DESCRIPTOR:
+                continue
+            try:
+                if _CLOSE(descriptor) is not None:
+                    closed = False
+            except Exception:
+                closed = False
+        return closed
+
+
+def _open_parent_handoff() -> _ParentHandoffPipe | None:
+    try:
+        endpoints = _PIPE()
+    except Exception:
+        return None
+    if (
+        type(endpoints) is not tuple
+        or len(endpoints) != 2
+        or type(endpoints[0]) is not int
+        or type(endpoints[1]) is not int
+        or endpoints[0] < _MIN_DESCRIPTOR
+        or endpoints[1] < _MIN_DESCRIPTOR
+        or endpoints[0] == endpoints[1]
+    ):
+        return None
+    return _ParentHandoffPipe(endpoints[0], endpoints[1])
 
 
 class _WaitOnlyReaper:
@@ -369,15 +441,17 @@ def _owner_child_command(
     config: SidecarRuntimeConfig,
     owner: OwnerLock,
     writer: StartupWriter,
-    handoff_reader_fd: int,
+    handoff: _ParentHandoffPipe,
 ) -> _ChildCommand | None:
     if (
         type(config) is not _CONFIG_TYPE
         or type(owner) is not _OWNER_TYPE
         or type(writer) is not StartupWriter
-        or type(handoff_reader_fd) is not int
-        or handoff_reader_fd < _MIN_DESCRIPTOR
+        or type(handoff) is not _ParentHandoffPipe
     ):
+        return None
+    handoff_reader_fd = handoff.child_reader_fd()
+    if handoff_reader_fd is None:
         return None
     try:
         owner_fd = _OWNER_FILENO(owner)
@@ -418,17 +492,39 @@ def _owner_child_command(
 
 
 def _spawn_isolated_child(command: _ChildCommand) -> _Process | None:
-    argv, pass_fds = command
+    if (
+        type(command) is not tuple
+        or len(command) != 2
+        or type(command[0]) is not tuple
+        or type(command[1]) is not tuple
+    ):
+        return None
+    argv = command[0]
+    pass_fds = command[1]
     if (
         type(argv) is not tuple
-        or len(argv) < 5
+        or len(argv) != 13
         or any(type(argument) is not str for argument in argv)
+        or argv[0] != _CHILD_EXECUTABLE
+        or argv[1:4] != ("-I", "-m", _CHILD_ENTRY_MODULE)
         or type(pass_fds) is not tuple
         or len(pass_fds) != 3
         or any(
             type(descriptor) is not int or descriptor < _MIN_DESCRIPTOR for descriptor in pass_fds
         )
         or len(set(pass_fds)) != 3
+    ):
+        return None
+    try:
+        bootstrap = _DECODE_CHILD_BOOTSTRAP(argv[4:])
+        owner_fd = object.__getattribute__(bootstrap, "owner_lock_fd")
+        writer_fd = object.__getattribute__(bootstrap, "startup_writer_fd")
+        handoff_reader_fd = object.__getattribute__(bootstrap, "parent_handoff_fd")
+    except Exception:
+        return None
+    if (
+        type(bootstrap) is not _BOOTSTRAP_TYPE
+        or (owner_fd, writer_fd, handoff_reader_fd) != pass_fds
     ):
         return None
     try:
@@ -443,8 +539,6 @@ def _spawn_isolated_child(command: _ChildCommand) -> _Process | None:
             shell=False,
         )
     except Exception:
-        return None
-    if type(process) is not _PROCESS_TYPE:
         return None
     return cast(_Process, process)
 

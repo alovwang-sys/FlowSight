@@ -456,9 +456,10 @@ def test_owner_child_command_is_exact_isolated_child_shape(
     store = StateStore(config.runtime_root, project_id=config.project_id)
     owner = runtime_module.OwnerLock.acquire(store)
     reader, writer = open_startup_channel()
-    handoff_reader, handoff_writer = os.pipe()
+    handoff = runtime_module._open_parent_handoff()
+    assert handoff is not None
     try:
-        command = runtime_module._owner_child_command(config, owner, writer, handoff_reader)
+        command = runtime_module._owner_child_command(config, owner, writer, handoff)
         assert command is not None
         argv, pass_fds = command
         assert argv[:4] == (
@@ -467,6 +468,8 @@ def test_owner_child_command_is_exact_isolated_child_shape(
             "-m",
             "flowsight.sidecar.child_entry",
         )
+        handoff_reader = handoff.child_reader_fd()
+        assert handoff_reader is not None
         assert pass_fds == (owner.fileno(), writer.fileno(), handoff_reader)
         assert argv[4:] == runtime_module._ENCODE_CHILD_BOOTSTRAP(
             config,
@@ -478,8 +481,7 @@ def test_owner_child_command_is_exact_isolated_child_shape(
         owner.close()
         writer.close()
         reader.close()
-        os.close(handoff_reader)
-        os.close(handoff_writer)
+        assert handoff.close_uncommitted() is True
 
 
 def test_owner_child_command_rejects_an_invalid_handoff_descriptor(
@@ -490,16 +492,23 @@ def test_owner_child_command_rejects_an_invalid_handoff_descriptor(
     store = StateStore(config.runtime_root, project_id=config.project_id)
     owner = runtime_module.OwnerLock.acquire(store)
     reader, writer = open_startup_channel()
+    handoff = runtime_module._open_parent_handoff()
+    assert handoff is not None
     try:
-        assert runtime_module._owner_child_command(config, owner, writer, -1) is None
+        handoff_writer = handoff.take_writer()
+        assert handoff_writer is not None
+        os.close(handoff_writer)
+        assert runtime_module._owner_child_command(config, owner, writer, handoff) is None
     finally:
         owner.close()
         writer.close()
         reader.close()
+        assert handoff.close_uncommitted() is True
 
 
 def test_spawn_isolated_child_uses_only_the_reviewed_subprocess_shape(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     class _SpawnedProcess:
         def terminate(self) -> None:
@@ -515,31 +524,39 @@ def test_spawn_isolated_child_uses_only_the_reviewed_subprocess_shape(
         calls.append((args, kwargs))
         return process
 
-    monkeypatch.setattr(runtime_module, "_POPEN", popen)
-    monkeypatch.setattr(runtime_module, "_PROCESS_TYPE", _SpawnedProcess)
-    command = (
-        ("/current/python", "-I", "-m", "flowsight.sidecar.child_entry", "bootstrap"),
-        (3, 4, 5),
-    )
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    reader, writer = open_startup_channel()
+    handoff = runtime_module._open_parent_handoff()
+    assert handoff is not None
+    try:
+        command = runtime_module._owner_child_command(config, owner, writer, handoff)
+        assert command is not None
+        monkeypatch.setattr(runtime_module, "_POPEN", popen)
+        assert runtime_module._spawn_isolated_child(command) is process
+        assert calls == [
+            (
+                (command[0],),
+                {
+                    "stdin": runtime_module._DEVNULL,
+                    "stdout": runtime_module._DEVNULL,
+                    "stderr": runtime_module._DEVNULL,
+                    "close_fds": True,
+                    "pass_fds": command[1],
+                    "start_new_session": True,
+                    "shell": False,
+                },
+            )
+        ]
+    finally:
+        owner.close()
+        writer.close()
+        reader.close()
+        assert handoff.close_uncommitted() is True
 
-    assert runtime_module._spawn_isolated_child(command) is process
-    assert calls == [
-        (
-            (command[0],),
-            {
-                "stdin": runtime_module._DEVNULL,
-                "stdout": runtime_module._DEVNULL,
-                "stderr": runtime_module._DEVNULL,
-                "close_fds": True,
-                "pass_fds": command[1],
-                "start_new_session": True,
-                "shell": False,
-            },
-        )
-    ]
 
-
-def test_spawn_isolated_child_rejects_a_malformed_process_without_retry(
+def test_spawn_isolated_child_rejects_an_unreviewed_command_without_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[object] = []
@@ -550,12 +567,12 @@ def test_spawn_isolated_child_rejects_a_malformed_process_without_retry(
 
     monkeypatch.setattr(runtime_module, "_POPEN", popen)
     command = (
-        ("/current/python", "-I", "-m", "flowsight.sidecar.child_entry", "bootstrap"),
+        ("/bin/sh", "-c", "unexpected", "command", "suffix"),
         (3, 4, 5),
     )
 
     assert runtime_module._spawn_isolated_child(command) is None
-    assert calls == [1]
+    assert calls == []
 
 
 def test_preflight_rejects_forged_exact_config_before_constructing_store(
