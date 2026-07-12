@@ -19,6 +19,7 @@ from .listener import (
 )
 from .owner_lock import OwnerLock, OwnerLockError, OwnerLockErrorCode
 from .runtime_config import SidecarRuntimeConfig, prepare_sidecar_runtime_config
+from .server_runtime import serve_prebound_sidecar_app
 from .startup_admission import (
     StartupAdmissionError,
     StartupAdmissionErrorCode,
@@ -110,6 +111,7 @@ __all__ = [
     "prepare_sidecar_runtime_config",
     "receive_startup_outcome",
     "resolve_owner_election",
+    "serve_prebound_sidecar_app",
     "verify_ready_startup",
     "wait_for_owner_election",
 ]

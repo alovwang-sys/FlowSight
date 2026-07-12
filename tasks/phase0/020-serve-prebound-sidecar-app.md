@@ -76,11 +76,13 @@ behavior.
   Uvicorn's graceful-shutdown timeout does not bound arbitrary hook execution.
 - Top-level type checks and compatibility preflight remain caller-owned. A wrong
   type or an exact but incompatible state/listener pair neither transfers nor
-  closes the listener. Transfer occurs only after exact preflight proves the
-  canonical current-process state and supplied socket agree. From that point,
-  this call terminally consumes the listener and performs one captured
-  canonical close attempt on every Python-managed exit; Uvicorn may already
-  have closed it first.
+  closes the listener. After exact preflight proves the canonical
+  current-process state and supplied socket agree, ownership remains with the
+  caller until execution enters the owned serving helper's established outer
+  cleanup guard. Entry into that guard is the sole transfer point. From that
+  point, this call terminally consumes the listener and performs one captured
+  canonical close attempt on every reviewed synchronous Python-managed exit;
+  Uvicorn may already have closed it first.
 - Preflight also proves the current thread has no running asyncio loop before
   `Server.run` can create its coroutine; otherwise it fails before transfer and
   cannot emit an un-awaited-coroutine warning. It checks only reviewed state
@@ -256,9 +258,11 @@ control-plane records; they do not expand the product-code allowlist above.
   malformed input is not falsely claimed to become open or usable. A
   pre-transfer non-`Exception` preserves identity, payload, notes, and dependency
   traceback without cleanup or later work.
-- [ ] Successful preflight is the sole ownership-transfer boundary. From that
-  point the captured canonical app factory is called exactly once with the same
-  state, and its result passes directly into one captured Config construction.
+- [ ] Entry into one outer cleanup guard after successful preflight is the sole
+  ownership-transfer boundary; no dependency call or mutable action occurs in
+  the preflight-to-guard gap. Inside that guard the captured canonical app
+  factory is called exactly once with the same state, and its result passes
+  directly into one captured Config construction.
   Public package/module/class replacement cannot redirect dependencies;
   private seams may only delegate to their captured canonical dependency or
   synchronously fail before returning. The one explicit test-only exception is
@@ -429,52 +433,52 @@ storage, SDK, or telemetry scope
 ## Role Outputs
 
 Implementer:
-- Implementation pending. The planned slice contains only one synchronous
-  exact prebound-socket Uvicorn serving boundary with one domain-neutral
-  startup-linearization function.
+- Implemented one synchronous exact prebound-socket Uvicorn serving boundary,
+  one captured private Config/Server path, and one domain-neutral one-shot
+  post-start function. The implementation remains inside the four allowed
+  product/test files and adds no child entrypoint, READY/state publication,
+  launcher, storage, SDK/OTel, UI, thread, task, or alternate listener path.
 
 Adversarial Reviewer:
-- Reviewer 1: selected the real prebound server over a thin configured-listener
-  wrapper because P0-003 already owns binding policy and the serving runtime is
-  the first missing observable Phase 0 capability. Test design froze exact
-  HTTP, socket identity, signal replay, cleanup, privacy, and false-positive
-  evidence. Actual-card review found startup-hook, fixture, Config, seam,
-  context, and signal false-positive gaps. Final review after all accepted fixes
-  reported P0/P1/P2 = 0 and GO.
-- Reviewer 2: verified Uvicorn 0.51 Config/run/shutdown source, startup-failure
-  socket leakage, signal restore/replay, main-thread requirements, and one-close
-  ownership backstop. Actual-card review found running-loop, incompatible-input,
-  internal-socket, cleanup wording, and state-slot ambiguities; accepted fixes
-  plus the narrowed hook/liveness contract passed final review with P0/P1/P2 =
-  0 and GO.
+- Behavior reviewer froze exact HTTP, socket identity, signal replay, cleanup,
+  privacy, hook, Config, context, and dependency-fault evidence. Final review
+  after removing unauthorized malformed-close seams and adding unconfounded
+  canonical-run/close-only evidence reported P0/P1/P2 = 0 and GO.
+- Runtime reviewer verified locked Uvicorn Config/run/shutdown behavior,
+  startup ordering, signal restore/replay, the main-thread/no-running-loop
+  boundary, ownership transfer, exact physical close, and ordinary/control
+  arbitration. Final review reported P0/P1/P2 = 0 and GO.
+- Scope/evidence reviewer confirmed the exact four-file allowlist plus task-card
+  record, the Phase 0 boundary, captured provenance, strict full-tree AST
+  allowlist, and absence of unauthorized seams. Final review reported
+  P0/P1/P2 = 0 and GO.
 
 Fixer:
-- Reconciled the planning reviews by adding an exact one-shot startup function
-  after Uvicorn startup so the later child can linearize READY without a thread
-  or server reimplementation; keeping type/context compatibility preflight
-  caller-owned; checking no running event loop; limiting state slots to
-  PID/host/port; adding Darwin `TCP_CONNECTION_INFO`; narrowing network-listener
-  and port secrecy wording; fixing Config/shutdown values; authorizing only the
-  bounded test fixture; rejecting coroutine/generator hook functions without
-  warnings; narrowing notification to post-start ordering plus later health
-  verification; declaring the hook's boundedness a trusted-caller precondition;
-  and separating custom-handler normal return from default-SIGTERM OS teardown
-  evidence.
+- Applied every accepted review finding: captured immutable state/socket/thread
+  primitives and canonical dependencies; made preflight caller-owned and
+  transfer occur only inside the outer cleanup guard; fixed exact Config,
+  notifier, error/privacy, and cleanup-control arbitration; used the base C
+  socket close descriptor; and strengthened real-child plus exact-AST evidence
+  until all three independent reviews reached zero findings.
 
 Quality Governor:
 - P0/P1/P2 = 0, GO. Final audit confirmed one Phase 0 serving behavior, exact
-  four-file allowlist, one domain-neutral post-start ordering hook, later
-  P0-008/P0-009 liveness verification, and explicit separation from child
-  entrypoint, state/READY, launcher/election, storage, SDK/OTel, UI, and later
-  phase work.
+  four-file allowlist plus task-card control record, one domain-neutral
+  post-start ordering hook, later P0-008/P0-009 liveness verification, and
+  explicit separation from child entrypoint, state/READY, launcher/election,
+  storage, SDK/OTel, UI, and later-phase work.
 
 ## Verifier Evidence
 
-- Command: `.venv/bin/python scripts/validate_agent_system.py`; `git diff --check`
-- Result: passed
-- Notes: planned contract only; implementation has not started. Final independent
+- Command: focused Ruff/pytest/mypy checks; `make test-phase0`;
+  `make gate-phase0`; `.venv/bin/python scripts/validate_agent_system.py`;
+  `git diff --check`
+- Result: passed; focused `441 passed`, Phase 0 `2415 passed`, full/gate
+  `2540 passed`, sustained Phase 0 gate passed
+- Notes: candidate implementation is locally ready for CI. Final independent
   runtime, behavior/test, and Phase 0 scope reviews each report P0/P1/P2 = 0 and
-  GO after every actual-card finding was accepted.
+  GO after every accepted finding; macOS/Linux x CPython 3.12/3.13 candidate CI
+  remains pending before task completion.
 
 ## Failure Queue Items
 
