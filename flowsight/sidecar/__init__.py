@@ -10,6 +10,7 @@ from .child_bootstrap import (
 )
 from .child_preparation import prepare_sidecar_child
 from .health import probe_sidecar_health
+from .incumbent_port import admit_configured_incumbent_port
 from .listener import (
     DEFAULT_SIDECAR_PORT,
     ListenerBindError,
@@ -95,6 +96,7 @@ __all__ = [
     "StartupStateError",
     "StartupStateErrorCode",
     "StartupWriter",
+    "admit_configured_incumbent_port",
     "adopt_sidecar_child_descriptors",
     "bind_loopback_listener",
     "create_sidecar_app",
