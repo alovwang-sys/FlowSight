@@ -58,14 +58,15 @@ alternate launch path.
 - A directly spawned long-lived P0-023 child cannot be dropped after READY: a
   focused `ResourceWarning=error` probe confirmed that CPython retains an
   un-awaited `Popen` in its private active list. TRIAL-004 established the
-  narrowly sufficient Phase 0 exception: after successful READY/state
-  admission and parent-resource retirement, one private daemon reaper thread
-  owns that one direct child only long enough to make its canonical blocking
-  `wait()`. It has no network, store, callback, queue, lifecycle, retry, or
-  public API behavior and ends when the child exits. Before that success point
-  the launching parent exclusively owns, terminates, and reaps the child on
-  every ordinary failure. This single wait-only thread is the only permitted
-  exception to the no-background-worker rule for this task.
+  narrowly sufficient Phase 0 exception: after successful exec and before the
+  P0-025 writer release, one private daemon reaper thread takes sole blocking
+  `wait()` ownership of that one child. It has no network, store, callback,
+  queue, lifecycle, retry, or public API behavior and ends when the child
+  exits. Before that transfer the launcher alone may terminate and reap. After
+  transfer, an admission failure may terminate the child and boundedly join the
+  reaper, but it must not make a competing direct `wait()` call. This single
+  wait-only thread is the only permitted exception to the no-background-worker
+  rule for this task.
 - The fixed sidecar-internal surface is:
 
   ```python
@@ -162,10 +163,12 @@ control-plane records; they do not expand the product-code allowlist above.
   retry loop, async task,
   mutable registry/cache, caller-selected command/environment/poll interval,
   or unbounded parent wait. The sole permitted background thread starts only
-  after successful verified admission, owns one direct P0-023 child, performs
-  exactly one canonical blocking `wait()`, has no other side effect or API,
-  and exits with that child. It is not a general reaping or daemonization API
-  and may not create a second server.
+  after successful exec and before parent-handoff EOF release, owns one direct
+  P0-023 child, performs exactly one canonical blocking `wait()`, has no other
+  side effect or API, and exits with that child. After its start the parent may
+  terminate and boundedly join it on admission failure, but may not make a
+  competing direct `wait()` call. It is not a general reaping or daemonization
+  API and may not create a second server.
 - Do not accept a project path, port, raw timeout, owner, reader/writer,
   command, descriptor, subprocess object, callback, or `None` as an alternate
   public input/result. Do not expose a child process handle or make callers
@@ -215,14 +218,15 @@ control-plane records; they do not expand the product-code allowlist above.
 - [ ] Before the parent releases the handoff writer, it transfers the newly
   launched child to exactly one private wait-only reaper. The child cannot
   publish state, bind, or send READY before that EOF release. If a newly
-  launched child cannot be admitted, the parent performs one
-  bounded direct-child cleanup sequence: it terminates then waits once using
-  the reserved fixed terminal cleanup grace. A cleanup failure is visible in
-  the fixed startup failure (or as a fixed note on an active process-control
-  exception) and never yields a false success. On success, after verified
-  state admission and reader retirement, the already-started private daemon
-  reaper makes the canonical blocking wait for that child only; it neither
-  polls nor terminates the healthy long-lived sidecar.
+  launched child cannot be admitted, the parent terminates then boundedly joins
+  that reaper using the reserved fixed terminal cleanup grace; it never makes a
+  competing direct child `wait()` after transfer. Before a failed transfer, the
+  parent alone may terminate and wait. A cleanup failure is visible in the
+  fixed startup failure (or as a fixed note on an active process-control
+  exception) and never yields a false success. On success, after verified state
+  admission and reader retirement, the already-started private daemon reaper
+  remains the canonical blocking wait owner; it neither polls nor terminates
+  the healthy long-lived sidecar.
 - [ ] Real isolated-process evidence, using a temporary project and an isolated
   per-test runtime root, proves initial launch reaches authenticated health,
   the child remains gated until reaper ownership is established, then is held
