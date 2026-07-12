@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 import time
+from collections.abc import Callable
+from pathlib import Path
 from typing import Final, Protocol, cast
 
 from .incumbent_port import admit_configured_incumbent_port
 from .owner_lock import OwnerLock
-from .runtime_config import SidecarRuntimeConfig
+from .runtime_config import SidecarRuntimeConfig, prepare_sidecar_runtime_config
 from .startup_wait import wait_for_owner_election
 from .state import SidecarState, StateStore
 
@@ -26,6 +29,16 @@ _CONSTRUCT_STORE: Final = StateStore
 _WAIT_FOR_OWNER_ELECTION: Final = wait_for_owner_election
 _ADMIT_INCUMBENT_PORT: Final = admit_configured_incumbent_port
 _READ_MONOTONIC: Final = time.monotonic
+_THREAD: Final = threading.Thread
+_THREAD_START: Final = cast(Callable[[threading.Thread], object], threading.Thread.start)
+_EVENT: Final = threading.Event
+_ISFINITE: Final = math.isfinite
+_FSPATH: Final = os.fspath
+_PREPARE_RUNTIME_CONFIG: Final = prepare_sidecar_runtime_config
+_OWNER_CLOSE: Final = OwnerLock.close
+_PLATFORM_PATH_TYPE: Final = type(Path())
+_ADD_NOTE: Final = BaseException.add_note
+_PARENT_CLEANUP_NOTE: Final = "sidecar parent startup cleanup failed"
 
 type _ConfigSnapshot = tuple[str, str, str, int | None, float]
 
@@ -33,7 +46,7 @@ type _ConfigSnapshot = tuple[str, str, str, int | None, float]
 class _Process(Protocol):
     def terminate(self) -> object: ...
 
-    def wait(self, *, timeout: float) -> object: ...
+    def wait(self, timeout: float | None = None) -> object: ...
 
 
 class _Reaper(Protocol):
@@ -43,6 +56,8 @@ class _Reaper(Protocol):
 
     def is_alive(self) -> bool: ...
 
+    def begin_wait(self) -> object: ...
+
     @property
     def wait_ownership(self) -> bool: ...
 
@@ -50,7 +65,77 @@ class _Reaper(Protocol):
     def child_reaped(self) -> bool: ...
 
 
-def _read_config(config: object) -> _ConfigSnapshot | None:
+class _OwnerCleanupFailure(Exception):
+    pass
+
+
+class _WaitOnlyReaper:
+    """Private daemon thread that performs one and only one child wait."""
+
+    __slots__ = (
+        "_child_reaped",
+        "_handoff_release",
+        "_process",
+        "_started",
+        "_thread",
+        "_wait_ownership",
+    )
+
+    def __init__(self, process: _Process) -> None:
+        self._process = process
+        self._thread: threading.Thread | None = None
+        self._handoff_release = _EVENT()
+        self._started = False
+        self._wait_ownership = False
+        self._child_reaped = False
+
+    def _wait_once(self) -> None:
+        if self._handoff_release.wait() is not True:
+            return
+        try:
+            self._process.wait()
+        except BaseException:
+            return
+        self._child_reaped = True
+
+    def start(self) -> None:
+        if self._started:
+            raise RuntimeError
+        self._started = True
+        thread = _THREAD(target=self._wait_once, daemon=True)
+        self._thread = thread
+        self._wait_ownership = True
+        try:
+            result = _THREAD_START(thread)
+        except Exception:
+            self._wait_ownership = False
+            raise
+        if result is not None:
+            raise RuntimeError
+
+    def join(self, timeout: float) -> None:
+        thread = self._thread
+        if thread is None:
+            raise RuntimeError
+        thread.join(timeout)
+
+    def is_alive(self) -> bool:
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
+    def begin_wait(self) -> None:
+        self._handoff_release.set()
+
+    @property
+    def wait_ownership(self) -> bool:
+        return self._wait_ownership
+
+    @property
+    def child_reaped(self) -> bool:
+        return self._child_reaped
+
+
+def _config_snapshot(config: object) -> _ConfigSnapshot | None:
     if type(config) is not _CONFIG_TYPE:
         return None
     try:
@@ -68,11 +153,71 @@ def _read_config(config: object) -> _ConfigSnapshot | None:
         or (requested_port is not None and type(requested_port) is not int)
         or (type(requested_port) is int and not 0 <= requested_port <= 65_535)
         or type(startup_timeout) is not float
-        or not math.isfinite(startup_timeout)
+        or not _ISFINITE(startup_timeout)
         or not 0.0 < startup_timeout <= _MAX_TIMEOUT_SECONDS
     ):
         return None
     return project_root, runtime_root, project_id, requested_port, startup_timeout
+
+
+def _matches_prepared_config(snapshot: _ConfigSnapshot) -> bool:
+    try:
+        prepared = _PREPARE_RUNTIME_CONFIG(
+            snapshot[0],
+            requested_port=snapshot[3],
+            startup_timeout=snapshot[4],
+        )
+    except Exception:
+        return False
+    prepared_snapshot = _config_snapshot(prepared)
+    return prepared_snapshot == snapshot
+
+
+def _read_config(config: object) -> _ConfigSnapshot | None:
+    snapshot = _config_snapshot(config)
+    if snapshot is None or not _matches_prepared_config(snapshot):
+        return None
+    return snapshot
+
+
+def _store_matches_snapshot(store: StateStore, snapshot: _ConfigSnapshot) -> bool:
+    try:
+        fields = object.__getattribute__(store, "__dict__")
+        if type(fields) is not dict:
+            return False
+        stored_project_id: object = None
+        stored_runtime_root: object = None
+        for field_name, field_value in fields.items():
+            if type(field_name) is not str:
+                return False
+            if field_name == "project_id":
+                stored_project_id = field_value
+            elif field_name == "runtime_root":
+                stored_runtime_root = field_value
+        if type(stored_project_id) is not str or stored_project_id != snapshot[2]:
+            return False
+        if type(stored_runtime_root) is not _PLATFORM_PATH_TYPE:
+            return False
+        stored_runtime_text = _FSPATH(stored_runtime_root)
+    except Exception:
+        return False
+    return type(stored_runtime_text) is str and stored_runtime_text == snapshot[1]
+
+
+def _retire_owner(owner: OwnerLock) -> None:
+    try:
+        result = _OWNER_CLOSE(owner)
+    except Exception:
+        raise _OwnerCleanupFailure from None
+    if result is not None:
+        raise _OwnerCleanupFailure
+
+
+def _note_cleanup_failure(active_control: BaseException) -> None:
+    try:
+        _ADD_NOTE(active_control, _PARENT_CLEANUP_NOTE)
+    except BaseException:
+        pass
 
 
 def _observe(previous: float | None) -> float | None:
@@ -80,7 +225,7 @@ def _observe(previous: float | None) -> float | None:
         observed = _READ_MONOTONIC()
     except Exception:
         return None
-    if type(observed) is not float or not math.isfinite(observed):
+    if type(observed) is not float or not _ISFINITE(observed):
         return None
     if previous is not None and observed < previous:
         return None
@@ -92,7 +237,7 @@ def _remaining(deadline: float, previous: float) -> tuple[float, float] | None:
     if observed is None:
         return None
     remaining = deadline - observed
-    if not math.isfinite(remaining) or remaining <= 0.0:
+    if not _ISFINITE(remaining) or remaining <= 0.0:
         return None
     return observed, remaining
 
@@ -100,22 +245,28 @@ def _remaining(deadline: float, previous: float) -> tuple[float, float] | None:
 def _prepare_election(
     config: object,
 ) -> tuple[SidecarRuntimeConfig, StateStore, float, float] | None:
-    snapshot = _read_config(config)
+    snapshot = _config_snapshot(config)
     if snapshot is None:
         return None
     started = _observe(None)
     if started is None:
         return None
     deadline = started + snapshot[4]
-    if not math.isfinite(deadline) or deadline <= started:
+    if not _ISFINITE(deadline) or deadline <= started:
         return None
+    if not _matches_prepared_config(snapshot):
+        return None
+    window = _remaining(deadline, started)
+    if window is None:
+        return None
+    observed, _timeout = window
     try:
         store = _CONSTRUCT_STORE(snapshot[1], project_id=snapshot[2])
     except Exception:
         return None
-    if type(store) is not _STORE_TYPE:
+    if type(store) is not _STORE_TYPE or not _store_matches_snapshot(store, snapshot):
         return None
-    return cast(SidecarRuntimeConfig, config), store, deadline, started
+    return cast(SidecarRuntimeConfig, config), store, deadline, observed
 
 
 def _elect_once(
@@ -133,8 +284,18 @@ def _elect_once(
         return None
     if type(outcome) not in {_STATE_TYPE, _OWNER_TYPE}:
         return None
-    final_window = _remaining(deadline, observed)
+    try:
+        final_window = _remaining(deadline, observed)
+    except BaseException as active_control:
+        if type(outcome) is _OWNER_TYPE:
+            try:
+                _retire_owner(outcome)
+            except BaseException:
+                _note_cleanup_failure(active_control)
+        raise active_control
     if final_window is None:
+        if type(outcome) is _OWNER_TYPE:
+            _retire_owner(outcome)
         return None
     return outcome, final_window[0]
 
@@ -225,6 +386,7 @@ class _ChildHandoff:
                 reaper = self._reaper
                 if reaper is None:
                     return False
+                reaper.begin_wait()
                 reaper.join(_CLEANUP_GRACE_SECONDS)
                 exited = reaper.child_reaped is True
             else:
@@ -250,12 +412,18 @@ class _ChildHandoff:
             or self._committed
         ):
             return False
+        reaper = self._reaper
+        if reaper is None or reaper.wait_ownership is not True or reaper.is_alive() is not True:
+            return False
         writer_fd = self._writer_fd
         if writer_fd < _MIN_DESCRIPTOR:
             return False
         self._writer_fd = -1
         self._committed = True
-        result = _CLOSE(writer_fd)
+        try:
+            result = _CLOSE(writer_fd)
+        finally:
+            reaper.begin_wait()
         return result is None
 
     def retire_writer_after_reaped_cleanup(self) -> bool:

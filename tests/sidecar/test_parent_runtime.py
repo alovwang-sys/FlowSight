@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 from typing import NoReturn
 
@@ -9,6 +10,7 @@ import pytest
 from flowsight.sidecar import parent_runtime as runtime_module
 from flowsight.sidecar import prepare_sidecar_runtime_config
 from flowsight.sidecar import runtime_config as config_module
+from flowsight.sidecar.owner_lock import OwnerLockError
 from flowsight.sidecar.state import SidecarState, StateStore
 
 
@@ -30,9 +32,10 @@ class _Process:
         if self.terminate_error is not None:
             raise self.terminate_error
 
-    def wait(self, *, timeout: float) -> None:
+    def wait(self, *, timeout: float | None = None) -> None:
         self.wait_calls += 1
-        assert timeout == 0.25
+        if timeout is not None:
+            assert timeout == 0.25
         if self.wait_error is not None:
             raise self.wait_error
 
@@ -71,6 +74,9 @@ class _Reaper:
         if not self.started:
             return False
         return self.alive_after_join if self.join_calls else self.alive_after_start
+
+    def begin_wait(self) -> None:
+        pass
 
     @property
     def wait_ownership(self) -> bool:
@@ -128,6 +134,25 @@ def test_transferred_failure_joins_reaper_without_second_process_wait() -> None:
         assert process.terminate_calls == 1
         assert process.wait_calls == 0
         assert reaper.join_calls == 1
+        assert handoff.committed is False
+        assert os.fstat(writer)
+    finally:
+        os.close(reader)
+        assert handoff.retire_writer_after_reaped_cleanup() is True
+
+
+def test_real_reaper_cleanup_begins_its_wait_without_releasing_gate() -> None:
+    reader, writer = _writer()
+    process = _Process()
+    reaper = runtime_module._WaitOnlyReaper(process)
+    handoff = runtime_module._ChildHandoff(process, writer)
+    try:
+        handoff.transfer_wait_ownership(reaper)
+        assert process.wait_calls == 0
+        assert handoff.cleanup_before_commit() is True
+        assert process.terminate_calls == 1
+        assert process.wait_calls == 1
+        assert reaper.child_reaped is True
         assert handoff.committed is False
         assert os.fstat(writer)
     finally:
@@ -330,9 +355,10 @@ def test_prepare_and_election_use_one_fresh_bounded_window(
     assert prepared is not None
     _config_value, actual_store, deadline, observed = prepared
     assert deadline == 15.0
-    assert observed == 10.0
+    assert observed == 10.1
     assert runtime_module._elect_once(actual_store, deadline, observed) is None
-    assert calls == [(store, 4.9)]
+    assert calls[0][0] is store
+    assert calls[0][1] == pytest.approx(4.8)
 
 
 def test_incumbent_requires_fresh_deadline_before_port_admission(
@@ -355,3 +381,297 @@ def test_incumbent_requires_fresh_deadline_before_port_admission(
 
     assert runtime_module._admit_incumbent(config, incumbent, 5.0, 5.0) is None
     assert calls == []
+
+
+def test_preflight_rejects_forged_exact_config_before_constructing_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forged = object.__new__(config_module.SidecarRuntimeConfig)
+    object.__setattr__(forged, "project_root", "")
+    object.__setattr__(forged, "runtime_root", "relative-runtime")
+    object.__setattr__(forged, "project_id", "wrong-project")
+    object.__setattr__(forged, "requested_port", None)
+    object.__setattr__(forged, "startup_timeout", 5.0)
+    calls: list[object] = []
+    monkeypatch.setattr(runtime_module, "_CONSTRUCT_STORE", lambda *_args: calls.append(1))
+
+    assert runtime_module._prepare_election(forged) is None
+    assert calls == []
+
+
+def test_preflight_rejects_exact_store_for_another_project(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    wrong_store = StateStore(config.runtime_root, project_id="project-v1-" + "0" * 64)
+    monkeypatch.setattr(runtime_module, "_CONSTRUCT_STORE", lambda *_args, **_kwargs: wrong_store)
+
+    assert runtime_module._prepare_election(config) is None
+
+
+def test_expired_final_election_check_retires_owner_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    clocks = iter((1.0, 6.0))
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", lambda: next(clocks))
+    monkeypatch.setattr(runtime_module, "_WAIT_FOR_OWNER_ELECTION", lambda *_args: owner)
+
+    assert runtime_module._elect_once(store, 5.0, 0.0) is None
+    with pytest.raises(OwnerLockError):
+        owner.fileno()
+
+
+def test_final_election_control_preserves_identity_after_retiring_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    control = _Control()
+    clocks = iter((1.0, control))
+
+    def observe() -> float:
+        value = next(clocks)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", observe)
+    monkeypatch.setattr(runtime_module, "_WAIT_FOR_OWNER_ELECTION", lambda *_args: owner)
+
+    with pytest.raises(_Control) as captured:
+        runtime_module._elect_once(store, 5.0, 0.0)
+    assert captured.value is control
+    with pytest.raises(OwnerLockError):
+        owner.fileno()
+
+
+def test_owner_close_failure_is_not_silently_lost(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    clocks = iter((1.0, 6.0))
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", lambda: next(clocks))
+    monkeypatch.setattr(runtime_module, "_WAIT_FOR_OWNER_ELECTION", lambda *_args: owner)
+    monkeypatch.setattr(
+        runtime_module,
+        "_OWNER_CLOSE",
+        lambda _owner: (_ for _ in ()).throw(RuntimeError("close")),
+    )
+
+    with pytest.raises(runtime_module._OwnerCleanupFailure):
+        runtime_module._elect_once(store, 5.0, 0.0)
+    runtime_module.OwnerLock.close(owner)
+
+
+def test_owner_cleanup_control_cannot_replace_primary_control(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    primary = _Control()
+    cleanup = _Control()
+    clocks = iter((1.0, primary))
+
+    def observe() -> float:
+        value = next(clocks)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    def fail_close(_owner: object) -> NoReturn:
+        raise cleanup
+
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", observe)
+    monkeypatch.setattr(runtime_module, "_WAIT_FOR_OWNER_ELECTION", lambda *_args: owner)
+    monkeypatch.setattr(runtime_module, "_OWNER_CLOSE", fail_close)
+
+    with pytest.raises(_Control) as captured:
+        runtime_module._elect_once(store, 5.0, 0.0)
+    assert captured.value is primary
+    assert primary.__notes__ == ["sidecar parent startup cleanup failed"]
+    runtime_module.OwnerLock.close(owner)
+
+
+def test_preflight_canonical_rederive_must_leave_a_fresh_outer_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    calls: list[object] = []
+    clocks = iter((10.0, 15.0))
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", lambda: next(clocks))
+    monkeypatch.setattr(
+        runtime_module,
+        "_PREPARE_RUNTIME_CONFIG",
+        lambda *_args, **_kwargs: config,
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "_CONSTRUCT_STORE",
+        lambda *_args, **_kwargs: calls.append(1),
+    )
+
+    assert runtime_module._prepare_election(config) is None
+    assert calls == []
+
+
+def test_wait_only_reaper_claims_one_wait_before_handoff_release() -> None:
+    class _BlockingProcess:
+        def __init__(self) -> None:
+            self.wait_entered = threading.Event()
+            self.allow_exit = threading.Event()
+            self.wait_calls = 0
+
+        def terminate(self) -> None:
+            raise AssertionError("successful handoff must not terminate the child")
+
+        def wait(self, *, timeout: float | None = None) -> None:
+            assert timeout is None
+            self.wait_calls += 1
+            self.wait_entered.set()
+            assert self.allow_exit.wait(1.0)
+
+    reader, writer = _writer()
+    process = _BlockingProcess()
+    reaper = runtime_module._WaitOnlyReaper(process)
+    handoff = runtime_module._ChildHandoff(process, writer)
+    try:
+        handoff.transfer_wait_ownership(reaper)
+        assert reaper.wait_ownership is True
+        assert process.wait_entered.is_set() is False
+        assert handoff.release_gate() is True
+        assert process.wait_entered.wait(1.0)
+        process.allow_exit.set()
+        reaper.join(1.0)
+        assert process.wait_calls == 1
+        assert reaper.child_reaped is True
+        assert reaper.is_alive() is False
+    finally:
+        os.close(reader)
+
+
+def test_wait_only_reaper_never_claims_a_failed_wait_as_reaped() -> None:
+    class _FailingProcess:
+        def terminate(self) -> None:
+            raise AssertionError("not used")
+
+        def wait(self, *, timeout: float | None = None) -> None:
+            assert timeout is None
+            raise _Control()
+
+    reaper = runtime_module._WaitOnlyReaper(_FailingProcess())
+    reaper.start()
+    assert reaper.begin_wait() is None
+    reaper.join(1.0)
+    assert reaper.wait_ownership is True
+    assert reaper.child_reaped is False
+
+
+def test_finished_reaper_cannot_release_the_child_gate() -> None:
+    class _FinishedReaper:
+        def start(self) -> None:
+            pass
+
+        def join(self, _timeout: float) -> None:
+            pass
+
+        def is_alive(self) -> bool:
+            return False
+
+        def begin_wait(self) -> None:
+            raise AssertionError("finished reaper must never receive wait permission")
+
+        @property
+        def wait_ownership(self) -> bool:
+            return True
+
+        @property
+        def child_reaped(self) -> bool:
+            return False
+
+    reader, writer = _writer()
+    handoff = runtime_module._ChildHandoff(_Process(), writer)
+    reaper = _FinishedReaper()
+    try:
+        handoff.transfer_wait_ownership(reaper)
+        assert handoff.release_gate() is False
+        assert os.fstat(writer)
+    finally:
+        os.close(reader)
+        os.close(writer)
+
+
+def test_control_during_reaper_start_conservatively_forbids_parent_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _InterruptedThread:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def start(self) -> NoReturn:
+            raise _Control()
+
+        def join(self, _timeout: float) -> None:
+            pass
+
+        def is_alive(self) -> bool:
+            return False
+
+    reader, writer = _writer()
+    process = _Process()
+    reaper = runtime_module._WaitOnlyReaper(process)
+    handoff = runtime_module._ChildHandoff(process, writer)
+    monkeypatch.setattr(runtime_module, "_THREAD", _InterruptedThread)
+    monkeypatch.setattr(runtime_module, "_THREAD_START", lambda thread: thread.start())
+    try:
+        with pytest.raises(_Control):
+            handoff.transfer_wait_ownership(reaper)
+        assert handoff.transferred is True
+        assert handoff.cleanup_before_commit() is False
+        assert process.terminate_calls == 1
+        assert process.wait_calls == 0
+        assert os.fstat(writer)
+    finally:
+        os.close(reader)
+        os.close(writer)
+
+
+def test_ordinary_reaper_start_failure_leaves_parent_as_wait_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FailedThread:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def start(self) -> NoReturn:
+            raise RuntimeError("start")
+
+    reader, writer = _writer()
+    process = _Process()
+    reaper = runtime_module._WaitOnlyReaper(process)
+    handoff = runtime_module._ChildHandoff(process, writer)
+    monkeypatch.setattr(runtime_module, "_THREAD", _FailedThread)
+    monkeypatch.setattr(runtime_module, "_THREAD_START", lambda thread: thread.start())
+    try:
+        with pytest.raises(RuntimeError):
+            handoff.transfer_wait_ownership(reaper)
+        assert handoff.transferred is False
+        assert handoff.cleanup_before_commit() is True
+        assert process.terminate_calls == 1
+        assert process.wait_calls == 1
+        assert os.fstat(writer)
+    finally:
+        os.close(reader)
+        assert handoff.retire_writer_after_reaped_cleanup() is True
