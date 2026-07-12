@@ -90,10 +90,12 @@ that descriptor.
 ## Allowed Files
 
 - `flowsight/sidecar/child_bootstrap.py`
+- `flowsight/sidecar/child_adoption.py`
 - `flowsight/sidecar/child_preparation.py`
 - `flowsight/sidecar/parent_handoff.py`
 - `flowsight/sidecar/__init__.py`
 - `tests/sidecar/test_child_bootstrap.py`
+- `tests/sidecar/test_child_adoption.py`
 - `tests/sidecar/test_child_preparation.py`
 - `tests/sidecar/test_parent_handoff.py`
 - `tests/sidecar/test_runtime_config.py`
@@ -109,9 +111,11 @@ sidecar-export and private-submodule expectations.
 ## Expected Changed Files
 
 - `flowsight/sidecar/child_bootstrap.py`
+- `flowsight/sidecar/child_adoption.py`
 - `flowsight/sidecar/child_preparation.py`
 - `flowsight/sidecar/parent_handoff.py`
 - `tests/sidecar/test_child_bootstrap.py`
+- `tests/sidecar/test_child_adoption.py`
 - `tests/sidecar/test_child_preparation.py`
 - `tests/sidecar/test_parent_handoff.py`
 - `tests/sidecar/test_runtime_config.py`
@@ -120,8 +124,8 @@ sidecar-export and private-submodule expectations.
 
 - Do not implement P0-024 parent launch, election, `Popen`, reaper, process
   signalling, parent writer release, incumbent admission, or SDK lifecycle.
-- Do not change P0-017 ownership adoption, P0-018/P0-022 child transaction,
-  P0-023 argv forwarding, startup READY protocol, state/store schema,
+- Do not change P0-017's returned owner/writer pair, P0-018/P0-022 child
+  transaction, P0-023 argv forwarding, startup READY protocol, state/store schema,
   listener/server, FastAPI/Uvicorn, SQLite, OTel, sender, UI, dependencies,
   packaging, Makefile, or spike code.
 - Do not add a listener descriptor, token, PID, port, startup ID, path,
@@ -155,6 +159,10 @@ sidecar-export and private-submodule expectations.
   once after bootstrap/config admission and before P0-017 adoption. Handoff
   failure or control leaves the existing owner/writer locators untouched and
   reaches no later P0-017/P0-022 state/listener/READY work.
+- [ ] P0-017's existing pair-adoption boundary canonicalizes the additional
+  inert descriptor field without adopting, closing, returning, or otherwise
+  owning it. Its public result shape and owner/writer cleanup contract remain
+  unchanged.
 - [ ] Real isolated process evidence proves a held parent writer prevents any
   child state publication/listener/READY activity; closing that writer releases
   exactly one child transaction; malformed/data-bearing/closed/non-pipe
