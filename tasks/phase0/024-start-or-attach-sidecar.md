@@ -45,17 +45,17 @@ internal sidecar primitive; a subsequent SDK-lifecycle task alone maps
   canonical child argv suffix, P0-023 supplies the private executable module,
   P0-006/P0-009 supply the one-shot channel and READY admission, and P0-022
   owns child-side listener/state/server lifecycle.
-- A directly spawned long-lived P0-023 child cannot both outlive the business
-  process and be deterministically reaped by a `(config) -> state` parent that
-  exposes no process handle, registry, or background worker. A focused
-  `ResourceWarning=error` probe confirmed CPython otherwise retains an
-  un-awaited `Popen` in its private active list. The reviewed Phase 0 solution
-  is one transient private POSIX relay process: it forks exactly once before
-  executing P0-023 in the forked child, then exits. The parent reaps the relay
-  under the same startup budget; the one long-lived sidecar is reparented and
-  remains independent for reload reconnection. This is neither a second
-  sidecar nor a daemon/reaper thread, and it is limited to v1's macOS/Linux
-  scope.
+- A directly spawned long-lived P0-023 child cannot be dropped after READY: a
+  focused `ResourceWarning=error` probe confirmed that CPython retains an
+  un-awaited `Popen` in its private active list. TRIAL-004 established the
+  narrowly sufficient Phase 0 exception: after successful READY/state
+  admission and parent-resource retirement, one private daemon reaper thread
+  owns that one direct child only long enough to make its canonical blocking
+  `wait()`. It has no network, store, callback, queue, lifecycle, retry, or
+  public API behavior and ends when the child exits. Before that success point
+  the launching parent exclusively owns, terminates, and reaps the child on
+  every ordinary failure. This single wait-only thread is the only permitted
+  exception to the no-background-worker rule for this task.
 - The fixed sidecar-internal surface is:
 
   ```python
@@ -75,17 +75,16 @@ internal sidecar primitive; a subsequent SDK-lifecycle task alone maps
   bound, not an interruption of arbitrary synchronous OS work.
 - The owner path opens exactly one startup channel, encodes one canonical
   bootstrap with the exact owner/writer descriptors, and executes only the
-  current interpreter as `-I -m flowsight.sidecar.daemon_entry` with that
-  suffix. The relay forks exactly once and its forked child immediately execs
-  the exact current interpreter as `-I -m flowsight.sidecar.child_entry` with
-  the unchanged suffix. The parent uses `close_fds=True`, passes only the two
-  reviewed descriptors, detaches standard input/output/error, starts a
-  separate session, and performs no shell, command string, source import,
-  environment rewrite, listener handoff, or parent SQLite/UI work. After a
-  successful relay exec boundary is created, the parent retires its owner and
-  writer handles exactly once; the forked P0-023 child inherits and P0-017
-  adopts the matching pair. The parent retains only the reader until P0-009
-  consumes it, and reaps the exited relay before reporting startup success.
+  current interpreter as `-I -m flowsight.sidecar.child_entry` with that
+  suffix. The parent uses `close_fds=True`, passes only the two reviewed
+  descriptors, detaches standard input/output/error, starts a separate
+  session, and performs no shell, command string, source import, environment
+  rewrite, listener handoff, or parent SQLite/UI work. After a successful
+  exec boundary is created, the parent retires its owner and writer handles
+  exactly once; P0-023 inherits them and P0-017 adopts the matching pair. The
+  parent retains only the reader until P0-009 consumes it. Only after a
+  verified state is obtained and that reader is retired does the parent start
+  the one private wait-only reaper for the direct child.
 - A child READY is still only a hint. P0-009 must fresh-load/probe/reload the
   published state before this function returns it. Child FAILURE, malformed or
   absent outcome, exhausted outer budget, launch failure, or invalid local
@@ -94,11 +93,15 @@ internal sidecar primitive; a subsequent SDK-lifecycle task alone maps
   boundedly stopped/reaped on such a failed admission; success deliberately
   leaves the independently owned sidecar alive for reload reconnection.
 - Process-control exceptions preserve identity. Once child ownership exists,
-  the parent makes one bounded best-effort process/resource cleanup attempt
+  the parent makes one bounded best-effort terminate-and-wait cleanup attempt
   without replacing the active control; it must not claim Python cleanup on
-  fail-stop signals. Ordinary error paths expose neither project/runtime path,
-  token, PID, port, descriptor, command, child output, raw exception, nor
-  timeout in text, repr, logging, output, callback, cache, or retained frame.
+  fail-stop signals. The cooperative startup budget reserves one fixed,
+  documented 250 ms terminal cleanup grace before READY admission so the
+  failure path can always attempt `terminate()` followed by one bounded
+  `wait()`, even when admission exhausts its allocated remainder. Ordinary
+  error paths expose neither project/runtime path, token, PID, port,
+  descriptor, command, child output, raw exception, nor timeout in text, repr,
+  logging, output, callback, cache, or retained frame.
 - This task intentionally does not touch `FlowSight`, FastAPI app mutation,
   OTel, sender queues, leases, reload hooks, SDK flush/shutdown, SQLite writes,
   UI opening, or sidecar idle-stop policy. Those remain separately scoped work.
@@ -115,10 +118,8 @@ internal sidecar primitive; a subsequent SDK-lifecycle task alone maps
 ## Allowed Files
 
 - `flowsight/sidecar/parent_runtime.py`
-- `flowsight/sidecar/daemon_entry.py`
 - `flowsight/sidecar/__init__.py`
 - `tests/sidecar/test_parent_runtime.py`
-- `tests/sidecar/test_daemon_entry.py`
 - `tests/sidecar/test_runtime_config.py`
 
 `flowsight/sidecar/__init__.py` may change only for the exact import and one
@@ -131,10 +132,8 @@ control-plane records; they do not expand the product-code allowlist above.
 ## Expected Changed Files
 
 - `flowsight/sidecar/parent_runtime.py`
-- `flowsight/sidecar/daemon_entry.py`
 - `flowsight/sidecar/__init__.py`
 - `tests/sidecar/test_parent_runtime.py`
-- `tests/sidecar/test_daemon_entry.py`
 - `tests/sidecar/test_runtime_config.py`
 
 ## Forbidden
@@ -147,11 +146,13 @@ control-plane records; they do not expand the product-code allowlist above.
   shutdown/idle policy, SQLite/store schema, UI/API routes, browser behavior,
   dependencies, packaging, Makefile, or spike code.
 - Do not make a second owner election, second startup channel, second
-  long-lived sidecar, listener descriptor handoff, retry loop, background
-  worker, async task, mutable registry/cache, caller-selected
-  command/environment/poll interval, or unbounded process wait. The one
-  private relay may fork exactly one P0-023 child and then immediately exits;
-  it is not a general daemonization API and may not create a second server.
+  long-lived sidecar, listener descriptor handoff, retry loop, async task,
+  mutable registry/cache, caller-selected command/environment/poll interval,
+  or unbounded parent wait. The sole permitted background thread starts only
+  after successful verified admission, owns one direct P0-023 child, performs
+  exactly one canonical blocking `wait()`, has no other side effect or API,
+  and exits with that child. It is not a general reaping or daemonization API
+  and may not create a second server.
 - Do not accept a project path, port, raw timeout, owner, reader/writer,
   command, descriptor, subprocess object, callback, or `None` as an alternate
   public input/result. Do not expose a child process handle or make callers
@@ -187,37 +188,38 @@ control-plane records; they do not expand the product-code allowlist above.
   incompatibility is terminal and starts no child.
 - [ ] An exact P0-013 `OwnerLock` is the only launch authority. The owner branch
   opens one reviewed channel, obtains the two exact live descriptors, creates
-  the canonical P0-016 suffix, and launches exactly one isolated private relay
-  with only those two descriptors. That relay forks exactly once, then its
-  child execs the exact P0-023 entry with the unchanged suffix while the relay
-  exits. Parent/child descriptor ownership and close order are mechanically
-  proved; all ordinary post-launch paths retire parent owner/writer/reader
-  resources exactly once without closing child-owned descriptors.
+  the canonical P0-016 suffix, and launches exactly one isolated direct
+  P0-023 child with only those two descriptors. Parent/child descriptor
+  ownership and close order are mechanically proved; all ordinary post-launch
+  paths retire parent owner/writer/reader resources exactly once without
+  closing child-owned descriptors.
 - [ ] The child branch consumes one outcome through P0-009 under the remaining
   outer budget and returns only the exact verified `SidecarState`. READY/state
   mismatch, generic child FAILURE, malformed/absent channel evidence, failed
   preflight/launch/admission, and deadline expiry expose only the fixed parent
   error and cannot leak sensitive scalar or subprocess information.
 - [ ] If a newly launched child cannot be admitted, the parent performs one
-  bounded cleanup sequence for that relay process group and reaps the exact
-  relay under a freshly recomputed remaining budget. A cleanup failure is
-  visible in the fixed startup failure (or as a fixed note on an active
-  process-control exception) and never yields a false success. On success the
-  parent reaps the exited relay before returning the verified state; it neither
-  polls nor terminates the independently owned long-lived sidecar.
+  bounded direct-child cleanup sequence: it terminates then waits once using
+  the reserved fixed terminal cleanup grace. A cleanup failure is visible in
+  the fixed startup failure (or as a fixed note on an active process-control
+  exception) and never yields a false success. On success, after verified
+  state admission and reader retirement, exactly one private daemon reaper starts
+  and makes the canonical blocking wait for that child only; it neither polls
+  nor terminates the healthy long-lived sidecar.
 - [ ] Real isolated-process evidence, using a temporary project and an isolated
   per-test runtime root, proves initial launch reaches authenticated health,
-  the relay is reaped without a `ResourceWarning`, state identity is returned,
-  concurrent callers reconnect to the exact incumbent without a second
-  long-lived child, an explicit mismatched port fails without launch, a
-  pre-READY child failure is contained, and deterministic process-group cleanup
-  leaves no relay, child, or descriptor behind. Tests use observable bounded
-  conditions rather than sleeps and clean up their child process/state.
+  the direct child is held by the wait-only reaper without a `ResourceWarning`,
+  state identity is returned, concurrent callers reconnect to the exact
+  incumbent without a second long-lived child, an explicit mismatched port
+  fails without launch, a pre-READY child failure is synchronously contained,
+  and deterministic cleanup leaves no child or descriptor behind. Tests use
+  observable bounded conditions rather than sleeps and clean up their child
+  process/state.
 - [ ] Static and behavioral tests freeze captured canonical dispatch, exact
   command shape, `-I`, `pass_fds`, detached stdio/session, one election/channel/
   child/admission, deadline propagation, error privacy, no shell or listener
-  inheritance, no SDK/OTel/store-write/UI code, and no unreviewed mutable state
-  or background work.
+  inheritance, no SDK/OTel/store-write/UI code, no unreviewed mutable state,
+  and no background work other than the exact one-child wait-only reaper.
 - [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase
   0 gate pass locally and on the macOS/Linux × CPython 3.12/3.13 CI matrix.
 
