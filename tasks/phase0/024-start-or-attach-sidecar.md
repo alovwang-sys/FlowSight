@@ -63,10 +63,11 @@ alternate launch path.
   `wait()` ownership of that one child. It has no network, store, callback,
   queue, lifecycle, retry, or public API behavior and ends when the child
   exits. Before that transfer the launcher alone may terminate and reap. After
-  transfer, an admission failure may terminate the child and boundedly join the
-  reaper, but it must not make a competing direct `wait()` call. This single
-  wait-only thread is the only permitted exception to the no-background-worker
-  rule for this task.
+  transfer but before the handoff-writer close attempt, an admission failure
+  may terminate the child and boundedly join the reaper, but it must not make a
+  competing direct `wait()` call. After that close attempt it must not
+  terminate the child. This single wait-only thread is the only permitted
+  exception to the no-background-worker rule for this task.
 - The fixed sidecar-internal surface is:
 
   ```python
@@ -174,10 +175,11 @@ control-plane records; they do not expand the product-code allowlist above.
   or unbounded parent wait. The sole permitted background thread starts only
   after successful exec and before parent-handoff EOF release, owns one direct
   P0-023 child, performs exactly one canonical blocking `wait()`, has no other
-  side effect or API, and exits with that child. After its start the parent may
-  terminate and boundedly join it on admission failure, but may not make a
-  competing direct `wait()` call. It is not a general reaping or daemonization
-  API and may not create a second server.
+  side effect or API, and exits with that child. Before the handoff-writer
+  close attempt the parent may terminate and boundedly join it on admission
+  failure, but may not make a competing direct `wait()` call. After that
+  attempt it must not terminate the child. It is not a general reaping or
+  daemonization API and may not create a second server.
 - Do not accept a project path, port, raw timeout, owner, reader/writer,
   command, descriptor, subprocess object, callback, or `None` as an alternate
   public input/result. Do not expose a child process handle or make callers
