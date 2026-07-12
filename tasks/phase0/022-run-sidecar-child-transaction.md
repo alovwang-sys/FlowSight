@@ -6,7 +6,7 @@
 task_id: P0-022
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-001, P0-002, P0-003, P0-006, P0-007, P0-009, P0-011, P0-014, P0-016, P0-018, P0-020, P0-021, TRIAL-004]
@@ -274,45 +274,45 @@ control-plane records; they do not expand the product-code allowlist above.
 
 ## Acceptance Criteria
 
-- [ ] `run_sidecar_child` is exported identically from `flowsight.sidecar`,
+- [x] `run_sidecar_child` is exported identically from `flowsight.sidecar`,
   occurs exactly once in `__all__`, has the fixed signature above, and is the
   only new production surface. It blocks through the server lifetime and
   returns exact `None` only after READY send success, normal ownership-aware
   bridge return, and successful claimed cleanup; it adds no public class, error
   enum, result, handle, callback, alternate function, async variant, or mutable
   registry/cache.
-- [ ] Only an exact built-in tuple reaches P0-018. Wrong top-level type fails
+- [x] Only an exact built-in tuple reaches P0-018. Wrong top-level type fails
   exactly with `TypeError("arguments must be an exact built-in tuple")` before
   any dependency or descriptor operation. The original exact tuple is passed once to one import-time-captured
   canonical `prepare_sidecar_child`; production never parses, indexes, copies,
   logs, serializes, or reconstructs it. Public package/module replacement cannot
   redirect the dependency.
-- [ ] A P0-018 preparation ordinary failure performs no P0-022 descriptor,
+- [x] A P0-018 preparation ordinary failure performs no P0-022 descriptor,
   channel, lock, listener, state, filesystem, or cleanup work and becomes the
   fixed child-transaction error only after raw arguments and dependency errors
   are gone. P0-018 remains the sole authority for descriptor disposition. A
   preparation process-control exception preserves identity and ends the call
   with no later P0-022 work.
-- [ ] One successful exact P0-018 result is admitted without iterable protocol
+- [x] One successful exact P0-018 result is admitted without iterable protocol
   dispatch and terminally transfers the exact config, owner, and writer into
   P0-022. Production reads exactly config `runtime_root`, `project_id`, and
   `requested_port` once each through captured canonical slot getters, constructs
   one exact canonical `StateStore`, and retains no bootstrap, descriptor scalar,
   raw argument field, project root, or startup timeout.
-- [ ] While the adopted owner remains live, production calls captured P0-003
+- [x] While the adopted owner remains live, production calls captured P0-003
   exactly once with the exact configured `requested_port`, obtains the sole
   listener, calls captured P0-007 exactly once with the same exact store and
   listener, and calls the captured canonical `StateStore.publish` exactly once
   with that same exact state. `None`, dynamic `0`, and explicit port policy are
   inherited unchanged from P0-003; no fallback or compatibility policy is
   reimplemented.
-- [ ] The transaction order is structurally fixed as successful adoption,
+- [x] The transaction order is structurally fixed as successful adoption,
   store construction, listener bind, startup-state creation, state publication,
   then one completed ownership-aware bridge call. No server/app/READY work
   precedes successful publish. The same exact state and listener identities
   enter that bridge with one exact synchronous Python startup function; no
   alternate app, Config, socket, task, thread, or server path is reachable.
-- [ ] The startup function constructs exactly one canonical `StartupReady` from
+- [x] The startup function constructs exactly one canonical `StartupReady` from
   the exact generated state's startup ID, PID, and actual bound port and calls
   the exact adopted writer's canonical `send` only after the bridge's preserved
   P0-020 post-start notifier invokes it. It receives no arguments, returns exact
@@ -321,7 +321,7 @@ control-plane records; they do not expand the product-code allowlist above.
   message or side result. The outer transaction retains the writer solely for
   its required one cleanup call. READY is not treated as health; real admission
   uses P0-009.
-- [ ] Across the complete transaction there is at most one startup-channel send
+- [x] Across the complete transaction there is at most one startup-channel send
   attempt. Beginning READY terminally consumes logical outcome authority whether
   the write succeeds, ordinarily fails, or raises process control; it does not
   assert physical descriptor transfer, and no FAILURE or retry follows. An
@@ -332,7 +332,7 @@ control-plane records; they do not expand the product-code allowlist above.
   expose raw detail. After every READY, FAILURE, or no-send path following
   successful adoption, production calls canonical `StartupWriter.close`
   exactly once; an endpoint already consumed by `send` makes that call a no-op.
-- [ ] Production records separate `ready_attempted` and `ready_succeeded` state;
+- [x] Production records separate `ready_attempted` and `ready_succeeded` state;
   only an exact `None` READY-send result sets success. Every Python-managed
   non-control terminal outcome with no READY attempt, including a normal bridge
   return without hook execution, first runs listener/state cleanup, makes its
@@ -341,7 +341,7 @@ control-plane records; they do not expand the product-code allowlist above.
   non-`None` never sends FAILURE and also ends in the fixed error after cleanup.
   Only READY success plus normal bridge return plus wholly successful cleanup
   can return exact `None`.
-- [ ] Listener ownership is explicit in tests and implementation. It remains
+- [x] Listener ownership is explicit in tests and implementation. It remains
   P0-022-owned through bind, state creation, and publication. Any ordinary or
   process-control outcome before the consuming bridge call causes exactly one
   child-owned canonical close attempt before state/writer/owner cleanup. At the
@@ -350,7 +350,7 @@ control-plane records; they do not expand the product-code allowlist above.
   begins, the bridge alone performs its one close attempt and P0-022 performs
   none. Tests prove there is no exception-shape, `fileno`, health, note, or
   traceback inference and no pre/post-transfer second-close or leak gap.
-- [ ] Immediately before exact `StateStore.publish(state)`, production sets
+- [x] Immediately before exact `StateStore.publish(state)`, production sets
   `publication_attempted` with no fallible operation in the marker-to-call gap.
   `publication_succeeded` becomes true only if that call returns exact `None`;
   a non-`None` result is a primary ordinary failure. Every Python-returning path
@@ -363,14 +363,14 @@ control-plane records; they do not expand the product-code allowlist above.
   result, or exception is cleanup failure. Writer and owner cleanup still run
   after every removal outcome. Failure before `publication_attempted` performs
   no removal; direct unlink and replacement removal remain forbidden.
-- [ ] Claimed Python-managed cleanup order is exactly: retire the listener once
+- [x] Claimed Python-managed cleanup order is exactly: retire the listener once
   by P0-022 before the bridge or by the bridge after relinquishment,
   compare-remove published state, attempt the one eligible FAILURE send if
   selected, call canonical writer close exactly once regardless of send state,
   and close the owner lock last. Each owned cleanup is attempted at most once, no
   handle returns to the caller, and no ordinary or process-control failure skips
   later owned cleanup or releases owner authority early.
-- [ ] Every ordinary store/bind/state/publish/server/startup-message/removal/
+- [x] Every ordinary store/bind/state/publish/server/startup-message/removal/
   cleanup failure becomes exactly
   `RuntimeError("sidecar child transaction failed")`, raised `from None` only
   after sensitive dependency/composition frames are gone. Without caller-active
@@ -378,7 +378,7 @@ control-plane records; they do not expand the product-code allowlist above.
   suppressed context. Fixed error text, formatted traceback, production-frame
   locals, stdout/stderr, and logs contain no raw argument, path, token, startup
   ID, PID, port, descriptor, dependency error, or dependency message.
-- [ ] Synchronous `KeyboardInterrupt`, `SystemExit`, and a custom direct
+- [x] Synchronous `KeyboardInterrupt`, `SystemExit`, and a custom direct
   `BaseException` from every captured post-adoption stage preserve object
   identity, payload, preexisting notes, and dependency traceback. Cleanup
   continues through the fixed remaining-resource order. A cleanup problem
@@ -393,7 +393,7 @@ control-plane records; they do not expand the product-code allowlist above.
   ordinary/control contexts retain identity and notes across success, fixed
   failure, and control outcomes. Tests lock every permitted note string and
   reject raw cleanup detail.
-- [ ] Deterministic unit/fault tests cover every dependency boundary, exact
+- [x] Deterministic unit/fault tests cover every dependency boundary, exact
   identities and call counts, config-slot admission, ownership transfer,
   publish-before-serve-before-READY order, READY/FAILURE mutual exclusion,
   logical send-attempt terminality plus unconditional one writer close,
@@ -403,20 +403,20 @@ control-plane records; they do not expand the product-code allowlist above.
   ordinary/control arbitration, false cleanup success claims, no
   retention/output/log leakage, and absence of parent/process/SQLite/event/
   telemetry storage/SDK/OTel/UI/tracepoint behavior.
-- [ ] A bounded no-shell test-only child receives one canonical P0-016 argument
+- [x] A bounded no-shell test-only child receives one canonical P0-016 argument
   tuple and exactly the owner/startup-writer descriptors through `pass_fds`,
   calls production explicitly, and uses no production argv reader or launcher.
   The parent closes its writer/owner duplicates, consumes the real startup
   reader through P0-009, and proves READY matches the freshly published state,
   current child PID, actual listener port, and an authenticated health response.
   A separate contender remains blocked solely by the child owner until cleanup.
-- [ ] Real-child ordinary failure modes before READY produce only the fixed
+- [x] Real-child ordinary failure modes before READY produce only the fixed
   FAILURE outcome or terminal channel EOF/error when the one send itself fails;
   they publish no enduring owned state, release the listener/writer/owner in
   order, allow a successor owner, emit no token/path/raw exception, and leave no
   child or process group. Tests use observable pipe/health/exit conditions with
   bounded deadlines and no sleeps.
-- [ ] A real test-only custom SIGTERM handler exercises P0-020's restored-signal
+- [x] A real test-only custom SIGTERM handler exercises P0-020's restored-signal
   replay and normal Python return, then proves the listener is closed, exact
   state compare-removed, unused resources retired, owner released last, and
   `run_sidecar_child` returned exact `None`. A separate default-`SIG_DFL` mode
@@ -424,7 +424,7 @@ control-plane records; they do not expand the product-code allowlist above.
   authenticated health, re-acquirable owner, and stale-state recovery without
   asserting that the outer Python cleanup or state removal ran. Every child is
   reaped; TERM/KILL fallback is test cleanup only.
-- [ ] A positive full-tree AST allowlist freezes exact imports, immutable
+- [x] A positive full-tree AST allowlist freezes exact imports, immutable
   captures/constants, fixed public/helper signatures, config-slot reads,
   dependency calls/counts, one nested exact startup function, transaction order,
   publication-attempt marker adjacency, one-shot outcome state, one writer close
@@ -437,7 +437,7 @@ control-plane records; they do not expand the product-code allowlist above.
   UI/tracepoint code, mutable module state, logging, output, or cache. It
   positively permits and counts only the required `StartupWriter.send` and
   canonical `StartupWriter.close` calls.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass locally and on the macOS/Linux x CPython 3.12/3.13 CI matrix. The
   partial-scaffold disclaimer remains explicit; this child transaction alone is
   not parent launch, SDK attachment, SQLite ownership, bundled UI, or Phase 0
@@ -519,49 +519,65 @@ adding parent launch, SQLite/event/telemetry storage, SDK, UI, or tracepoint sco
 ## Role Outputs
 
 Implementer:
-- Implementation is intentionally pending. Planning fixes one blocking
-  `run_sidecar_child(arguments)` surface and a child-only transaction from
-  canonical adoption through owner-last cleanup, with no product file changed
-  by the planning commit.
+- Added `run_sidecar_child(arguments)` as the sole child-only surface. It
+  consumes P0-018's adopted tuple, uses only captured P0-001/P0-003/P0-007/
+  P0-021 surfaces, holds the owner through one fixed cleanup order, and keeps
+  parent/argv/process/SQLite/SDK/UI/tracepoint behavior out of production.
+- Added deterministic and real-child evidence for exact admission, terminal
+  READY/FAILURE selection, publication/removal outcomes, listener transfer,
+  control identity/notes, authenticated health, custom/default SIGTERM, and
+  the child-only AST boundary.
 
 Adversarial Reviewer:
-- Reviewer 1: planning analysis identified the P0-018 adoption return as the
-  only safe P0-022 ownership admission and froze READY/FAILURE mutual exclusion,
-  publish-before-start notification, publication-attempt cleanup, P0-021
-  listener relinquishment, and compare-remove-before-owner-release as the
-  primary adversarial targets. Actual-card review added separate
-  `publication_attempted`/`publication_succeeded` state and the exact
-  success-dependent removal-result matrix.
-- Reviewer 2: planning analysis separated Python-managed cleanup from Uvicorn's
-  default-SIGTERM replay, required both custom-handler normal-return and
-  `SIG_DFL` fail-stop evidence, required one canonical writer close after every
-  send attempt, and rejected any claim that send start proves physical FD
-  transfer or stale state must be removed after default signal termination.
-  Actual-card review also made no-READY normal bridge return a FAILURE-plus-fixed
-  error path and froze dependency/P0-022 cleanup-note coexistence.
+- Reviewer 1: rechecked adoption through P0-021 bridge ownership, publication
+  marker adjacency, terminal READY/FAILURE behavior, and cleanup order against
+  the committed AST and fault tests. Found and fixed the only issue: the
+  preparation-failure fixed error initially retained suppressed dependency
+  context; the error is now raised only after the handler and sensitive locals
+  are gone. P0/P1/P2 = 0/0/0.
+- Reviewer 2: rechecked custom-handler versus default-SIGTERM semantics,
+  real-child authenticated health/owner contention, pre-READY failure, fixed
+  errors, source imports, and forbidden parent/SQLite/SDK/UI/tracepoint scope.
+  P0/P1/P2 = 0/0/0.
 
 Fixer:
-- Planning reconciliation accepts every actual-card finding: P0-002/P0-016 and
-  P0-021 are explicit prerequisites; wrong arguments have one exact message;
-  publication and READY each have attempted/succeeded state; every adopted
-  writer is closed once; cleanup notes coexist without rewriting; exact state
-  publication remains allowed while extra copy/cache/egress is forbidden; and
-  P0-019 plus parent-launch policy remain deferred.
+- Reworked preparation-failure control flow so the fixed public error has no
+  dependency context or retained sensitive inputs, then added checks for
+  malformed publication/removal evidence, active-control cleanup notes, one-shot
+  outcome behavior, real contender exclusion, and the explicit default-SIGTERM
+  no-outer-cleanup boundary.
 
 Quality Governor:
-- Planning scope is one Phase 0 child transaction with exactly four allowed
-  product/test files, `scope_override: none`, no new gate claim, and explicit
-  separation from parent launch, argv/entrypoint, SQLite/event/telemetry
-  storage, SDK, UI, and all v1 non-goals. Status must remain `planned` until
-  P0-021 is complete.
+- Final product/test diff is exactly the four allowed files; this completion
+  record is the only control-plane fifth path. `scope_override: none` remains
+  correct. No parent launch/argv/entrypoint, production process API, SQLite or
+  telemetry storage, SDK/UI, tracepoint, or v1 non-goal behavior was added.
 
 ## Verifier Evidence
 
-- Command: `.venv/bin/python scripts/validate_agent_system.py`; `git diff --check`
+- Command: `.venv/bin/ruff format --check flowsight/sidecar/child_runtime.py flowsight/sidecar/__init__.py tests/sidecar/test_child_runtime.py tests/sidecar/test_runtime_config.py`
 - Result: passed
-- Notes: planned task-record validation and whitespace checks passed;
-  implementation and product verification have not started, and planned
-  acceptance criteria remain unchecked by design.
+- Command: `.venv/bin/ruff check flowsight/sidecar/child_runtime.py flowsight/sidecar/__init__.py tests/sidecar/test_child_runtime.py tests/sidecar/test_runtime_config.py`; `.venv/bin/mypy flowsight/sidecar/child_runtime.py`
+- Result: passed; no lint or type errors
+- Command: `.venv/bin/python -m pytest tests/sidecar/test_child_runtime.py tests/sidecar/test_runtime_config.py -q`
+- Result: passed; 319 tests
+- Command: `make test-phase0`
+- Result: passed; 2515 tests
+- Command: `make gate-phase0`
+- Result: passed; agent-system checks, formatting, lint, type checks, 2640 tests,
+  and the `phase0-sustained` gate all passed; the partial-scaffold disclaimer
+  remained explicit
+- Command: `git diff --check`; forbidden-scope scan of
+  `flowsight/sidecar/child_runtime.py`
+- Result: passed; no parent/argv/process/SQLite/event/telemetry/SDK/UI/tracepoint
+  production surface
+- Candidate commits: `df28af07972c32a7d4bf402eb80a878fe96ceaa3`, `433ee8b0da6c5e6501e9d3593345ec61ac12bdf3`
+- CI: [agent-checks run 29181077059](https://github.com/alovwang-sys/FlowSight/actions/runs/29181077059)
+  passed on Ubuntu 3.13 (86618662712), macOS 3.13 (86618662713), Ubuntu 3.12
+  (86618662725), and macOS 3.12 (86618662727).
+- Notes: candidate CI covers every required operating-system and CPython matrix
+  entry. This completion-only update records evidence and changes no product or
+  test behavior.
 
 ## Failure Queue Items
 
