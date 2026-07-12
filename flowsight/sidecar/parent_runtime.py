@@ -32,6 +32,7 @@ _READ_MONOTONIC: Final = time.monotonic
 _THREAD: Final = threading.Thread
 _THREAD_START: Final = cast(Callable[[threading.Thread], object], threading.Thread.start)
 _EVENT: Final = threading.Event
+_EVENT_SET: Final = cast(Callable[[threading.Event], object], threading.Event.set)
 _ISFINITE: Final = math.isfinite
 _FSPATH: Final = os.fspath
 _PREPARE_RUNTIME_CONFIG: Final = prepare_sidecar_runtime_config
@@ -78,6 +79,7 @@ class _WaitOnlyReaper:
         "_process",
         "_started",
         "_thread",
+        "_wait_permission_sent",
         "_wait_ownership",
     )
 
@@ -87,6 +89,7 @@ class _WaitOnlyReaper:
         self._handoff_release = _EVENT()
         self._started = False
         self._wait_ownership = False
+        self._wait_permission_sent = False
         self._child_reaped = False
 
     def _wait_once(self) -> None:
@@ -123,8 +126,40 @@ class _WaitOnlyReaper:
         thread = self._thread
         return thread is not None and thread.is_alive()
 
-    def begin_wait(self) -> None:
-        self._handoff_release.set()
+    def begin_wait(self) -> bool:
+        if self._wait_permission_sent:
+            return True
+        active_control: BaseException | None = None
+        try:
+            first = _EVENT_SET(self._handoff_release)
+        except Exception:
+            first = False
+        except BaseException as error:
+            first = False
+            active_control = error
+        if first is None:
+            self._wait_permission_sent = True
+            if active_control is not None:
+                raise active_control
+            return True
+        try:
+            second = _EVENT_SET(self._handoff_release)
+        except Exception:
+            if active_control is not None:
+                raise active_control from None
+            return False
+        except BaseException:
+            if active_control is not None:
+                raise active_control from None
+            raise
+        if second is not None:
+            if active_control is not None:
+                raise active_control from None
+            return False
+        self._wait_permission_sent = True
+        if active_control is not None:
+            raise active_control from None
+        return True
 
     @property
     def wait_ownership(self) -> bool:
@@ -386,7 +421,8 @@ class _ChildHandoff:
                 reaper = self._reaper
                 if reaper is None:
                     return False
-                reaper.begin_wait()
+                if reaper.begin_wait() is not True:
+                    ordinary_failure = True
                 reaper.join(_CLEANUP_GRACE_SECONDS)
                 exited = reaper.child_reaped is True
             else:
@@ -422,9 +458,14 @@ class _ChildHandoff:
         self._committed = True
         try:
             result = _CLOSE(writer_fd)
-        finally:
-            reaper.begin_wait()
-        return result is None
+        except BaseException as active_control:
+            try:
+                reaper.begin_wait()
+            except BaseException:
+                _note_cleanup_failure(active_control)
+            raise active_control
+        permission_ok = reaper.begin_wait() is True
+        return result is None and permission_ok
 
     def retire_writer_after_reaped_cleanup(self) -> bool:
         if self._committed or self._writer_retirement_attempted or not self._child_reaped:

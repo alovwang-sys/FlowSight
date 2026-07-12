@@ -75,8 +75,8 @@ class _Reaper:
             return False
         return self.alive_after_join if self.join_calls else self.alive_after_start
 
-    def begin_wait(self) -> None:
-        pass
+    def begin_wait(self) -> bool:
+        return True
 
     @property
     def wait_ownership(self) -> bool:
@@ -158,6 +158,71 @@ def test_real_reaper_cleanup_begins_its_wait_without_releasing_gate() -> None:
     finally:
         os.close(reader)
         assert handoff.retire_writer_after_reaped_cleanup() is True
+
+
+def test_reaper_retries_one_failed_wait_permission_after_gate_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FirstSetFails:
+        def __init__(self) -> None:
+            self.event = threading.Event()
+            self.set_calls = 0
+
+        def set(self) -> None:
+            self.set_calls += 1
+            if self.set_calls == 1:
+                raise RuntimeError("set")
+            self.event.set()
+
+        def wait(self) -> bool:
+            return self.event.wait(1.0)
+
+    events: list[_FirstSetFails] = []
+
+    def new_event() -> _FirstSetFails:
+        event = _FirstSetFails()
+        events.append(event)
+        return event
+
+    reader, writer = _writer()
+    process = _Process()
+    monkeypatch.setattr(runtime_module, "_EVENT", new_event)
+    monkeypatch.setattr(runtime_module, "_EVENT_SET", lambda event: event.set())
+    reaper = runtime_module._WaitOnlyReaper(process)
+    handoff = runtime_module._ChildHandoff(process, writer)
+    try:
+        handoff.transfer_wait_ownership(reaper)
+        assert handoff.release_gate() is True
+        reaper.join(1.0)
+        assert events[0].set_calls == 2
+        assert process.wait_calls == 1
+        assert reaper.child_reaped is True
+    finally:
+        os.close(reader)
+
+
+def test_non_none_close_result_still_releases_the_reaper_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader, writer = _writer()
+    process = _Process()
+    reaper = runtime_module._WaitOnlyReaper(process)
+    handoff = runtime_module._ChildHandoff(process, writer)
+
+    def close_then_report_non_none(descriptor: int) -> object:
+        os.close(descriptor)
+        return object()
+
+    monkeypatch.setattr(runtime_module, "_CLOSE", close_then_report_non_none)
+    try:
+        handoff.transfer_wait_ownership(reaper)
+        assert handoff.release_gate() is False
+        assert handoff.committed is True
+        reaper.join(1.0)
+        assert process.wait_calls == 1
+        assert reaper.child_reaped is True
+    finally:
+        os.close(reader)
 
 
 def test_unconfirmed_cleanup_never_releases_gate() -> None:
@@ -573,7 +638,7 @@ def test_wait_only_reaper_never_claims_a_failed_wait_as_reaped() -> None:
 
     reaper = runtime_module._WaitOnlyReaper(_FailingProcess())
     reaper.start()
-    assert reaper.begin_wait() is None
+    assert reaper.begin_wait() is True
     reaper.join(1.0)
     assert reaper.wait_ownership is True
     assert reaper.child_reaped is False
@@ -590,7 +655,7 @@ def test_finished_reaper_cannot_release_the_child_gate() -> None:
         def is_alive(self) -> bool:
             return False
 
-        def begin_wait(self) -> None:
+        def begin_wait(self) -> bool:
             raise AssertionError("finished reaper must never receive wait permission")
 
         @property
