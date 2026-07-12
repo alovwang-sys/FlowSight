@@ -6,7 +6,7 @@
 task_id: P0-025
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-014, P0-016, P0-017, P0-018, P0-022, P0-023, TRIAL-004]
@@ -146,37 +146,37 @@ test-order dependency.
 
 ## Acceptance Criteria
 
-- [ ] The private schema advances atomically to version 2 and a canonical
+- [x] The private schema advances atomically to version 2 and a canonical
   nine-string tuple with exact final `parent-handoff-fd=<decimal>` field. All
   three descriptor fields are exact, distinct built-in integers in the existing
   supported range; version-1, missing, extra, reordered, duplicate, malformed,
   or noncanonical arguments fail under the existing fixed bootstrap error.
-- [ ] The immutable exact bootstrap result has exactly four slots, no new
+- [x] The immutable exact bootstrap result has exactly four slots, no new
   constructor/serializer/public result type, and revised encode/decode exports
   occur exactly once in `flowsight.sidecar.__all__`.
-- [ ] A new private child-only handoff primitive admits only the exact decoded
+- [x] A new private child-only handoff primitive admits only the exact decoded
   bootstrap/config and its read endpoint, proves a read-only FIFO descriptor,
   waits once for EOF under the prepared timeout, retires that descriptor exactly
   once, and exposes only a fixed ordinary failure. It accepts no caller timeout,
   data, callback, path, or process object.
-- [ ] `prepare_sidecar_child` invokes the captured handoff primitive exactly
+- [x] `prepare_sidecar_child` invokes the captured handoff primitive exactly
   once after bootstrap/config admission and before P0-017 adoption. Handoff
   failure or control leaves the existing owner/writer locators untouched and
   reaches no later P0-017/P0-022 state/listener/READY work.
-- [ ] P0-017's existing pair-adoption boundary canonicalizes the additional
+- [x] P0-017's existing pair-adoption boundary canonicalizes the additional
   inert descriptor field without adopting, closing, returning, or otherwise
   owning it. Its public result shape and owner/writer cleanup contract remain
   unchanged.
-- [ ] Real isolated process evidence proves a held parent writer prevents any
+- [x] Real isolated process evidence proves a held parent writer prevents any
   child state publication/listener/READY activity; closing that writer releases
   exactly one child transaction; malformed/data-bearing/closed/non-pipe
   endpoints and timeout fail before publication; and no case emits a raw
   descriptor, path, token, or exception.
-- [ ] Static and behavioral tests freeze the version-2 tuple, exact captured
+- [x] Static and behavioral tests freeze the version-2 tuple, exact captured
   dispatch, close-only child semantics, one bounded wait, descriptor close
   order, process-control identity, fixed-error frame privacy, and absence of
   parent launch/reaper/SDK/OTel/store-write/UI behavior.
-- [ ] Focused tests, `make test-phase0`, `make check`, and `make gate-phase0`
+- [x] Focused tests, `make test-phase0`, `make check`, and `make gate-phase0`
   pass locally and on the macOS/Linux × CPython 3.12/3.13 CI matrix.
 
 ## No-Test Reason
@@ -228,29 +228,43 @@ the child cannot publish sidecar state before its exact parent handoff is releas
 
 Implementer:
 
-- Pending.
+- Implemented child bootstrap v2 and the private EOF-only handoff gate in
+  `53b6ede`.
 
 Adversarial Reviewer:
 
-- Pending.
+- Reviewer 1: Pauli drove exact bootstrap admission, high-FD polling,
+  nonblocking verification, cleanup arbitration, and real-child runtime
+  evidence to closure; final result GO.
+- Reviewer 2: Kepler required restored static coverage, endpoint validation,
+  bounded marker reads, and task-card verification alignment; final result GO.
 
 Fixer:
 
-- Pending.
+- Applied the accepted review findings without expanding beyond the P0-025
+  allowlist.
 
 Verifier:
 
-- Pending.
+- Focused protocol tests passed (705); Phase 0/check/gate commands ran
+  locally; CI run 29186705798 passed on Linux/macOS × CPython 3.12/3.13.
 
 Quality Governor:
 
-- Pending.
+- Active-task checks, allowlist enforcement, formatter/lint/type checks, and
+  the Phase 0 sustained gate remained enabled throughout.
 
 ## Verifier Evidence
 
-- Planned: record focused protocol/process evidence, Phase 0 suite, repository
-  check, sustained gate, candidate commit, and supported CI matrix before this
-  task can become complete.
+- Command: `.venv/bin/python -m pytest tests/sidecar/test_child_bootstrap.py tests/sidecar/test_child_adoption.py tests/sidecar/test_child_preparation.py tests/sidecar/test_child_runtime.py tests/sidecar/test_parent_handoff.py tests/sidecar/test_runtime_config.py -q`
+- Result: passed
+- Notes: focused suite passed 705 tests in 15.01s; the candidate CI passed the
+  required Linux/macOS × CPython 3.12/3.13 matrix.
+- Candidate: `53b6ede feat(sidecar): gate child publication on parent handoff`.
+- Focused protocol, adoption, preparation, child-runtime, handoff, and runtime
+  config suite: 705 passed in 15.01s.
+- CI: run 29186705798 passed all four required jobs: Ubuntu/macOS × CPython
+  3.12/3.13.
 
 ## Failure Queue Items
 
