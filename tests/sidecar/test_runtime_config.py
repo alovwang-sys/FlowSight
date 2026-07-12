@@ -139,6 +139,7 @@ EXPECTED_SIDECAR_SUBMODULES = {
     "listener",
     "owner_lock",
     "parent_handoff",
+    "parent_runtime",
     "runtime_config",
     "server_runtime",
     "startup_admission",
