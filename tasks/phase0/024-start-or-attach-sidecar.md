@@ -206,7 +206,9 @@ control-plane records; they do not expand the product-code allowlist above.
   and every following channel, launch, cleanup, and P0-009 call receives only a
   recomputed positive remainder. Deterministic clock/call-order tests prove no
   full-timeout reuse, extra election, stage after expiry, busy loop, or extra
-  child.
+  child. An exact P0-013 state or owner result still requires a fresh positive
+  outer remainder before incumbent admission or owner-path work; insufficient
+  time to reserve the fixed cleanup grace prevents launch.
 - [ ] An exact P0-013 `SidecarState` takes the no-launch branch, reaches
   `admit_configured_incumbent_port` exactly once, and returns its exact state
   directly with no channel, command, process, or later work. Its explicit-port
@@ -220,13 +222,14 @@ control-plane records; they do not expand the product-code allowlist above.
   paths retire parent owner/writer/reader resources exactly once without
   closing child-owned descriptors.
 - [ ] The child branch consumes one outcome through P0-009 under the remaining
-  outer budget and returns only the exact verified `SidecarState`. READY/state
-  mismatch, generic child FAILURE, malformed/absent channel evidence, failed
-  preflight/launch/admission, and deadline expiry expose only the fixed parent
-  error and cannot leak sensitive scalar or subprocess information. A failure
-  before the handoff-writer close attempt terminates the unpublished child; a
-  local or close failure after that attempt must not terminate the now-
-  attachable child.
+  outer budget in exactly one `with reader:` ownership boundary and returns
+  only the exact verified `SidecarState`. It never naked-closes or retries that
+  reader. READY/state mismatch, generic child FAILURE, malformed/absent channel
+  evidence, failed preflight/launch/admission, reader cleanup fault, and
+  deadline expiry expose only the fixed parent error and cannot leak sensitive
+  scalar or subprocess information. A failure before the handoff-writer close
+  attempt terminates the unpublished child; a local or close failure after that
+  attempt must not terminate the now-attachable child.
 - [ ] Before the parent releases the handoff writer, it transfers the newly
   launched child to exactly one private wait-only reaper. The child cannot
   publish state, bind, or send READY before that EOF release. If a newly
