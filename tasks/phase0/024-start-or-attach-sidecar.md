@@ -102,19 +102,22 @@ alternate launch path.
   published state before this function returns it. Child FAILURE, malformed or
   absent outcome, exhausted outer budget, launch failure, or invalid local
   evidence becomes one fixed non-secret parent startup error after owned
-  parent resources have been handled. The one newly launched process is
-  boundedly stopped/reaped on such a failed admission; success deliberately
-  leaves the independently owned sidecar alive for reload reconnection.
-- Process-control exceptions preserve identity. Once child ownership exists,
-  the parent makes one bounded best-effort terminate-and-wait cleanup attempt
-  without replacing the active control; it must not claim Python cleanup on
-  fail-stop signals. The cooperative startup budget reserves one fixed,
-  documented 250 ms terminal cleanup grace before READY admission so the
-  failure path can always attempt `terminate()` followed by one bounded
-  `wait()`, even when admission exhausts its allocated remainder. Ordinary
-  error paths expose neither project/runtime path, token, PID, port,
-  descriptor, command, child output, raw exception, nor timeout in text, repr,
-  logging, output, callback, cache, or retained frame.
+  parent resources have been handled. Before the parent closes the handoff
+  writer, it owns the unpublished child and may boundedly terminate/reap it on
+  failure. Closing that writer is the irreversible ownership commit: after EOF
+  the child may publish attachable state, so a later local admission failure or
+  process control returns failure without terminating the child; the reaper
+  remains its only wait owner and later callers may independently admit it.
+- Process-control exceptions preserve identity. Before EOF the parent makes one
+  bounded best-effort terminate-and-wait cleanup attempt without replacing the
+  active control; it must not claim Python cleanup on fail-stop signals. After
+  EOF it must not terminate a potentially attachable child. The cooperative
+  startup budget reserves one fixed, documented 250 ms terminal cleanup grace
+  before EOF so the unpublished failure path can always attempt `terminate()`
+  followed by one bounded `wait()`, even when admission exhausts its allocated
+  remainder. Ordinary error paths expose neither project/runtime path, token,
+  PID, port, descriptor, command, child output, raw exception, nor timeout in
+  text, repr, logging, output, callback, cache, or retained frame.
 - This task intentionally does not touch `FlowSight`, FastAPI app mutation,
   OTel, sender queues, leases, reload hooks, SDK flush/shutdown, SQLite writes,
   UI opening, or sidecar idle-stop policy. Those remain separately scoped work.
@@ -214,19 +217,22 @@ control-plane records; they do not expand the product-code allowlist above.
   outer budget and returns only the exact verified `SidecarState`. READY/state
   mismatch, generic child FAILURE, malformed/absent channel evidence, failed
   preflight/launch/admission, and deadline expiry expose only the fixed parent
-  error and cannot leak sensitive scalar or subprocess information.
+  error and cannot leak sensitive scalar or subprocess information. A failure
+  before handoff EOF terminates the unpublished child; a local failure after
+  EOF must not terminate the now-attachable child.
 - [ ] Before the parent releases the handoff writer, it transfers the newly
   launched child to exactly one private wait-only reaper. The child cannot
   publish state, bind, or send READY before that EOF release. If a newly
-  launched child cannot be admitted, the parent terminates then boundedly joins
-  that reaper using the reserved fixed terminal cleanup grace; it never makes a
-  competing direct child `wait()` after transfer. Before a failed transfer, the
-  parent alone may terminate and wait. A cleanup failure is visible in the
-  fixed startup failure (or as a fixed note on an active process-control
-  exception) and never yields a false success. On success, after verified state
-  admission and reader retirement, the already-started private daemon reaper
-  remains the canonical blocking wait owner; it neither polls nor terminates
-  the healthy long-lived sidecar.
+  unpublished child cannot reach handoff EOF, the parent terminates then
+  boundedly joins that reaper using the reserved fixed terminal cleanup grace;
+  it never makes a competing direct child `wait()` after transfer. Before a
+  failed transfer, the parent alone may terminate and wait. After EOF, a local
+  admission failure does not terminate the child or reaper. A pre-EOF cleanup
+  failure is visible in the fixed startup failure (or as a fixed note on an
+  active process-control exception) and never yields a false success. On
+  success, after verified state admission and reader retirement, the
+  already-started private daemon reaper remains the canonical blocking wait
+  owner; it neither polls nor terminates the healthy long-lived sidecar.
 - [ ] Real isolated-process evidence, using a temporary project and an isolated
   per-test runtime root, proves initial launch reaches authenticated health,
   the child remains gated until reaper ownership is established, then is held
@@ -234,9 +240,10 @@ control-plane records; they do not expand the product-code allowlist above.
   state identity is returned, concurrent callers reconnect to the exact
   incumbent without a second long-lived child, an explicit mismatched port
   fails without launch, a pre-READY child failure is synchronously contained,
-  and deterministic cleanup leaves no child or descriptor behind. Tests use
-  observable bounded conditions rather than sleeps and clean up their child
-  process/state.
+  a post-EOF local admission failure does not terminate an attachable child,
+  and deterministic pre-EOF cleanup leaves no child or descriptor behind.
+  Tests use observable bounded conditions rather than sleeps and clean up their
+  child process/state.
 - [ ] Static and behavioral tests freeze captured canonical dispatch, exact
   command shape, `-I`, `pass_fds`, detached stdio/session, one election/channel/
   child/admission, deadline propagation, error privacy, no shell or listener
