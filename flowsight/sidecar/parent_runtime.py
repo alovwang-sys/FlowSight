@@ -47,6 +47,7 @@ _DECODE_CHILD_BOOTSTRAP: Final = decode_sidecar_child_bootstrap
 _BOOTSTRAP_TYPE: Final = SidecarChildBootstrap
 _OWNER_FILENO: Final = OwnerLock.fileno
 _WRITER_FILENO: Final = StartupWriter.fileno
+_WRITER_CLOSE: Final = StartupWriter.close
 _CHILD_EXECUTABLE: Final = sys.executable
 _CHILD_ENTRY_MODULE: Final = "flowsight.sidecar.child_entry"
 _POPEN: Final = subprocess.Popen
@@ -94,30 +95,33 @@ class _OwnerCleanupFailure(Exception):
 class _ParentHandoffPipe:
     """Private provenance for one child gate and its retained parent writer."""
 
-    __slots__ = ("_plan_claimed", "_reader_fd", "_writer_fd")
+    __slots__ = ("_issued_plan", "_reader_fd", "_spawn_claimed", "_writer_fd")
 
     def __init__(self, reader_fd: int, writer_fd: int) -> None:
         self._reader_fd = reader_fd
         self._writer_fd = writer_fd
-        self._plan_claimed = False
+        self._issued_plan: _ChildLaunchPlan | None = None
+        self._spawn_claimed = False
 
-    def claim_child_reader_fd(self) -> int | None:
+    def bind_plan(self, plan: _ChildLaunchPlan) -> bool:
         if (
-            self._plan_claimed
+            self._issued_plan is not None
+            or self._reader_fd < _MIN_DESCRIPTOR
+            or self._writer_fd < _MIN_DESCRIPTOR
+        ):
+            return False
+        self._issued_plan = plan
+        return True
+
+    def take_plan_reader_fd(self, plan: _ChildLaunchPlan) -> int | None:
+        if (
+            self._issued_plan is not plan
+            or self._spawn_claimed
             or self._reader_fd < _MIN_DESCRIPTOR
             or self._writer_fd < _MIN_DESCRIPTOR
         ):
             return None
-        self._plan_claimed = True
-        return self._reader_fd
-
-    def plan_reader_fd(self) -> int | None:
-        if (
-            not self._plan_claimed
-            or self._reader_fd < _MIN_DESCRIPTOR
-            or self._writer_fd < _MIN_DESCRIPTOR
-        ):
-            return None
+        self._spawn_claimed = True
         return self._reader_fd
 
     def take_writer(self) -> int | None:
@@ -157,7 +161,7 @@ class _ParentHandoffPipe:
 class _ChildLaunchPlan:
     """One private command that remains bound to its live parent gate."""
 
-    __slots__ = ("_argv", "_handoff", "_pass_fds", "_spawn_attempted")
+    __slots__ = ("_argv", "_bound", "_handoff", "_pass_fds", "_spawn_attempted")
 
     def __init__(
         self,
@@ -169,12 +173,15 @@ class _ChildLaunchPlan:
         self._pass_fds = pass_fds
         self._handoff = handoff
         self._spawn_attempted = False
+        self._bound = handoff.bind_plan(self)
 
     def take_command(self) -> tuple[tuple[str, ...], tuple[int, int, int]] | None:
         if self._spawn_attempted:
             return None
         self._spawn_attempted = True
-        handoff_reader_fd = self._handoff.plan_reader_fd()
+        if not self._bound:
+            return None
+        handoff_reader_fd = self._handoff.take_plan_reader_fd(self)
         if handoff_reader_fd is None or handoff_reader_fd != self._pass_fds[2]:
             return None
         return self._argv, self._pass_fds
@@ -547,8 +554,8 @@ def _owner_child_command(
         or type(handoff) is not _ParentHandoffPipe
     ):
         return None
-    handoff_reader_fd = handoff.claim_child_reader_fd()
-    if handoff_reader_fd is None:
+    handoff_reader_fd = handoff._reader_fd
+    if handoff_reader_fd < _MIN_DESCRIPTOR or handoff._writer_fd < _MIN_DESCRIPTOR:
         return None
     try:
         owner_fd = _OWNER_FILENO(owner)
@@ -582,11 +589,14 @@ def _owner_child_command(
         or not _CHILD_EXECUTABLE
     ):
         return None
-    return _ChildLaunchPlan(
+    plan = _ChildLaunchPlan(
         (_CHILD_EXECUTABLE, "-I", "-m", _CHILD_ENTRY_MODULE, *suffix),
         (owner_fd, writer_fd, handoff_reader_fd),
         handoff,
     )
+    if not plan._bound:
+        return None
+    return plan
 
 
 def _spawn_isolated_child(plan: _ChildLaunchPlan) -> _Process | None:
@@ -636,6 +646,49 @@ def _spawn_isolated_child(plan: _ChildLaunchPlan) -> _Process | None:
     except Exception:
         return None
     return cast(_Process, process)
+
+
+def _retire_parent_child_handles(
+    owner: OwnerLock,
+    writer: StartupWriter,
+    handoff: _ParentHandoffPipe,
+) -> bool:
+    if (
+        type(owner) is not _OWNER_TYPE
+        or type(writer) is not StartupWriter
+        or type(handoff) is not _ParentHandoffPipe
+    ):
+        return False
+    active_control: BaseException | None = None
+    ordinary_failure = False
+    try:
+        result = _OWNER_CLOSE(owner)
+        if result is not None:
+            ordinary_failure = True
+    except Exception:
+        ordinary_failure = True
+    except BaseException as error:
+        active_control = error
+    try:
+        result = _WRITER_CLOSE(writer)
+        if result is not None:
+            ordinary_failure = True
+    except Exception:
+        ordinary_failure = True
+    except BaseException as error:
+        if active_control is None:
+            active_control = error
+    try:
+        if handoff.retire_reader() is not True:
+            ordinary_failure = True
+    except Exception:
+        ordinary_failure = True
+    except BaseException as error:
+        if active_control is None:
+            active_control = error
+    if active_control is not None:
+        raise active_control
+    return not ordinary_failure
 
 
 class _ChildHandoff:

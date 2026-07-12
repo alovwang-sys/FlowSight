@@ -7,7 +7,11 @@ from typing import NoReturn
 
 import pytest
 
-from flowsight.sidecar import open_startup_channel, prepare_sidecar_runtime_config
+from flowsight.sidecar import (
+    StartupChannelError,
+    open_startup_channel,
+    prepare_sidecar_runtime_config,
+)
 from flowsight.sidecar import parent_runtime as runtime_module
 from flowsight.sidecar import runtime_config as config_module
 from flowsight.sidecar.owner_lock import OwnerLockError
@@ -470,7 +474,7 @@ def test_owner_child_command_is_exact_isolated_child_shape(
             "-m",
             "flowsight.sidecar.child_entry",
         )
-        handoff_reader = handoff.plan_reader_fd()
+        handoff_reader = handoff._reader_fd
         assert handoff_reader is not None
         assert pass_fds == (owner.fileno(), writer.fileno(), handoff_reader)
         assert argv[4:] == runtime_module._ENCODE_CHILD_BOOTSTRAP(
@@ -591,6 +595,43 @@ def test_failed_spawn_attempt_cannot_retry_the_same_launch_plan(
         assert handoff.close_uncommitted() is True
 
 
+def test_reconstructed_launch_plan_cannot_duplicate_handoff_spawn_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _SpawnedProcess:
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> None:
+            del timeout
+
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    reader, writer = open_startup_channel()
+    handoff = runtime_module._open_parent_handoff()
+    assert handoff is not None
+    calls: list[object] = []
+    try:
+        first = runtime_module._owner_child_command(config, owner, writer, handoff)
+        assert first is not None
+        copied = runtime_module._ChildLaunchPlan(first._argv, first._pass_fds, handoff)
+        monkeypatch.setattr(
+            runtime_module,
+            "_POPEN",
+            lambda *_args, **_kwargs: calls.append(1) or _SpawnedProcess(),
+        )
+        assert runtime_module._spawn_isolated_child(first) is not None
+        assert runtime_module._spawn_isolated_child(copied) is None
+        assert calls == [1]
+    finally:
+        owner.close()
+        writer.close()
+        reader.close()
+        assert handoff.close_uncommitted() is True
+
+
 def test_spawn_isolated_child_rejects_an_unreviewed_command_without_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -655,10 +696,34 @@ def test_parent_handoff_promotes_low_descriptors_before_exposing_them(
 
     handoff = runtime_module._open_parent_handoff()
     assert handoff is not None
-    assert handoff.claim_child_reader_fd() == 3
+    assert handoff._reader_fd == 3
     assert handoff.take_writer() == 4
     assert handoff.close_uncommitted() is True
     assert closed == [0, 1, 3]
+
+
+def test_parent_retires_child_owned_handles_before_reaper_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    reader, writer = open_startup_channel()
+    handoff = runtime_module._open_parent_handoff()
+    assert handoff is not None
+    handoff_reader = handoff._reader_fd
+    try:
+        assert runtime_module._retire_parent_child_handles(owner, writer, handoff) is True
+        with pytest.raises(OwnerLockError):
+            owner.fileno()
+        with pytest.raises(StartupChannelError):
+            writer.fileno()
+        with pytest.raises(OSError):
+            os.fstat(handoff_reader)
+    finally:
+        reader.close()
+        assert handoff.close_uncommitted() is True
 
 
 def test_preflight_rejects_forged_exact_config_before_constructing_store(
