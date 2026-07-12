@@ -6,7 +6,7 @@
 task_id: P0-024
 release: v1
 task_type: implementation
-status: blocked
+status: in_progress
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-013, P0-014, P0-016, P0-019, P0-023, P0-025, TRIAL-004]
@@ -32,14 +32,15 @@ new sidecar child and admits its verified READY outcome. The operation is an
 internal sidecar primitive; a subsequent SDK-lifecycle task alone maps
 `FlowSight.init_app()` onto it.
 
-## Blocked By
+## Child-Handoff Prerequisite
 
-P0-025 must establish a child-side parent-handoff gate before this task can
-linearize direct-child reaping ahead of state publication. Two independent
-reviews proved the current P0-016/P0-023 protocol otherwise permits a
-concurrent caller to attach to a child that the original launcher later must
-terminate after a local handoff failure. No P0-024 product candidate is
-retained while that prerequisite is incomplete.
+P0-025 is complete. Its private version-2 bootstrap supplies a close-only
+parent-handoff read descriptor: a newly exec'd child cannot adopt resources,
+publish state, bind its listener, or send READY until this parent task closes
+the matching writer. P0-024 must establish the reaper's exclusive wait
+ownership before that close releases the child. This corrects the prior
+direct-child race without adding a public protocol, configuration field, or
+alternate launch path.
 
 ## Context
 
@@ -82,18 +83,20 @@ retained while that prerequisite is incomplete.
   freshly recomputed positive remainder. No stage receives the original full
   timeout after elapsed work. As elsewhere in Phase 0, this is a cooperative
   bound, not an interruption of arbitrary synchronous OS work.
-- The owner path opens exactly one startup channel, encodes one canonical
-  bootstrap with the exact owner/writer descriptors, and executes only the
-  current interpreter as `-I -m flowsight.sidecar.child_entry` with that
-  suffix. The parent uses `close_fds=True`, passes only the two reviewed
-  descriptors, detaches standard input/output/error, starts a separate
-  session, and performs no shell, command string, source import, environment
-  rewrite, listener handoff, or parent SQLite/UI work. After a successful
-  exec boundary is created, the parent retires its owner and writer handles
-  exactly once; P0-023 inherits them and P0-017 adopts the matching pair. The
-  parent retains only the reader until P0-009 consumes it. Only after a
-  verified state is obtained and that reader is retired does the parent start
-  the one private wait-only reaper for the direct child.
+- The owner path opens exactly one startup channel and one close-only
+  parent-handoff pipe, encodes one canonical version-2 bootstrap with the
+  exact owner/writer/handoff-reader descriptors, and executes only the current
+  interpreter as `-I -m flowsight.sidecar.child_entry` with that suffix. The
+  parent uses `close_fds=True`, passes only those three reviewed descriptors,
+  detaches standard input/output/error, starts a separate session, and
+  performs no shell, command string, source import, environment rewrite,
+  listener handoff, or parent SQLite/UI work. After a successful exec boundary
+  is created, the parent retires its owner and writer handles exactly once;
+  P0-023 inherits them and P0-017 adopts the matching pair. The parent retains
+  the startup reader and handoff writer. It transfers the one direct child to
+  the private wait-only reaper before closing that writer; EOF then releases
+  P0-025's child gate. The parent retains only the reader until P0-009 consumes
+  it.
 - A child READY is still only a hint. P0-009 must fresh-load/probe/reload the
   published state before this function returns it. Child FAILURE, malformed or
   absent outcome, exhausted outer budget, launch failure, or invalid local
@@ -155,7 +158,8 @@ control-plane records; they do not expand the product-code allowlist above.
   shutdown/idle policy, SQLite/store schema, UI/API routes, browser behavior,
   dependencies, packaging, Makefile, or spike code.
 - Do not make a second owner election, second startup channel, second
-  long-lived sidecar, listener descriptor handoff, retry loop, async task,
+  parent-handoff pipe, second long-lived sidecar, listener descriptor handoff,
+  retry loop, async task,
   mutable registry/cache, caller-selected command/environment/poll interval,
   or unbounded parent wait. The sole permitted background thread starts only
   after successful verified admission, owns one direct P0-023 child, performs
@@ -196,9 +200,10 @@ control-plane records; they do not expand the product-code allowlist above.
   directly with no channel, command, process, or later work. Its explicit-port
   incompatibility is terminal and starts no child.
 - [ ] An exact P0-013 `OwnerLock` is the only launch authority. The owner branch
-  opens one reviewed channel, obtains the two exact live descriptors, creates
-  the canonical P0-016 suffix, and launches exactly one isolated direct
-  P0-023 child with only those two descriptors. Parent/child descriptor
+  opens one reviewed channel and one close-only handoff pipe, obtains the three
+  exact live child descriptors, creates the canonical P0-016 v2 suffix, and
+  launches exactly one isolated direct P0-023 child with only those three
+  descriptors. Parent/child descriptor
   ownership and close order are mechanically proved; all ordinary post-launch
   paths retire parent owner/writer/reader resources exactly once without
   closing child-owned descriptors.
@@ -207,17 +212,21 @@ control-plane records; they do not expand the product-code allowlist above.
   mismatch, generic child FAILURE, malformed/absent channel evidence, failed
   preflight/launch/admission, and deadline expiry expose only the fixed parent
   error and cannot leak sensitive scalar or subprocess information.
-- [ ] If a newly launched child cannot be admitted, the parent performs one
+- [ ] Before the parent releases the handoff writer, it transfers the newly
+  launched child to exactly one private wait-only reaper. The child cannot
+  publish state, bind, or send READY before that EOF release. If a newly
+  launched child cannot be admitted, the parent performs one
   bounded direct-child cleanup sequence: it terminates then waits once using
   the reserved fixed terminal cleanup grace. A cleanup failure is visible in
   the fixed startup failure (or as a fixed note on an active process-control
   exception) and never yields a false success. On success, after verified
-  state admission and reader retirement, exactly one private daemon reaper starts
-  and makes the canonical blocking wait for that child only; it neither polls
-  nor terminates the healthy long-lived sidecar.
+  state admission and reader retirement, the already-started private daemon
+  reaper makes the canonical blocking wait for that child only; it neither
+  polls nor terminates the healthy long-lived sidecar.
 - [ ] Real isolated-process evidence, using a temporary project and an isolated
   per-test runtime root, proves initial launch reaches authenticated health,
-  the direct child is held by the wait-only reaper without a `ResourceWarning`,
+  the child remains gated until reaper ownership is established, then is held
+  by that wait-only reaper without a `ResourceWarning`,
   state identity is returned, concurrent callers reconnect to the exact
   incumbent without a second long-lived child, an explicit mismatched port
   fails without launch, a pre-READY child failure is synchronously contained,
