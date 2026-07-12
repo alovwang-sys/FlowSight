@@ -765,6 +765,85 @@ def test_parent_handoff_pipe_cannot_be_copied_to_duplicate_launch_authority(
         assert handoff.close_uncommitted() is True
 
 
+def test_parent_handle_retirement_attempts_later_handles_after_ordinary_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    reader, writer = open_startup_channel()
+    handoff = runtime_module._open_parent_handoff()
+    assert handoff is not None
+    calls: list[str] = []
+    real_writer_close = runtime_module._WRITER_CLOSE
+    real_retire_reader = runtime_module._ParentHandoffPipe.retire_reader
+
+    def fail_owner(_owner: object) -> NoReturn:
+        calls.append("owner")
+        raise RuntimeError("close")
+
+    def close_writer(actual_writer: object) -> None:
+        calls.append("writer")
+        real_writer_close(actual_writer)  # type: ignore[arg-type]
+
+    def retire_reader(actual_handoff: object) -> bool:
+        calls.append("reader")
+        return real_retire_reader(actual_handoff)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(runtime_module, "_OWNER_CLOSE", fail_owner)
+    monkeypatch.setattr(runtime_module, "_WRITER_CLOSE", close_writer)
+    monkeypatch.setattr(runtime_module._ParentHandoffPipe, "retire_reader", retire_reader)
+    try:
+        assert runtime_module._retire_parent_child_handles(owner, writer, handoff) is False
+        assert calls == ["owner", "writer", "reader"]
+    finally:
+        runtime_module.OwnerLock.close(owner)
+        reader.close()
+        assert handoff.close_uncommitted() is True
+
+
+def test_parent_handle_retirement_preserves_first_control_after_later_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    reader, writer = open_startup_channel()
+    handoff = runtime_module._open_parent_handoff()
+    assert handoff is not None
+    control = _Control()
+    calls: list[str] = []
+    real_writer_close = runtime_module._WRITER_CLOSE
+    real_retire_reader = runtime_module._ParentHandoffPipe.retire_reader
+
+    def control_owner(_owner: object) -> NoReturn:
+        calls.append("owner")
+        raise control
+
+    def close_writer(actual_writer: object) -> None:
+        calls.append("writer")
+        real_writer_close(actual_writer)  # type: ignore[arg-type]
+
+    def retire_reader(actual_handoff: object) -> bool:
+        calls.append("reader")
+        return real_retire_reader(actual_handoff)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(runtime_module, "_OWNER_CLOSE", control_owner)
+    monkeypatch.setattr(runtime_module, "_WRITER_CLOSE", close_writer)
+    monkeypatch.setattr(runtime_module._ParentHandoffPipe, "retire_reader", retire_reader)
+    try:
+        with pytest.raises(_Control) as captured:
+            runtime_module._retire_parent_child_handles(owner, writer, handoff)
+        assert captured.value is control
+        assert calls == ["owner", "writer", "reader"]
+    finally:
+        runtime_module.OwnerLock.close(owner)
+        reader.close()
+        assert handoff.close_uncommitted() is True
+
+
 def test_preflight_rejects_forged_exact_config_before_constructing_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
