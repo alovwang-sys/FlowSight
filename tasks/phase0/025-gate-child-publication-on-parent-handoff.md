@@ -97,6 +97,7 @@ that descriptor.
 - `tests/sidecar/test_child_bootstrap.py`
 - `tests/sidecar/test_child_adoption.py`
 - `tests/sidecar/test_child_preparation.py`
+- `tests/sidecar/test_child_runtime.py`
 - `tests/sidecar/test_parent_handoff.py`
 - `tests/sidecar/test_runtime_config.py`
 
@@ -119,6 +120,7 @@ test-order dependency.
 - `tests/sidecar/test_child_bootstrap.py`
 - `tests/sidecar/test_child_adoption.py`
 - `tests/sidecar/test_child_preparation.py`
+- `tests/sidecar/test_child_runtime.py`
 - `tests/sidecar/test_parent_handoff.py`
 - `tests/sidecar/test_runtime_config.py`
 
