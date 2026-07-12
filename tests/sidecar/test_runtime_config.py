@@ -129,6 +129,7 @@ EXPECTED_SIDECAR_SUBMODULES = {
     "app",
     "child_adoption",
     "child_bootstrap",
+    "child_entry",
     "child_preparation",
     "child_runtime",
     "health",
