@@ -18,6 +18,8 @@ import pytest
 import flowsight.sidecar as sidecar_package
 from flowsight.sidecar import (
     OwnerLock,
+    OwnerLockError,
+    OwnerLockErrorCode,
     StartupChannelError,
     StartupFailure,
     StartupFailureCode,
@@ -74,6 +76,8 @@ def _project(tmp_path: Path) -> Path:
 def _resources(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    *,
+    requested_port: int = 0,
 ) -> tuple[StateStore, tuple[str, ...], StartupReader, int, int]:
     runtime_root = tmp_path / "runtime-root"
     monkeypatch.setattr(
@@ -81,7 +85,10 @@ def _resources(
         "_USER_RUNTIME_PATH",
         lambda *_args, **_kwargs: runtime_root,
     )
-    config = prepare_sidecar_runtime_config(_project(tmp_path), requested_port=0)
+    config = prepare_sidecar_runtime_config(
+        _project(tmp_path),
+        requested_port=requested_port,
+    )
     store = StateStore(config.runtime_root, project_id=config.project_id)
     store.ensure_private_directory()
     parent_owner = OwnerLock.acquire(store)
@@ -389,6 +396,34 @@ def test_publish_failure_removes_attempted_state_then_emits_failure_in_cleanup_o
         reader.close()
 
 
+def test_non_none_publication_result_is_not_a_success_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store, arguments, reader, _owner_fd, _writer_fd = _resources(monkeypatch, tmp_path)
+    canonical_publish = runtime_module._STATE_PUBLISH
+
+    def publish(actual_store: StateStore, state: SidecarState) -> int:
+        canonical_publish(actual_store, state)
+        return 0
+
+    def bridge(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("publish failure must not reach the bridge")
+
+    monkeypatch.setattr(runtime_module, "_STATE_PUBLISH", publish)
+    monkeypatch.setattr(runtime_module, "_SERVE_OWNED_PREBOUND", bridge)
+    try:
+        with pytest.raises(RuntimeError, match=f"^{TRANSACTION_ERROR}$"):
+            run_sidecar_child(arguments)
+        assert reader.receive(timeout=2.0) == StartupFailure(
+            code=StartupFailureCode.SIDECAR_STARTUP_FAILED
+        )
+        assert store.load() is None
+        _assert_owner_released(store)
+    finally:
+        reader.close()
+
+
 def test_ready_attempt_never_falls_back_to_failure_after_bridge_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -405,6 +440,41 @@ def test_ready_attempt_never_falls_back_to_failure_after_bridge_failure(
         listener.close()
         raise RuntimeError("bridge detail")
 
+    monkeypatch.setattr(runtime_module, "_SERVE_OWNED_PREBOUND", bridge)
+    try:
+        with pytest.raises(RuntimeError, match=f"^{TRANSACTION_ERROR}$"):
+            run_sidecar_child(arguments)
+        assert type(reader.receive(timeout=2.0)) is StartupReady
+        _assert_reader_closed(reader)
+        assert store.load() is None
+        _assert_owner_released(store)
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("reported_result", [False, 0], ids=["false", "non-bool"])
+def test_successful_publication_requires_exact_true_compare_removal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reported_result: object,
+) -> None:
+    store, arguments, reader, _owner_fd, _writer_fd = _resources(monkeypatch, tmp_path)
+    canonical_remove = runtime_module._STATE_REMOVE_IF_OWNED
+
+    def remove(actual_store: StateStore, startup_id: str) -> object:
+        assert canonical_remove(actual_store, startup_id) is True
+        return reported_result
+
+    def bridge(
+        _state: SidecarState,
+        listener: socket.socket,
+        *,
+        on_started: Callable[[], None],
+    ) -> None:
+        on_started()
+        listener.close()
+
+    monkeypatch.setattr(runtime_module, "_STATE_REMOVE_IF_OWNED", remove)
     monkeypatch.setattr(runtime_module, "_SERVE_OWNED_PREBOUND", bridge)
     try:
         with pytest.raises(RuntimeError, match=f"^{TRANSACTION_ERROR}$"):
@@ -558,6 +628,9 @@ def test_real_child_publishes_ready_serves_health_and_cleans_up_after_sigterm(
         assert ready.startup_id == state.startup_id
         assert ready.sidecar_pid == process.pid == state.pid
         assert ready.port == state.port
+        with pytest.raises(OwnerLockError) as held:
+            OwnerLock.acquire(store)
+        assert held.value.code is OwnerLockErrorCode.OWNER_LOCK_HELD
 
         connection = http.client.HTTPConnection(state.host, state.port, timeout=2.0)
         try:
@@ -691,6 +764,69 @@ def test_real_child_default_sigterm_releases_os_resources_without_claiming_outer
         reader.close()
         if state is not None and store.load() is not None:
             assert store.remove_if_owned(state.startup_id) is True
+        if owner_fd >= 0:
+            os.close(owner_fd)
+        if writer_fd >= 0:
+            os.close(writer_fd)
+        if process is not None:
+            _reap_child(process)
+
+
+def test_real_child_pre_ready_bind_failure_emits_only_fixed_failure_and_releases_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    occupied = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    occupied.bind(("127.0.0.1", 0))
+    requested_port = occupied.getsockname()[1]
+    store, arguments, reader, owner_fd, writer_fd = _resources(
+        monkeypatch,
+        tmp_path,
+        requested_port=requested_port,
+    )
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        child_cwd = tmp_path / "failed-child"
+        child_cwd.mkdir()
+        process = subprocess.Popen(
+            (
+                sys.executable,
+                "-I",
+                "-u",
+                "-c",
+                CHILD_SOURCE,
+                "custom",
+                str(tmp_path / "runtime-root"),
+                *arguments,
+            ),
+            cwd=child_cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            close_fds=True,
+            pass_fds=(owner_fd, writer_fd),
+            start_new_session=True,
+        )
+        os.close(owner_fd)
+        os.close(writer_fd)
+        owner_fd = -1
+        writer_fd = -1
+
+        assert reader.receive(timeout=10.0) == StartupFailure(
+            code=StartupFailureCode.SIDECAR_STARTUP_FAILED
+        )
+        process.wait(timeout=10.0)
+        stdout, stderr = process.communicate(timeout=5.0)
+        assert process.returncode != 0
+        assert stdout == b""
+        assert b"sidecar child transaction failed" in stderr
+        assert str(tmp_path).encode() not in stderr
+        assert b"requested-port" not in stderr
+        assert store.load() is None
+        _assert_owner_released(store)
+    finally:
+        reader.close()
+        occupied.close()
         if owner_fd >= 0:
             os.close(owner_fd)
         if writer_fd >= 0:
