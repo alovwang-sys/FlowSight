@@ -2,12 +2,32 @@
 
 from __future__ import annotations
 
+import math
 import os
-from typing import Final, Protocol
+import time
+from typing import Final, Protocol, cast
+
+from .incumbent_port import admit_configured_incumbent_port
+from .owner_lock import OwnerLock
+from .runtime_config import SidecarRuntimeConfig
+from .startup_wait import wait_for_owner_election
+from .state import SidecarState, StateStore
 
 _CLOSE: Final = os.close
 _CLEANUP_GRACE_SECONDS: Final = 0.25
 _MIN_DESCRIPTOR: Final = 3
+_MAX_TIMEOUT_SECONDS: Final = 30.0
+
+_CONFIG_TYPE: Final = SidecarRuntimeConfig
+_STORE_TYPE: Final = StateStore
+_STATE_TYPE: Final = SidecarState
+_OWNER_TYPE: Final = OwnerLock
+_CONSTRUCT_STORE: Final = StateStore
+_WAIT_FOR_OWNER_ELECTION: Final = wait_for_owner_election
+_ADMIT_INCUMBENT_PORT: Final = admit_configured_incumbent_port
+_READ_MONOTONIC: Final = time.monotonic
+
+type _ConfigSnapshot = tuple[str, str, str, int | None, float]
 
 
 class _Process(Protocol):
@@ -28,6 +48,112 @@ class _Reaper(Protocol):
 
     @property
     def child_reaped(self) -> bool: ...
+
+
+def _read_config(config: object) -> _ConfigSnapshot | None:
+    if type(config) is not _CONFIG_TYPE:
+        return None
+    try:
+        project_root = object.__getattribute__(config, "project_root")
+        runtime_root = object.__getattribute__(config, "runtime_root")
+        project_id = object.__getattribute__(config, "project_id")
+        requested_port = object.__getattribute__(config, "requested_port")
+        startup_timeout = object.__getattribute__(config, "startup_timeout")
+    except Exception:
+        return None
+    if (
+        type(project_root) is not str
+        or type(runtime_root) is not str
+        or type(project_id) is not str
+        or (requested_port is not None and type(requested_port) is not int)
+        or (type(requested_port) is int and not 0 <= requested_port <= 65_535)
+        or type(startup_timeout) is not float
+        or not math.isfinite(startup_timeout)
+        or not 0.0 < startup_timeout <= _MAX_TIMEOUT_SECONDS
+    ):
+        return None
+    return project_root, runtime_root, project_id, requested_port, startup_timeout
+
+
+def _observe(previous: float | None) -> float | None:
+    try:
+        observed = _READ_MONOTONIC()
+    except Exception:
+        return None
+    if type(observed) is not float or not math.isfinite(observed):
+        return None
+    if previous is not None and observed < previous:
+        return None
+    return observed
+
+
+def _remaining(deadline: float, previous: float) -> tuple[float, float] | None:
+    observed = _observe(previous)
+    if observed is None:
+        return None
+    remaining = deadline - observed
+    if not math.isfinite(remaining) or remaining <= 0.0:
+        return None
+    return observed, remaining
+
+
+def _prepare_election(
+    config: object,
+) -> tuple[SidecarRuntimeConfig, StateStore, float, float] | None:
+    snapshot = _read_config(config)
+    if snapshot is None:
+        return None
+    started = _observe(None)
+    if started is None:
+        return None
+    deadline = started + snapshot[4]
+    if not math.isfinite(deadline) or deadline <= started:
+        return None
+    try:
+        store = _CONSTRUCT_STORE(snapshot[1], project_id=snapshot[2])
+    except Exception:
+        return None
+    if type(store) is not _STORE_TYPE:
+        return None
+    return cast(SidecarRuntimeConfig, config), store, deadline, started
+
+
+def _elect_once(
+    store: StateStore,
+    deadline: float,
+    observed: float,
+) -> tuple[SidecarState | OwnerLock, float] | None:
+    window = _remaining(deadline, observed)
+    if window is None:
+        return None
+    observed, timeout = window
+    try:
+        outcome = _WAIT_FOR_OWNER_ELECTION(store, timeout)
+    except Exception:
+        return None
+    if type(outcome) not in {_STATE_TYPE, _OWNER_TYPE}:
+        return None
+    final_window = _remaining(deadline, observed)
+    if final_window is None:
+        return None
+    return outcome, final_window[0]
+
+
+def _admit_incumbent(
+    config: SidecarRuntimeConfig,
+    incumbent: SidecarState,
+    deadline: float,
+    observed: float,
+) -> SidecarState | None:
+    if _remaining(deadline, observed) is None:
+        return None
+    try:
+        admitted = _ADMIT_INCUMBENT_PORT(config, incumbent)
+    except Exception:
+        return None
+    if type(admitted) is not _STATE_TYPE or admitted is not incumbent:
+        return None
+    return admitted
 
 
 class _ChildHandoff:

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import NoReturn
 
 import pytest
 
 from flowsight.sidecar import parent_runtime as runtime_module
+from flowsight.sidecar import prepare_sidecar_runtime_config
+from flowsight.sidecar import runtime_config as config_module
+from flowsight.sidecar.state import SidecarState, StateStore
 
 
 class _Control(BaseException):
@@ -79,6 +83,18 @@ class _Reaper:
 
 def _writer() -> tuple[int, int]:
     return os.pipe()
+
+
+def _config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
+    project = tmp_path / "project"
+    project.mkdir()
+    runtime_root = tmp_path / "runtime-root"
+    monkeypatch.setattr(
+        config_module,
+        "_USER_RUNTIME_PATH",
+        lambda *_args, **_kwargs: runtime_root,
+    )
+    return prepare_sidecar_runtime_config(project)
 
 
 def test_start_failure_keeps_gate_held_and_parent_waits_once() -> None:
@@ -292,3 +308,50 @@ def test_wait_control_outranks_an_ordinary_terminate_failure() -> None:
         os.close(reader)
         assert handoff.retire_writer_after_reaped_cleanup() is False
         os.close(writer)
+
+
+def test_prepare_and_election_use_one_fresh_bounded_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    clocks = iter((10.0, 10.1, 10.2, 10.3))
+    calls: list[tuple[StateStore, float]] = []
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", lambda: next(clocks))
+    monkeypatch.setattr(runtime_module, "_CONSTRUCT_STORE", lambda *_args, **_kwargs: store)
+
+    def election(actual_store: StateStore, timeout: float) -> object:
+        calls.append((actual_store, timeout))
+        return object()
+
+    monkeypatch.setattr(runtime_module, "_WAIT_FOR_OWNER_ELECTION", election)
+    prepared = runtime_module._prepare_election(config)
+    assert prepared is not None
+    _config_value, actual_store, deadline, observed = prepared
+    assert deadline == 15.0
+    assert observed == 10.0
+    assert runtime_module._elect_once(actual_store, deadline, observed) is None
+    assert calls == [(store, 4.9)]
+
+
+def test_incumbent_requires_fresh_deadline_before_port_admission(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    incumbent = SidecarState(
+        project_id=config.project_id,
+        startup_id="a" * 32,
+        pid=123,
+        port=8123,
+        token="x" * 32,
+        database_path=str(tmp_path / "events.sqlite3"),
+        started_at_ns=1,
+    )
+    calls: list[object] = []
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", lambda: 5.0)
+    monkeypatch.setattr(runtime_module, "_ADMIT_INCUMBENT_PORT", lambda *_args: calls.append(1))
+
+    assert runtime_module._admit_incumbent(config, incumbent, 5.0, 5.0) is None
+    assert calls == []
