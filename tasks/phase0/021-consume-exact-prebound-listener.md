@@ -6,7 +6,7 @@
 task_id: P0-021
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-020, TRIAL-004]
@@ -162,34 +162,34 @@ control-plane records; they do not expand the product-code allowlist above.
 
 ## Acceptance Criteria
 
-- [ ] `serve_owned_prebound_sidecar_app` is exported identically from
+- [x] `serve_owned_prebound_sidecar_app` is exported identically from
   `flowsight.sidecar`, occurs exactly once in `__all__`, has the fixed signature,
   and is the only new production surface. It returns exact `None` only when the
   reused P0-020 serving path succeeds and adds no class, token, result, handle,
   callback, alternate overload, or async variant.
-- [ ] Exact top-level admission order is state, listener, then startup function.
+- [x] Exact top-level admission order is state, listener, then startup function.
   Each wrong type raises the same fixed P0-020 `TypeError` before any slot,
   function-kind, preflight, server, or close work; a valid listener remains
   caller-owned, open, and unchanged. Derived/duck/callable inputs cannot dispatch
   unknown protocols.
-- [ ] Immediately after the third exact type admission, production calls one
+- [x] Immediately after the third exact type admission, production calls one
   private owned helper with no dependency call, function-kind check, callback,
   mutable seam, or other fallible operation in the gap. The helper initializes
   only four fixed scalar locals; entry into its immediately following
   close-bearing region terminally transfers the listener for every reviewed
   later ordinary and process-control outcome. Production contains no ownership
   marker or boolean.
-- [ ] The close-bearing failure region inside that helper wraps only P0-020's
+- [x] The close-bearing failure region inside that helper wraps only P0-020's
   captured exact coroutine/generator/async-generator checks, captured preflight,
   and exact integer port postcondition. Exact unsupported function shapes enter
   the fixed rejection/cleanup matrix; no hook invocation or un-awaited object
   occurs.
-- [ ] The complete captured P0-020 state/listener/thread/loop compatibility
+- [x] The complete captured P0-020 state/listener/thread/loop compatibility
   preflight executes inside that close-bearing region. Every incompatibility
   enters the fixed rejection/cleanup matrix. Linux/Darwin listener probes,
   exact PID/host/port, main-thread/no-running-loop, socket identity, and privacy
   behavior remain unchanged rather than copied.
-- [ ] Rejection plus cleanup is exhaustive: successful close preserves the hook
+- [x] Rejection plus cleanup is exhaustive: successful close preserves the hook
   `TypeError` or compatibility `ValueError`; ordinary, ambiguous, false, or
   non-`None` close becomes the fixed server `RuntimeError`; cleanup process
   control without active control propagates unchanged; active process control
@@ -198,23 +198,23 @@ control-plane records; they do not expand the product-code allowlist above.
   seams cover only canonical delegation or synchronous failure; defensive
   false/non-`None` close-result branches are frozen by exact helper-body and
   full-tree AST evidence rather than a forged return.
-- [ ] After exact port success leaves the close-bearing region, one
+- [x] After exact port success leaves the close-bearing region, one
   identity-only rejection selection falls through to the direct
   `return _serve_owned(state, listener, on_started, admitted_port)`. The call is
   outside every listener-closing `except`/`finally`; its sole handler scrubs
   traceback locals and re-raises without any call. No callback, validation
   protocol, ownership mutation, marker, or boolean lies in the admitted
   handoff, and `_serve_owned` alone closes thereafter.
-- [ ] Normal return, every ordinary app/Config/Server/run/notifier/result/close
+- [x] Normal return, every ordinary app/Config/Server/run/notifier/result/close
   failure, and synchronous process control after `_serve_owned` delegation keep
   all P0-020 behavior and perform no second P0-021 close. Ordinary failures retain
   P0-020's fixed `RuntimeError`; controls retain identity and cleanup-note rules.
-- [ ] Close arbitration is exhaustive and mutually exclusive: failure-region
+- [x] Close arbitration is exhaustive and mutually exclusive: failure-region
   ordinary/control paths call only reused canonical close helpers; successful
   paths leave that region and call only `_serve_owned` cleanup. Ordinary,
   ambiguous, non-`None`, and process-control close results are never retried or
   reported as physical closure without evidence.
-- [ ] The old `serve_prebound_sidecar_app` public identity, signature, top-level
+- [x] The old `serve_prebound_sidecar_app` public identity, signature, top-level
   error order, caller-owned incompatibility behavior, transfer point, Config,
   runtime, and full existing test suite remain unchanged. Public replacement
   cannot redirect either API away from captured helpers. Every authorized
@@ -226,7 +226,7 @@ control-plane records; they do not expand the product-code allowlist above.
   `_close_listener` and `_close_during_control` remain canonical structural
   cleanup helpers; fault injection uses only their captured `_SOCKET_CLOSE` and
   `_ADD_NOTE` dependencies.
-- [ ] Deterministic fault tests cover top-level admission, owned-guard entry and
+- [x] Deterministic fault tests cover top-level admission, owned-guard entry and
   the first guarded dependency, every authorized failure-region seam, direct
   handoff, and delegated dependency outcome; exact call counts/order;
   unsupported function shapes; all
@@ -234,15 +234,15 @@ control-plane records; they do not expand the product-code allowlist above.
   post-preflight port-check control injection inside the guard; caller-active
   contexts; no retention/output/log leakage; and mutations that would otherwise
   survive a weak ownership test.
-- [ ] Real child tests invoke the new API on one P0-003 listener/P0-007 state,
+- [x] Real child tests invoke the new API on one P0-003 listener/P0-007 state,
   forbid any later network bind, and prove authenticated health uses that exact
   PID/port/listener with wrong-token/Host rejection and no token/server/date/
   CORS/output leakage. No connect-only marker may substitute for HTTP evidence.
-- [ ] Real custom-handler and default-`SIG_DFL` SIGTERM modes preserve P0-020's
+- [x] Real custom-handler and default-`SIG_DFL` SIGTERM modes preserve P0-020's
   restored-handler replay, normal-return versus exact `-SIGTERM` distinction,
   bounded graceful shutdown, listener/OS release, rebind, process-group cleanup,
   and reap evidence without claiming arbitrary Python-finally execution.
-- [ ] A positive full-tree AST allowlist freezes exact imports, immutable
+- [x] A positive full-tree AST allowlist freezes exact imports, immutable
   captures, both public signatures, top-level admission order, immediate owned
   helper, four scalar initializations, the narrow close-bearing region, absence
   of ownership markers, identity-only rejection selection, direct return handoff
@@ -251,7 +251,7 @@ control-plane records; they do not expand the product-code allowlist above.
   It rejects copied Config/Server/runtime logic, ownership inference, new socket/
   process/state/channel/storage/SDK/OTel/UI/tracepoint behavior, dynamic calls,
   logging, output, mutable state, or unreviewed nested definitions.
-- [ ] Focused tests, `make test-phase0`, `make check`, and `make gate-phase0`
+- [x] Focused tests, `make test-phase0`, `make check`, and `make gate-phase0`
   pass locally and on macOS/Linux x CPython 3.12/3.13 CI. The partial-scaffold
   disclaimer remains explicit and this bridge is not Phase 0 acceptance.
 
@@ -346,7 +346,7 @@ Quality Governor:
 ## Verifier Evidence
 
 - Command: `.venv/bin/ruff format --check flowsight/sidecar/server_runtime.py flowsight/sidecar/__init__.py tests/sidecar/test_server_runtime.py tests/sidecar/test_runtime_config.py`
-- Result: passed; 4 files already formatted
+- Result: passed
 - Command: `.venv/bin/ruff check flowsight/sidecar/server_runtime.py flowsight/sidecar/__init__.py tests/sidecar/test_server_runtime.py tests/sidecar/test_runtime_config.py`; `.venv/bin/mypy flowsight/sidecar/server_runtime.py`
 - Result: passed; no lint or type errors
 - Command: `.venv/bin/python -m pytest tests/sidecar/test_server_runtime.py tests/sidecar/test_runtime_config.py -q`
@@ -359,9 +359,13 @@ Quality Governor:
   remained explicit
 - Command: `.venv/bin/python scripts/validate_agent_system.py`; `git diff --check`; `git diff -- tasks/phase0/022-run-sidecar-child-transaction.md`
 - Result: passed; exact five-path working diff and zero P0-022 diff
-- Notes: candidate CI evidence is pending, so status remains `in_progress` and
-  every acceptance criterion remains unchecked until the authorized branch push
-  passes macOS/Linux on CPython 3.12/3.13.
+- Candidate commit: `cc5ce92797ff35230fa3c46efedc9ca0df3446d5`
+- CI: [agent-checks run 29179149118](https://github.com/alovwang-sys/FlowSight/actions/runs/29179149118)
+  passed on macOS 3.13 (86613592597), Ubuntu 3.12 (86613592598), macOS 3.12
+  (86613592601), and Ubuntu 3.13 (86613592606).
+- Notes: candidate CI covers every required operating-system and CPython matrix
+  entry. This completion-only update records that evidence; it changes no
+  product or test behavior.
 
 ## Failure Queue Items
 
