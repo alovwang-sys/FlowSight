@@ -31,7 +31,7 @@ INVALID_ERROR = "sidecar child bootstrap is invalid"
 CONSTRUCTION_ERROR = "SidecarChildBootstrap must be decoded"
 SERIALIZATION_ERROR = "SidecarChildBootstrap cannot be serialized"
 IMMUTABILITY_ERROR = "SidecarChildBootstrap is immutable"
-BOOTSTRAP_MARKER = "flowsight-sidecar-bootstrap-v1"
+BOOTSTRAP_MARKER = "flowsight-sidecar-bootstrap-v2"
 MAX_DESCRIPTOR = 2_147_483_647
 EXPECTED_ARGUMENT_PREFIXES = (
     "",
@@ -42,6 +42,7 @@ EXPECTED_ARGUMENT_PREFIXES = (
     "startup-timeout=",
     "owner-lock-fd=",
     "startup-writer-fd=",
+    "parent-handoff-fd=",
 )
 
 
@@ -111,11 +112,13 @@ def _arguments(
     *,
     owner_lock_fd: int = 3,
     startup_writer_fd: int = 4,
+    parent_handoff_fd: int = 5,
 ) -> tuple[str, ...]:
     return encode_sidecar_child_bootstrap(
         config,
         owner_lock_fd=owner_lock_fd,
         startup_writer_fd=startup_writer_fd,
+        parent_handoff_fd=parent_handoff_fd,
     )
 
 
@@ -189,7 +192,8 @@ def _lstat_signature(path: Path) -> tuple[int, ...]:
 
 def test_public_exports_schema_and_signatures_are_exact() -> None:
     assert type(CHILD_BOOTSTRAP_SCHEMA_VERSION) is int
-    assert CHILD_BOOTSTRAP_SCHEMA_VERSION == 1
+    assert CHILD_BOOTSTRAP_SCHEMA_VERSION == 2
+    assert BOOTSTRAP_MARKER == "flowsight-sidecar-bootstrap-v2"
     assert sidecar_package.CHILD_BOOTSTRAP_SCHEMA_VERSION is CHILD_BOOTSTRAP_SCHEMA_VERSION
     assert sidecar_package.SidecarChildBootstrap is SidecarChildBootstrap
     assert sidecar_package.encode_sidecar_child_bootstrap is encode_sidecar_child_bootstrap
@@ -207,10 +211,12 @@ def test_public_exports_schema_and_signatures_are_exact() -> None:
         "config",
         "owner_lock_fd",
         "startup_writer_fd",
+        "parent_handoff_fd",
     )
     assert encode_signature.parameters["config"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
     assert encode_signature.parameters["owner_lock_fd"].kind is inspect.Parameter.KEYWORD_ONLY
     assert encode_signature.parameters["startup_writer_fd"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert encode_signature.parameters["parent_handoff_fd"].kind is inspect.Parameter.KEYWORD_ONLY
     assert encode_signature.return_annotation == "tuple[str, ...]"
 
     decode_signature = inspect.signature(decode_sidecar_child_bootstrap)
@@ -256,12 +262,14 @@ def test_canonical_known_vector_round_trips_a_new_exact_config(
         "startup-timeout=0x1.4000000000000p+2",
         "owner-lock-fd=3",
         "startup-writer-fd=2147483647",
+        "parent-handoff-fd=4",
     )
 
     encoded = encode_sidecar_child_bootstrap(
         config,
         owner_lock_fd=3,
         startup_writer_fd=MAX_DESCRIPTOR,
+        parent_handoff_fd=4,
     )
     assert type(encoded) is tuple
     assert encoded == expected
@@ -276,6 +284,7 @@ def test_canonical_known_vector_round_trips_a_new_exact_config(
     assert decoded.config == config
     assert decoded.owner_lock_fd == 3
     assert decoded.startup_writer_fd == MAX_DESCRIPTOR
+    assert decoded.parent_handoff_fd == 4
     assert not hasattr(decoded, "__dict__")
 
 
@@ -345,16 +354,22 @@ def test_supported_surrogateescape_path_round_trips_exactly(
     assert decoded.config.runtime_root == runtime_text
 
 
-def test_result_hooks_are_exact_and_retain_only_three_fields(
+def test_result_hooks_are_exact_and_retain_only_four_fields(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     result = decode_sidecar_child_bootstrap(_arguments(_prepare(monkeypatch, tmp_path)))
-    assert SidecarChildBootstrap.__slots__ == ("config", "owner_lock_fd", "startup_writer_fd")
+    assert SidecarChildBootstrap.__slots__ == (
+        "config",
+        "owner_lock_fd",
+        "startup_writer_fd",
+        "parent_handoff_fd",
+    )
     assert set(inspect.get_annotations(SidecarChildBootstrap)) == {
         "config",
         "owner_lock_fd",
         "startup_writer_fd",
+        "parent_handoff_fd",
     }
 
     for operation in (
@@ -488,6 +503,7 @@ def test_encode_rejects_inexact_invalid_or_equal_descriptors_before_config_read(
             config,
             owner_lock_fd=owner_lock_fd,  # type: ignore[arg-type]
             startup_writer_fd=startup_writer_fd,  # type: ignore[arg-type]
+            parent_handoff_fd=5,
         )
 
     _assert_fixed_error(captured.value)
@@ -495,6 +511,35 @@ def test_encode_rejects_inexact_invalid_or_equal_descriptors_before_config_read(
         captured.value,
         ("encode_sidecar_child_bootstrap", "_raise_invalid"),
     )
+    assert events == []
+
+
+@pytest.mark.parametrize(
+    "parent_handoff_fd",
+    [True, _IntSubclass(5), None, object(), -1, 0, 1, 2, MAX_DESCRIPTOR + 1, 3, 4],
+)
+def test_encode_rejects_invalid_or_non_distinct_parent_handoff_before_config_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    parent_handoff_fd: object,
+) -> None:
+    config = _prepare(monkeypatch, tmp_path)
+    events: list[str] = []
+    monkeypatch.setattr(
+        bootstrap_module,
+        "_read_config_slots",
+        lambda _config: events.append("config-read"),
+    )
+
+    with pytest.raises(ValueError) as captured:
+        encode_sidecar_child_bootstrap(
+            config,
+            owner_lock_fd=3,
+            startup_writer_fd=4,
+            parent_handoff_fd=parent_handoff_fd,  # type: ignore[arg-type]
+        )
+
+    _assert_fixed_error(captured.value)
     assert events == []
 
 
@@ -519,6 +564,7 @@ def test_encode_rejects_wrong_config_before_descriptor_or_factory_work(
             wrong,  # type: ignore[arg-type]
             owner_lock_fd=3,
             startup_writer_fd=4,
+            parent_handoff_fd=5,
         )
     _assert_fixed_error(captured.value)
     _assert_production_traceback_has_no_locals(
@@ -671,7 +717,7 @@ def test_decode_rejects_inexact_container_arity_and_item_types_before_factory(
         _replace(arguments, 4, 0),
     ]
     candidates.extend(
-        _replace(arguments, index, _TextSubclass(arguments[index])) for index in range(8)
+        _replace(arguments, index, _TextSubclass(arguments[index])) for index in range(9)
     )
     calls: list[str] = []
     monkeypatch.setattr(
@@ -690,7 +736,7 @@ def test_decode_rejects_inexact_container_arity_and_item_types_before_factory(
     assert calls == []
 
 
-@pytest.mark.parametrize("index", range(8))
+@pytest.mark.parametrize("index", range(9))
 @pytest.mark.parametrize("control", ["\x00", "\n", "\x7f"])
 def test_decode_rejects_control_text_at_every_position_before_factory(
     monkeypatch: pytest.MonkeyPatch,
@@ -721,7 +767,7 @@ def test_decode_rejects_control_text_at_every_position_before_factory(
 @pytest.mark.parametrize(
     ("index", "replacement"),
     [
-        (0, "flowsight-sidecar-bootstrap-v2"),
+        (0, "flowsight-sidecar-bootstrap-v1"),
         (0, ""),
         (1, "project-root="),
         (1, "runtime-root=/private/project"),
@@ -815,6 +861,38 @@ def test_decode_rejects_noncanonical_numeric_fields_before_factory(
     )
     with pytest.raises(ValueError) as captured:
         decode_sidecar_child_bootstrap(malformed)  # type: ignore[arg-type]
+    _assert_fixed_error(captured.value)
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "parent-handoff-fd=",
+        "parent-handoff-fd=05",
+        "parent-handoff-fd=+5",
+        "parent-handoff-fd=2",
+        "parent-handoff-fd=2147483648",
+        "parent-handoff-fd=3",
+        "parent-handoff-fd=4",
+    ],
+)
+def test_decode_rejects_invalid_or_non_distinct_parent_handoff_before_factory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    replacement: str,
+) -> None:
+    arguments = _arguments(_prepare(monkeypatch, tmp_path))
+    calls: list[str] = []
+    monkeypatch.setattr(
+        bootstrap_module,
+        "_prepare_runtime_config",
+        lambda *_args: calls.append("factory"),
+    )
+
+    with pytest.raises(ValueError) as captured:
+        decode_sidecar_child_bootstrap(_replace(arguments, 8, replacement))  # type: ignore[arg-type]
+
     _assert_fixed_error(captured.value)
     assert calls == []
 
@@ -949,7 +1027,7 @@ def test_decode_byte_budget_boundary_precedes_factory(
 
     def sized_fsencode(value: str) -> bytes:
         fsencode_calls.append(value)
-        encoded = b"x" * (target_bytes - 15) if len(fsencode_calls) == 1 else b"x"
+        encoded = b"x" * (target_bytes - 17) if len(fsencode_calls) == 1 else b"x"
         encoded_lengths.append(len(encoded))
         return encoded
 
@@ -975,7 +1053,7 @@ def test_decode_byte_budget_boundary_precedes_factory(
             decode_sidecar_child_bootstrap(arguments)
         _assert_fixed_error(captured.value)
         assert factory_calls == []
-    assert len(fsencode_calls) == 8
+    assert len(fsencode_calls) == 9
     assert all(length > 0 for length in encoded_lengths)
     assert sum(encoded_lengths) + len(encoded_lengths) == target_bytes
 
@@ -1352,9 +1430,18 @@ def test_codec_never_calls_descriptor_or_process_operations(
 
     for name in ("close", "dup", "fstat", "set_inheritable"):
         monkeypatch.setattr(os, name, forbidden(name))
-    arguments = _arguments(config, owner_lock_fd=91, startup_writer_fd=92)
+    arguments = _arguments(
+        config,
+        owner_lock_fd=91,
+        startup_writer_fd=92,
+        parent_handoff_fd=93,
+    )
     decoded = decode_sidecar_child_bootstrap(arguments)
-    assert (decoded.owner_lock_fd, decoded.startup_writer_fd) == (91, 92)
+    assert (decoded.owner_lock_fd, decoded.startup_writer_fd, decoded.parent_handoff_fd) == (
+        91,
+        92,
+        93,
+    )
     assert calls == []
 
 
@@ -1483,13 +1570,13 @@ def test_source_is_one_inert_codec_with_exact_dependency_and_call_allowlists() -
         "_PREPARE_SIDECAR_RUNTIME_CONFIG": 1,
         "_argument_byte_lengths": 2,
         "_decode_bootstrap": 1,
-        "_descriptor": 2,
+        "_descriptor": 3,
         "_encode_bootstrap": 1,
-        "_field": 7,
+        "_field": 8,
         "_format_arguments": 2,
         "_fsencode": 1,
         "_make_bootstrap": 1,
-        "_parse_decimal": 3,
+        "_parse_decimal": 4,
         "_parse_port": 1,
         "_parse_timeout": 1,
         "_prepare_config_snapshot": 2,
@@ -1510,14 +1597,14 @@ def test_source_is_one_inert_codec_with_exact_dependency_and_call_allowlists() -
         "int": 1,
         "len": 15,
         "lengths.append": 1,
-        "object.__getattribute__": 8,
+        "object.__getattribute__": 9,
         "object.__new__": 1,
-        "object.__setattr__": 3,
+        "object.__setattr__": 4,
         "ord": 2,
         "result.hex": 1,
         "str": 2,
         "tuple": 1,
-        "type": 18,
+        "type": 19,
     }
     os_attributes = {
         node.attr
@@ -1589,6 +1676,7 @@ def test_source_is_one_inert_codec_with_exact_dependency_and_call_allowlists() -
         "_STARTUP_TIMEOUT_PREFIX",
         "_OWNER_LOCK_FD_PREFIX",
         "_STARTUP_WRITER_FD_PREFIX",
+        "_PARENT_HANDOFF_FD_PREFIX",
         "_ARGUMENT_COUNT",
         "_MAX_ARGUMENT_BYTES",
         "_MAX_PATH_CHARACTERS",
@@ -1658,7 +1746,7 @@ def test_source_is_one_inert_codec_with_exact_dependency_and_call_allowlists() -
         node.target.id
         for node in result_class.body
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-    ] == ["config", "owner_lock_fd", "startup_writer_fd"]
+    ] == ["config", "owner_lock_fd", "startup_writer_fd", "parent_handoff_fd"]
     assert [
         target.id
         for node in result_class.body
@@ -1733,8 +1821,14 @@ def test_source_reads_and_writes_only_the_exact_reviewed_slots() -> None:
         "config",
         "owner_lock_fd",
         "startup_writer_fd",
+        "parent_handoff_fd",
     ]
-    assert setattr_fields == ["config", "owner_lock_fd", "startup_writer_fd"]
+    assert setattr_fields == [
+        "config",
+        "owner_lock_fd",
+        "startup_writer_fd",
+        "parent_handoff_fd",
+    ]
 
 
 def test_source_does_not_reenter_public_encoder_from_decoder() -> None:

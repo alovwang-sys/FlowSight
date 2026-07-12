@@ -7,9 +7,9 @@ from typing import Final, NoReturn, cast
 
 from .runtime_config import SidecarRuntimeConfig, prepare_sidecar_runtime_config
 
-CHILD_BOOTSTRAP_SCHEMA_VERSION: Final = 1
+CHILD_BOOTSTRAP_SCHEMA_VERSION: Final = 2
 
-_BOOTSTRAP_MARKER: Final = "flowsight-sidecar-bootstrap-v1"
+_BOOTSTRAP_MARKER: Final = "flowsight-sidecar-bootstrap-v2"
 _PROJECT_ROOT_PREFIX: Final = "project-root="
 _RUNTIME_ROOT_PREFIX: Final = "runtime-root="
 _PROJECT_ID_PREFIX: Final = "project-id="
@@ -17,7 +17,8 @@ _REQUESTED_PORT_PREFIX: Final = "requested-port="
 _STARTUP_TIMEOUT_PREFIX: Final = "startup-timeout="
 _OWNER_LOCK_FD_PREFIX: Final = "owner-lock-fd="
 _STARTUP_WRITER_FD_PREFIX: Final = "startup-writer-fd="
-_ARGUMENT_COUNT: Final = 8
+_PARENT_HANDOFF_FD_PREFIX: Final = "parent-handoff-fd="
+_ARGUMENT_COUNT: Final = 9
 _MAX_ARGUMENT_BYTES: Final = 9216
 _MAX_PATH_CHARACTERS: Final = 4096
 _MAX_PATH_BYTES: Final = 4096
@@ -66,11 +67,13 @@ def _make_bootstrap(
     config: SidecarRuntimeConfig,
     owner_lock_fd: int,
     startup_writer_fd: int,
+    parent_handoff_fd: int,
 ) -> object:
     result: SidecarChildBootstrap = object.__new__(_BOOTSTRAP_TYPE)
     object.__setattr__(result, "config", config)
     object.__setattr__(result, "owner_lock_fd", owner_lock_fd)
     object.__setattr__(result, "startup_writer_fd", startup_writer_fd)
+    object.__setattr__(result, "parent_handoff_fd", parent_handoff_fd)
     return result
 
 
@@ -79,17 +82,19 @@ def _read_bootstrap_slots(bootstrap: SidecarChildBootstrap) -> object:
         object.__getattribute__(bootstrap, "config"),
         object.__getattribute__(bootstrap, "owner_lock_fd"),
         object.__getattribute__(bootstrap, "startup_writer_fd"),
+        object.__getattribute__(bootstrap, "parent_handoff_fd"),
     )
 
 
 class SidecarChildBootstrap:
-    """Re-derived child configuration plus two inert descriptor locators."""
+    """Re-derived child configuration plus three inert descriptor locators."""
 
-    __slots__ = ("config", "owner_lock_fd", "startup_writer_fd")
+    __slots__ = ("config", "owner_lock_fd", "startup_writer_fd", "parent_handoff_fd")
 
     config: SidecarRuntimeConfig
     owner_lock_fd: int
     startup_writer_fd: int
+    parent_handoff_fd: int
 
     def __new__(cls, /, *args: object, **kwargs: object) -> NoReturn:
         del cls, args, kwargs
@@ -193,6 +198,7 @@ def _format_arguments(
     snapshot: _ConfigSnapshot,
     owner_lock_fd: int,
     startup_writer_fd: int,
+    parent_handoff_fd: int,
 ) -> tuple[str, ...]:
     requested_port = "none" if snapshot[3] is None else str(snapshot[3])
     return (
@@ -204,6 +210,7 @@ def _format_arguments(
         f"{_STARTUP_TIMEOUT_PREFIX}{float.hex(snapshot[4])}",
         f"{_OWNER_LOCK_FD_PREFIX}{owner_lock_fd}",
         f"{_STARTUP_WRITER_FD_PREFIX}{startup_writer_fd}",
+        f"{_PARENT_HANDOFF_FD_PREFIX}{parent_handoff_fd}",
     )
 
 
@@ -226,12 +233,18 @@ def _encode_bootstrap(
     config: object,
     owner_lock_fd: object,
     startup_writer_fd: object,
+    parent_handoff_fd: object,
 ) -> tuple[str, ...]:
     if type(config) is not _CONFIG_TYPE:
         raise _BootstrapFailure
     normalized_owner_fd = _descriptor(owner_lock_fd)
     normalized_writer_fd = _descriptor(startup_writer_fd)
-    if normalized_owner_fd == normalized_writer_fd:
+    normalized_handoff_fd = _descriptor(parent_handoff_fd)
+    if (
+        normalized_owner_fd == normalized_writer_fd
+        or normalized_owner_fd == normalized_handoff_fd
+        or normalized_writer_fd == normalized_handoff_fd
+    ):
         raise _BootstrapFailure
     source_snapshot = _snapshot_config(config)
     _prepared, prepared_snapshot = _prepare_config_snapshot(
@@ -245,6 +258,7 @@ def _encode_bootstrap(
         prepared_snapshot,
         normalized_owner_fd,
         normalized_writer_fd,
+        normalized_handoff_fd,
     )
     _argument_byte_lengths(arguments)
     return arguments
@@ -320,6 +334,7 @@ def _decode_bootstrap(arguments: object) -> SidecarChildBootstrap:
     startup_timeout_text = _field(typed_arguments, 5, _STARTUP_TIMEOUT_PREFIX)
     owner_lock_fd_text = _field(typed_arguments, 6, _OWNER_LOCK_FD_PREFIX)
     startup_writer_fd_text = _field(typed_arguments, 7, _STARTUP_WRITER_FD_PREFIX)
+    parent_handoff_fd_text = _field(typed_arguments, 8, _PARENT_HANDOFF_FD_PREFIX)
 
     if (
         len(project_root) > _MAX_PATH_CHARACTERS
@@ -344,7 +359,17 @@ def _decode_bootstrap(arguments: object) -> SidecarChildBootstrap:
         minimum=3,
         maximum=_MAX_DESCRIPTOR,
     )
-    if owner_lock_fd == startup_writer_fd:
+    parent_handoff_fd = _parse_decimal(
+        parent_handoff_fd_text,
+        maximum_digits=10,
+        minimum=3,
+        maximum=_MAX_DESCRIPTOR,
+    )
+    if (
+        owner_lock_fd == startup_writer_fd
+        or owner_lock_fd == parent_handoff_fd
+        or startup_writer_fd == parent_handoff_fd
+    ):
         raise _BootstrapFailure
 
     prepared_config, prepared_snapshot = _prepare_config_snapshot(
@@ -361,23 +386,38 @@ def _decode_bootstrap(arguments: object) -> SidecarChildBootstrap:
     )
     if not _snapshots_equal(prepared_snapshot, proof_snapshot):
         raise _BootstrapFailure
-    if _format_arguments(prepared_snapshot, owner_lock_fd, startup_writer_fd) != typed_arguments:
+    if (
+        _format_arguments(
+            prepared_snapshot,
+            owner_lock_fd,
+            startup_writer_fd,
+            parent_handoff_fd,
+        )
+        != typed_arguments
+    ):
         raise _BootstrapFailure
 
-    candidate = _make_bootstrap(prepared_config, owner_lock_fd, startup_writer_fd)
+    candidate = _make_bootstrap(
+        prepared_config,
+        owner_lock_fd,
+        startup_writer_fd,
+        parent_handoff_fd,
+    )
     if type(candidate) is not _BOOTSTRAP_TYPE:
         raise _BootstrapFailure
     bootstrap = candidate
     slots = _read_bootstrap_slots(bootstrap)
-    if type(slots) is not tuple or len(slots) != 3:
+    if type(slots) is not tuple or len(slots) != 4:
         raise _BootstrapFailure
-    stored_config, stored_owner_fd, stored_writer_fd = slots
+    stored_config, stored_owner_fd, stored_writer_fd, stored_handoff_fd = slots
     if (
         stored_config is not prepared_config
         or type(stored_owner_fd) is not int
         or stored_owner_fd != owner_lock_fd
         or type(stored_writer_fd) is not int
         or stored_writer_fd != startup_writer_fd
+        or type(stored_handoff_fd) is not int
+        or stored_handoff_fd != parent_handoff_fd
     ):
         raise _BootstrapFailure
     return bootstrap
@@ -388,16 +428,22 @@ def encode_sidecar_child_bootstrap(
     *,
     owner_lock_fd: int,
     startup_writer_fd: int,
+    parent_handoff_fd: int,
 ) -> tuple[str, ...]:
     """Return the one canonical inert argv suffix for a future launcher."""
 
     result: tuple[str, ...] | None = None
     failed = False
     try:
-        result = _encode_bootstrap(config, owner_lock_fd, startup_writer_fd)
+        result = _encode_bootstrap(
+            config,
+            owner_lock_fd,
+            startup_writer_fd,
+            parent_handoff_fd,
+        )
     except Exception:
         failed = True
-    del config, owner_lock_fd, startup_writer_fd
+    del config, owner_lock_fd, startup_writer_fd, parent_handoff_fd
     if failed or type(result) is not tuple:
         del result, failed
         _raise_invalid()

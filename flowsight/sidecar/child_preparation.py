@@ -7,6 +7,7 @@ from typing import Final, NoReturn
 from .child_adoption import adopt_sidecar_child_descriptors
 from .child_bootstrap import SidecarChildBootstrap, decode_sidecar_child_bootstrap
 from .owner_lock import OwnerLock
+from .parent_handoff import await_parent_handoff
 from .runtime_config import SidecarRuntimeConfig
 from .startup_channel import StartupWriter
 
@@ -14,6 +15,7 @@ _BOOTSTRAP_TYPE: Final = SidecarChildBootstrap
 _CONFIG_TYPE: Final = SidecarRuntimeConfig
 
 _DECODE_BOOTSTRAP: Final = decode_sidecar_child_bootstrap
+_AWAIT_PARENT_HANDOFF: Final = await_parent_handoff
 _ADOPT_DESCRIPTORS: Final = adopt_sidecar_child_descriptors
 
 type _PreparedChild = tuple[SidecarRuntimeConfig, OwnerLock, StartupWriter]
@@ -24,6 +26,10 @@ class _DecodeStageFailure(Exception):
 
 
 class _AdoptionStageFailure(Exception):
+    pass
+
+
+class _HandoffStageFailure(Exception):
     pass
 
 
@@ -56,17 +62,31 @@ def _decode_stage(
     raise _DecodeStageFailure from None
 
 
+def _await_handoff(bootstrap: SidecarChildBootstrap) -> None:
+    _AWAIT_PARENT_HANDOFF(bootstrap)
+
+
 def _prepare_child(arguments: tuple[str, ...]) -> _PreparedChild:
     bootstrap, config = _decode_stage(arguments)
     del arguments
     try:
+        _await_handoff(bootstrap)
+    except Exception:
+        del bootstrap, config
+        raise _HandoffStageFailure from None
+    except BaseException:
+        del bootstrap, config
+        raise
+    try:
         pair = _ADOPT_DESCRIPTORS(bootstrap)
     except Exception:
-        pass
+        del bootstrap, config
+        raise _AdoptionStageFailure from None
+    except BaseException:
+        del bootstrap, config
+        raise
     else:
         return (config, pair[0], pair[1])
-    del bootstrap, config
-    raise _AdoptionStageFailure from None
 
 
 def _raise_decode_failure() -> NoReturn:
@@ -87,7 +107,7 @@ def prepare_sidecar_child(
         return _prepare_child(arguments)
     except _DecodeStageFailure:
         failure = 1
-    except _AdoptionStageFailure:
+    except (_HandoffStageFailure, _AdoptionStageFailure):
         failure = 2
     del arguments
     if failure == 1:

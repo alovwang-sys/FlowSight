@@ -5,6 +5,7 @@ import http.client
 import inspect
 import json
 import os
+import select
 import signal
 import socket
 import subprocess
@@ -21,11 +22,13 @@ from flowsight.sidecar import (
     OwnerLockError,
     OwnerLockErrorCode,
     StartupChannelError,
+    StartupChannelErrorCode,
     StartupFailure,
     StartupFailureCode,
     StartupReader,
     StartupReady,
     StateStore,
+    decode_sidecar_child_bootstrap,
     encode_sidecar_child_bootstrap,
     open_startup_channel,
     prepare_sidecar_runtime_config,
@@ -47,15 +50,18 @@ class _TupleSubclass(tuple[str, ...]):
 
 
 CHILD_SOURCE = r"""
+import os
 import signal
 import sys
 from pathlib import Path
 
 from flowsight.sidecar import run_sidecar_child
+from flowsight.sidecar import child_preparation as preparation_module
 from flowsight.sidecar import runtime_config as config_module
 
 mode = sys.argv[1]
 runtime_root = Path(sys.argv[2])
+gate_writer_fd = int(sys.argv[3])
 config_module._USER_RUNTIME_PATH = lambda *_args, **_kwargs: runtime_root
 if mode == "custom":
     signal.signal(signal.SIGTERM, lambda _signum, _frame: None)
@@ -63,7 +69,15 @@ elif mode == "default":
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
 else:
     raise SystemExit(31)
-run_sidecar_child(tuple(sys.argv[3:]))
+if gate_writer_fd >= 0:
+    canonical_await = preparation_module._AWAIT_PARENT_HANDOFF
+
+    def announce_then_await(bootstrap):
+        os.write(gate_writer_fd, b"G")
+        canonical_await(bootstrap)
+
+    preparation_module._AWAIT_PARENT_HANDOFF = announce_then_await
+run_sidecar_child(tuple(sys.argv[4:]))
 """
 
 
@@ -78,7 +92,7 @@ def _resources(
     tmp_path: Path,
     *,
     requested_port: int = 0,
-) -> tuple[StateStore, tuple[str, ...], StartupReader, int, int]:
+) -> tuple[StateStore, tuple[str, ...], StartupReader, int, int, int]:
     runtime_root = tmp_path / "runtime-root"
     monkeypatch.setattr(
         config_module,
@@ -95,22 +109,88 @@ def _resources(
     reader, parent_writer = open_startup_channel()
     owner_fd = -1
     writer_fd = -1
+    handoff_fd = -1
+    handoff_writer = -1
     try:
         owner_fd = os.dup(parent_owner.fileno())
         writer_fd = os.dup(parent_writer.fileno())
+        handoff_fd, handoff_writer = os.pipe()
+        parent_owner.close()
+        parent_writer.close()
+        os.close(handoff_writer)
+        handoff_writer = -1
+        arguments = encode_sidecar_child_bootstrap(
+            config,
+            owner_lock_fd=owner_fd,
+            startup_writer_fd=writer_fd,
+            parent_handoff_fd=handoff_fd,
+        )
+        return store, arguments, reader, owner_fd, writer_fd, handoff_fd
+    except BaseException:
+        parent_owner.close()
+        parent_writer.close()
+        reader.close()
+        for descriptor in (handoff_writer, handoff_fd, writer_fd, owner_fd):
+            if descriptor >= 0:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+        raise
+
+
+def _held_handoff_resources(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    startup_timeout: float = 5.0,
+    requested_port: int = 0,
+) -> tuple[StateStore, tuple[str, ...], StartupReader, int, int, int, int]:
+    runtime_root = tmp_path / "runtime-root"
+    monkeypatch.setattr(
+        config_module,
+        "_USER_RUNTIME_PATH",
+        lambda *_args, **_kwargs: runtime_root,
+    )
+    config = prepare_sidecar_runtime_config(
+        _project(tmp_path),
+        requested_port=requested_port,
+        startup_timeout=startup_timeout,
+    )
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    store.ensure_private_directory()
+    parent_owner = OwnerLock.acquire(store)
+    reader, parent_writer = open_startup_channel()
+    owner_fd = -1
+    writer_fd = -1
+    handoff_reader = -1
+    handoff_writer = -1
+    try:
+        owner_fd = os.dup(parent_owner.fileno())
+        writer_fd = os.dup(parent_writer.fileno())
+        handoff_reader, handoff_writer = os.pipe()
         parent_owner.close()
         parent_writer.close()
         arguments = encode_sidecar_child_bootstrap(
             config,
             owner_lock_fd=owner_fd,
             startup_writer_fd=writer_fd,
+            parent_handoff_fd=handoff_reader,
         )
-        return store, arguments, reader, owner_fd, writer_fd
+        return (
+            store,
+            arguments,
+            reader,
+            owner_fd,
+            writer_fd,
+            handoff_reader,
+            handoff_writer,
+        )
     except BaseException:
         parent_owner.close()
         parent_writer.close()
         reader.close()
-        for descriptor in (writer_fd, owner_fd):
+        for descriptor in (handoff_writer, handoff_reader, writer_fd, owner_fd):
             if descriptor >= 0:
                 try:
                     os.close(descriptor)
@@ -276,7 +356,7 @@ def test_ready_publish_bridge_and_cleanup_use_one_exact_transaction(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    store, arguments, reader, owner_fd, writer_fd = _resources(monkeypatch, tmp_path)
+    store, arguments, reader, owner_fd, writer_fd, handoff_fd = _resources(monkeypatch, tmp_path)
     calls: list[str] = []
 
     def bridge(
@@ -312,7 +392,7 @@ def test_normal_bridge_return_without_ready_emits_one_failure_then_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    store, arguments, reader, _owner_fd, _writer_fd = _resources(monkeypatch, tmp_path)
+    store, arguments, reader, _owner_fd, _writer_fd, _handoff_fd = _resources(monkeypatch, tmp_path)
 
     def bridge(
         _state: SidecarState,
@@ -343,7 +423,7 @@ def test_publish_failure_removes_attempted_state_then_emits_failure_in_cleanup_o
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    store, arguments, reader, _owner_fd, _writer_fd = _resources(monkeypatch, tmp_path)
+    store, arguments, reader, _owner_fd, _writer_fd, _handoff_fd = _resources(monkeypatch, tmp_path)
     calls: list[str] = []
     canonical_publish = runtime_module._STATE_PUBLISH
     canonical_remove = runtime_module._STATE_REMOVE_IF_OWNED
@@ -400,7 +480,7 @@ def test_non_none_publication_result_is_not_a_success_claim(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    store, arguments, reader, _owner_fd, _writer_fd = _resources(monkeypatch, tmp_path)
+    store, arguments, reader, _owner_fd, _writer_fd, _handoff_fd = _resources(monkeypatch, tmp_path)
     canonical_publish = runtime_module._STATE_PUBLISH
 
     def publish(actual_store: StateStore, state: SidecarState) -> int:
@@ -428,7 +508,7 @@ def test_ready_attempt_never_falls_back_to_failure_after_bridge_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    store, arguments, reader, _owner_fd, _writer_fd = _resources(monkeypatch, tmp_path)
+    store, arguments, reader, _owner_fd, _writer_fd, _handoff_fd = _resources(monkeypatch, tmp_path)
 
     def bridge(
         _state: SidecarState,
@@ -458,7 +538,7 @@ def test_successful_publication_requires_exact_true_compare_removal(
     tmp_path: Path,
     reported_result: object,
 ) -> None:
-    store, arguments, reader, _owner_fd, _writer_fd = _resources(monkeypatch, tmp_path)
+    store, arguments, reader, _owner_fd, _writer_fd, _handoff_fd = _resources(monkeypatch, tmp_path)
     canonical_remove = runtime_module._STATE_REMOVE_IF_OWNED
 
     def remove(actual_store: StateStore, startup_id: str) -> object:
@@ -493,7 +573,7 @@ def test_process_control_preserves_identity_and_never_emits_failure(
     tmp_path: Path,
     stage: str,
 ) -> None:
-    store, arguments, reader, _owner_fd, _writer_fd = _resources(monkeypatch, tmp_path)
+    store, arguments, reader, _owner_fd, _writer_fd, _handoff_fd = _resources(monkeypatch, tmp_path)
     injected = _Control("control")
 
     if stage == "state":
@@ -532,7 +612,7 @@ def test_active_control_survives_listener_cleanup_failure_with_one_safe_note(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    store, arguments, reader, _owner_fd, _writer_fd = _resources(monkeypatch, tmp_path)
+    store, arguments, reader, _owner_fd, _writer_fd, _handoff_fd = _resources(monkeypatch, tmp_path)
     injected = _Control("control")
     listeners: list[socket.socket] = []
 
@@ -563,7 +643,7 @@ def test_public_replacement_cannot_redirect_captured_preparation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    store, arguments, reader, _owner_fd, _writer_fd = _resources(monkeypatch, tmp_path)
+    store, arguments, reader, _owner_fd, _writer_fd, _handoff_fd = _resources(monkeypatch, tmp_path)
 
     def replacement(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("public replacement must not run")
@@ -588,11 +668,245 @@ def test_public_replacement_cannot_redirect_captured_preparation(
         reader.close()
 
 
+def test_real_child_handoff_gate_blocks_state_and_ready_until_eof_release(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    reservation.bind(("127.0.0.1", 0))
+    requested_port = reservation.getsockname()[1]
+    reservation.close()
+    (
+        store,
+        arguments,
+        reader,
+        owner_fd,
+        writer_fd,
+        handoff_reader,
+        handoff_writer,
+    ) = _held_handoff_resources(monkeypatch, tmp_path, requested_port=requested_port)
+    gate_reader, gate_writer = os.pipe()
+    process: subprocess.Popen[bytes] | None = None
+    state: SidecarState | None = None
+    try:
+        child_cwd = tmp_path / "gated-child"
+        child_cwd.mkdir()
+        process = subprocess.Popen(
+            (
+                sys.executable,
+                "-I",
+                "-u",
+                "-c",
+                CHILD_SOURCE,
+                "custom",
+                str(tmp_path / "runtime-root"),
+                str(gate_writer),
+                *arguments,
+            ),
+            cwd=child_cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            close_fds=True,
+            pass_fds=(owner_fd, writer_fd, handoff_reader, gate_writer),
+            start_new_session=True,
+        )
+        os.close(owner_fd)
+        os.close(writer_fd)
+        os.close(handoff_reader)
+        os.close(gate_writer)
+        owner_fd = -1
+        writer_fd = -1
+        handoff_reader = -1
+        gate_writer = -1
+
+        assert select.select((gate_reader,), (), (), 10.0) == ([gate_reader], [], [])
+        assert os.read(gate_reader, 1) == b"G"
+        assert select.select((reader.fileno(),), (), (), 0.2) == ([], [], [])
+        assert process.poll() is None
+        assert store.load() is None
+        blocked = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            blocked.settimeout(0.2)
+            with pytest.raises(OSError):
+                blocked.connect(("127.0.0.1", requested_port))
+        finally:
+            blocked.close()
+
+        os.close(handoff_writer)
+        handoff_writer = -1
+        ready = reader.receive(timeout=10.0)
+        assert type(ready) is StartupReady
+        state = store.load()
+        assert type(state) is SidecarState
+        assert ready.startup_id == state.startup_id
+        assert ready.sidecar_pid == process.pid == state.pid
+        assert ready.port == state.port == requested_port
+        health = http.client.HTTPConnection(state.host, state.port, timeout=2.0)
+        try:
+            health.request(
+                "GET",
+                "/internal/v1/health",
+                headers={
+                    "Host": state.authority,
+                    "Authorization": f"Bearer {state.token}",
+                },
+            )
+            response = health.getresponse()
+            assert response.status == 200
+            assert json.loads(response.read())["status"] == "ok"
+        finally:
+            health.close()
+
+        os.kill(process.pid, signal.SIGTERM)
+        process.wait(timeout=10.0)
+        stdout, stderr = process.communicate(timeout=5.0)
+        assert process.returncode == 0
+        assert stdout == b""
+        assert stderr == b""
+        assert store.load() is None
+        _assert_owner_released(store)
+    finally:
+        reader.close()
+        if state is not None and store.load() is not None:
+            assert store.remove_if_owned(state.startup_id) is True
+        for descriptor in (
+            gate_writer,
+            gate_reader,
+            handoff_writer,
+            handoff_reader,
+            writer_fd,
+            owner_fd,
+        ):
+            if descriptor >= 0:
+                os.close(descriptor)
+        if process is not None:
+            _reap_child(process)
+
+
+@pytest.mark.parametrize("case", ["malformed", "data", "closed", "nonpipe", "timeout"])
+def test_real_child_handoff_faults_never_publish_state_listener_or_ready(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    case: str,
+) -> None:
+    (
+        store,
+        arguments,
+        reader,
+        owner_fd,
+        writer_fd,
+        handoff_reader,
+        handoff_writer,
+    ) = _held_handoff_resources(monkeypatch, tmp_path, startup_timeout=0.2)
+    bootstrap = decode_sidecar_child_bootstrap(arguments)
+    child_arguments = arguments
+    child_handoff_fd = -1
+    regular_fd = -1
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        if case == "malformed":
+            child_arguments = arguments[:-1]
+            os.close(handoff_writer)
+            os.close(handoff_reader)
+            handoff_writer = -1
+            handoff_reader = -1
+        elif case == "data":
+            os.write(handoff_writer, b"x")
+            os.close(handoff_writer)
+            handoff_writer = -1
+            child_handoff_fd = handoff_reader
+        elif case == "closed":
+            child_arguments = encode_sidecar_child_bootstrap(
+                bootstrap.config,
+                owner_lock_fd=owner_fd,
+                startup_writer_fd=writer_fd,
+                parent_handoff_fd=2_000_000_000,
+            )
+            os.close(handoff_writer)
+            os.close(handoff_reader)
+            handoff_writer = -1
+            handoff_reader = -1
+        elif case == "nonpipe":
+            regular_fd = os.open(tmp_path / "not-a-pipe", os.O_CREAT | os.O_RDWR, 0o600)
+            child_arguments = encode_sidecar_child_bootstrap(
+                bootstrap.config,
+                owner_lock_fd=owner_fd,
+                startup_writer_fd=writer_fd,
+                parent_handoff_fd=regular_fd,
+            )
+            os.close(handoff_writer)
+            os.close(handoff_reader)
+            handoff_writer = -1
+            handoff_reader = -1
+            child_handoff_fd = regular_fd
+        else:
+            child_handoff_fd = handoff_reader
+
+        child_cwd = tmp_path / f"fault-{case}"
+        child_cwd.mkdir()
+        process = subprocess.Popen(
+            (
+                sys.executable,
+                "-I",
+                "-u",
+                "-c",
+                CHILD_SOURCE,
+                "custom",
+                str(tmp_path / "runtime-root"),
+                "-1",
+                *child_arguments,
+            ),
+            cwd=child_cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            close_fds=True,
+            pass_fds=tuple(
+                descriptor
+                for descriptor in (owner_fd, writer_fd, child_handoff_fd)
+                if descriptor >= 0
+            ),
+            start_new_session=True,
+        )
+        os.close(owner_fd)
+        os.close(writer_fd)
+        owner_fd = -1
+        writer_fd = -1
+        if child_handoff_fd >= 0 and child_handoff_fd == handoff_reader:
+            os.close(handoff_reader)
+            handoff_reader = -1
+        elif child_handoff_fd >= 0 and child_handoff_fd == regular_fd:
+            os.close(regular_fd)
+            regular_fd = -1
+
+        process.wait(timeout=10.0)
+        stdout, stderr = process.communicate(timeout=5.0)
+        assert process.returncode != 0
+        assert stdout == b""
+        assert b"sidecar child transaction failed" in stderr
+        assert str(tmp_path).encode() not in stderr
+        assert b"parent-handoff-fd=" not in stderr
+        assert b"sidecar child parent handoff failed" not in stderr
+        with pytest.raises(StartupChannelError) as startup_closed:
+            reader.receive(timeout=2.0)
+        assert startup_closed.value.code is StartupChannelErrorCode.STARTUP_CHANNEL_CLOSED
+        assert store.load() is None
+        _assert_owner_released(store)
+    finally:
+        reader.close()
+        for descriptor in (regular_fd, handoff_writer, handoff_reader, writer_fd, owner_fd):
+            if descriptor >= 0:
+                os.close(descriptor)
+        if process is not None:
+            _reap_child(process)
+
+
 def test_real_child_publishes_ready_serves_health_and_cleans_up_after_sigterm(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    store, arguments, reader, owner_fd, writer_fd = _resources(monkeypatch, tmp_path)
+    store, arguments, reader, owner_fd, writer_fd, handoff_fd = _resources(monkeypatch, tmp_path)
     process: subprocess.Popen[bytes] | None = None
     try:
         child_cwd = tmp_path / "child"
@@ -606,6 +920,7 @@ def test_real_child_publishes_ready_serves_health_and_cleans_up_after_sigterm(
                 CHILD_SOURCE,
                 "custom",
                 str(tmp_path / "runtime-root"),
+                "-1",
                 *arguments,
             ),
             cwd=child_cwd,
@@ -613,13 +928,15 @@ def test_real_child_publishes_ready_serves_health_and_cleans_up_after_sigterm(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             close_fds=True,
-            pass_fds=(owner_fd, writer_fd),
+            pass_fds=(owner_fd, writer_fd, handoff_fd),
             start_new_session=True,
         )
         os.close(owner_fd)
         os.close(writer_fd)
+        os.close(handoff_fd)
         owner_fd = -1
         writer_fd = -1
+        handoff_fd = -1
 
         ready = reader.receive(timeout=10.0)
         assert type(ready) is StartupReady
@@ -702,6 +1019,8 @@ def test_real_child_publishes_ready_serves_health_and_cleans_up_after_sigterm(
             os.close(owner_fd)
         if writer_fd >= 0:
             os.close(writer_fd)
+        if handoff_fd >= 0:
+            os.close(handoff_fd)
         if process is not None:
             _reap_child(process)
 
@@ -710,7 +1029,7 @@ def test_real_child_default_sigterm_releases_os_resources_without_claiming_outer
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    store, arguments, reader, owner_fd, writer_fd = _resources(monkeypatch, tmp_path)
+    store, arguments, reader, owner_fd, writer_fd, handoff_fd = _resources(monkeypatch, tmp_path)
     process: subprocess.Popen[bytes] | None = None
     state: SidecarState | None = None
     try:
@@ -725,6 +1044,7 @@ def test_real_child_default_sigterm_releases_os_resources_without_claiming_outer
                 CHILD_SOURCE,
                 "default",
                 str(tmp_path / "runtime-root"),
+                "-1",
                 *arguments,
             ),
             cwd=child_cwd,
@@ -732,13 +1052,15 @@ def test_real_child_default_sigterm_releases_os_resources_without_claiming_outer
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             close_fds=True,
-            pass_fds=(owner_fd, writer_fd),
+            pass_fds=(owner_fd, writer_fd, handoff_fd),
             start_new_session=True,
         )
         os.close(owner_fd)
         os.close(writer_fd)
+        os.close(handoff_fd)
         owner_fd = -1
         writer_fd = -1
+        handoff_fd = -1
 
         ready = reader.receive(timeout=10.0)
         assert type(ready) is StartupReady
@@ -768,6 +1090,8 @@ def test_real_child_default_sigterm_releases_os_resources_without_claiming_outer
             os.close(owner_fd)
         if writer_fd >= 0:
             os.close(writer_fd)
+        if handoff_fd >= 0:
+            os.close(handoff_fd)
         if process is not None:
             _reap_child(process)
 
@@ -779,7 +1103,7 @@ def test_real_child_pre_ready_bind_failure_emits_only_fixed_failure_and_releases
     occupied = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     occupied.bind(("127.0.0.1", 0))
     requested_port = occupied.getsockname()[1]
-    store, arguments, reader, owner_fd, writer_fd = _resources(
+    store, arguments, reader, owner_fd, writer_fd, handoff_fd = _resources(
         monkeypatch,
         tmp_path,
         requested_port=requested_port,
@@ -797,6 +1121,7 @@ def test_real_child_pre_ready_bind_failure_emits_only_fixed_failure_and_releases
                 CHILD_SOURCE,
                 "custom",
                 str(tmp_path / "runtime-root"),
+                "-1",
                 *arguments,
             ),
             cwd=child_cwd,
@@ -804,13 +1129,15 @@ def test_real_child_pre_ready_bind_failure_emits_only_fixed_failure_and_releases
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             close_fds=True,
-            pass_fds=(owner_fd, writer_fd),
+            pass_fds=(owner_fd, writer_fd, handoff_fd),
             start_new_session=True,
         )
         os.close(owner_fd)
         os.close(writer_fd)
+        os.close(handoff_fd)
         owner_fd = -1
         writer_fd = -1
+        handoff_fd = -1
 
         assert reader.receive(timeout=10.0) == StartupFailure(
             code=StartupFailureCode.SIDECAR_STARTUP_FAILED
@@ -831,5 +1158,7 @@ def test_real_child_pre_ready_bind_failure_emits_only_fixed_failure_and_releases
             os.close(owner_fd)
         if writer_fd >= 0:
             os.close(writer_fd)
+        if handoff_fd >= 0:
+            os.close(handoff_fd)
         if process is not None:
             _reap_child(process)

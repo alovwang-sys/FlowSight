@@ -33,7 +33,7 @@ _ADD_NOTE: Final = BaseException.add_note
 _FSPATH: Final = os.fspath
 
 type _AdoptionResult = tuple[OwnerLock, StartupWriter]
-type _ShallowAdmission = tuple[SidecarRuntimeConfig, int, int]
+type _ShallowAdmission = tuple[SidecarRuntimeConfig, int, int, int]
 
 
 class _AdoptionFailure(Exception):
@@ -44,11 +44,13 @@ def _encode_bootstrap(
     config: SidecarRuntimeConfig,
     owner_lock_fd: int,
     startup_writer_fd: int,
+    parent_handoff_fd: int,
 ) -> object:
     return _ENCODE_BOOTSTRAP(
         config,
         owner_lock_fd=owner_lock_fd,
         startup_writer_fd=startup_writer_fd,
+        parent_handoff_fd=parent_handoff_fd,
     )
 
 
@@ -93,6 +95,7 @@ def _read_bootstrap_slots(bootstrap: SidecarChildBootstrap) -> object:
         object.__getattribute__(bootstrap, "config"),
         object.__getattribute__(bootstrap, "owner_lock_fd"),
         object.__getattribute__(bootstrap, "startup_writer_fd"),
+        object.__getattribute__(bootstrap, "parent_handoff_fd"),
     )
 
 
@@ -100,25 +103,29 @@ def _shallow_admission(value: object) -> _ShallowAdmission:
     if type(value) is not _BOOTSTRAP_TYPE:
         raise _AdoptionFailure
     slots = _read_bootstrap_slots(value)
-    if type(slots) is not tuple or len(slots) != 3:
+    if type(slots) is not tuple or len(slots) != 4:
         raise _AdoptionFailure
-    config, owner_lock_fd, startup_writer_fd = slots
+    config, owner_lock_fd, startup_writer_fd, parent_handoff_fd = slots
     if (
         type(config) is not _CONFIG_TYPE
         or type(owner_lock_fd) is not int
         or type(startup_writer_fd) is not int
+        or type(parent_handoff_fd) is not int
         or not 3 <= owner_lock_fd <= _MAX_DESCRIPTOR
         or not 3 <= startup_writer_fd <= _MAX_DESCRIPTOR
+        or not 3 <= parent_handoff_fd <= _MAX_DESCRIPTOR
         or owner_lock_fd == startup_writer_fd
+        or owner_lock_fd == parent_handoff_fd
+        or startup_writer_fd == parent_handoff_fd
     ):
         raise _AdoptionFailure
-    return config, owner_lock_fd, startup_writer_fd
+    return config, owner_lock_fd, startup_writer_fd, parent_handoff_fd
 
 
 def _canonical_encoding(value: object) -> bool:
     return (
         type(value) is tuple
-        and len(value) == 8
+        and len(value) == 9
         and all(type(argument) is str for argument in value)
     )
 
@@ -220,16 +227,25 @@ def _best_effort_cleanup_note(error: BaseException) -> None:
 def _adopt_pair(value: object) -> _AdoptionResult:
     raw_owner_fd = -1
     raw_writer_fd = -1
+    parent_handoff_fd = -1
     owner: OwnerLock | None = None
     writer: StartupWriter | None = None
     active_error: BaseException | None = None
 
     try:
-        config, admitted_owner_fd, admitted_writer_fd = _shallow_admission(value)
+        config, admitted_owner_fd, admitted_writer_fd, admitted_handoff_fd = _shallow_admission(
+            value
+        )
         raw_owner_fd = admitted_owner_fd
         raw_writer_fd = admitted_writer_fd
+        parent_handoff_fd = admitted_handoff_fd
 
-        encoding = _encode_bootstrap(config, raw_owner_fd, raw_writer_fd)
+        encoding = _encode_bootstrap(
+            config,
+            raw_owner_fd,
+            raw_writer_fd,
+            parent_handoff_fd,
+        )
         if not _canonical_encoding(encoding):
             raise _AdoptionFailure
         del encoding

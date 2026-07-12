@@ -24,6 +24,8 @@ import pytest
 import flowsight.sidecar as sidecar_package
 from flowsight.sidecar import (
     SidecarRuntimeConfig,
+    child_entry,
+    parent_handoff,
     prepare_sidecar_runtime_config,
 )
 from flowsight.sidecar import runtime_config as config_module
@@ -136,6 +138,7 @@ EXPECTED_SIDECAR_SUBMODULES = {
     "incumbent_port",
     "listener",
     "owner_lock",
+    "parent_handoff",
     "runtime_config",
     "server_runtime",
     "startup_admission",
@@ -288,6 +291,8 @@ def _prepare(
 
 def test_public_exports_and_signature_are_exact() -> None:
     assert sidecar_package.SidecarRuntimeConfig is SidecarRuntimeConfig
+    assert sidecar_package.child_entry is child_entry
+    assert sidecar_package.parent_handoff is parent_handoff
     assert sidecar_package.prepare_sidecar_runtime_config is prepare_sidecar_runtime_config
     assert sidecar_package.__all__.count("SidecarRuntimeConfig") == 1
     assert sidecar_package.__all__.count("prepare_sidecar_runtime_config") == 1

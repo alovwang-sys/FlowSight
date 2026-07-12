@@ -51,6 +51,7 @@ type _RawPair = tuple[
     StartupReader,
     int,
     int,
+    int,
 ]
 
 
@@ -94,21 +95,29 @@ def _raw_pair(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _RawPair:
     reader, parent_writer = open_startup_channel()
     owner_fd = -1
     writer_fd = -1
+    handoff_fd = -1
+    handoff_writer = -1
     try:
         owner_fd = os.dup(parent_owner.fileno())
         writer_fd = os.dup(parent_writer.fileno())
+        handoff_fd, handoff_writer = os.pipe()
         parent_owner.close()
         parent_writer.close()
+        os.close(handoff_writer)
+        handoff_writer = -1
         arguments = encode_sidecar_child_bootstrap(
             config,
             owner_lock_fd=owner_fd,
             startup_writer_fd=writer_fd,
+            parent_handoff_fd=handoff_fd,
         )
-        return config, store, arguments, reader, owner_fd, writer_fd
+        return config, store, arguments, reader, owner_fd, writer_fd, handoff_fd
     except BaseException:
         parent_owner.close()
         parent_writer.close()
         reader.close()
+        _close_raw(handoff_writer)
+        _close_raw(handoff_fd)
         _close_raw(writer_fd)
         _close_raw(owner_fd)
         raise
@@ -243,7 +252,9 @@ def test_same_process_success_returns_exact_resources(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    config, store, arguments, reader, owner_fd, writer_fd = _raw_pair(monkeypatch, tmp_path)
+    config, store, arguments, reader, owner_fd, writer_fd, handoff_fd = _raw_pair(
+        monkeypatch, tmp_path
+    )
     canonical_decoder = preparation_module._decode_bootstrap
     calls: list[tuple[str, object]] = []
 
@@ -300,6 +311,50 @@ def test_same_process_success_returns_exact_resources(
         if owner is not None:
             owner.close()
         reader.close()
+        _close_raw(handoff_fd)
+        _close_raw(writer_fd)
+        _close_raw(owner_fd)
+
+
+def test_handoff_failure_precedes_descriptor_adoption(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _config, store, arguments, reader, owner_fd, writer_fd, handoff_fd = _raw_pair(
+        monkeypatch, tmp_path
+    )
+    calls: list[str] = []
+
+    def fail_handoff(_bootstrap: SidecarChildBootstrap) -> NoReturn:
+        calls.append("handoff")
+        raise RuntimeError("private handoff failure")
+
+    def unexpected_adoption(_bootstrap: SidecarChildBootstrap) -> NoReturn:
+        raise AssertionError("adoption must not run after handoff failure")
+
+    monkeypatch.setattr(preparation_module, "_AWAIT_PARENT_HANDOFF", fail_handoff)
+    monkeypatch.setattr(preparation_module, "_ADOPT_DESCRIPTORS", unexpected_adoption)
+    try:
+        with pytest.raises(RuntimeError) as captured:
+            prepare_sidecar_child(arguments)
+        _assert_fixed_error(captured.value, RuntimeError, ADOPTION_ERROR)
+        assert calls == ["handoff"]
+        assert _is_open(owner_fd)
+        assert _is_open(writer_fd)
+        transferred_owner_fd = owner_fd
+        transferred_writer_fd = writer_fd
+        owner_fd = -1
+        writer_fd = -1
+        _adopt_and_close_raw_pair(
+            store,
+            reader,
+            transferred_owner_fd,
+            transferred_writer_fd,
+        )
+        _assert_successor_can_acquire(store)
+    finally:
+        reader.close()
+        _close_raw(handoff_fd)
         _close_raw(writer_fd)
         _close_raw(owner_fd)
 
@@ -310,7 +365,9 @@ def test_decode_rejection_never_touches_the_descriptor_pair(
     tmp_path: Path,
     case: str,
 ) -> None:
-    _config, store, arguments, reader, owner_fd, writer_fd = _raw_pair(monkeypatch, tmp_path)
+    _config, store, arguments, reader, owner_fd, writer_fd, handoff_fd = _raw_pair(
+        monkeypatch, tmp_path
+    )
     if case == "list":
         rejected: object = list(arguments)
     elif case == "tuple-subclass":
@@ -339,6 +396,7 @@ def test_decode_rejection_never_touches_the_descriptor_pair(
         _assert_successor_can_acquire(store)
     finally:
         reader.close()
+        _close_raw(handoff_fd)
         _close_raw(writer_fd)
         _close_raw(owner_fd)
 
@@ -350,7 +408,9 @@ def test_stage_ordinary_failures_are_private(
     capsys: pytest.CaptureFixture[str],
     stage: str,
 ) -> None:
-    config, store, arguments, reader, owner_fd, writer_fd = _raw_pair(monkeypatch, tmp_path)
+    config, store, arguments, reader, owner_fd, writer_fd, handoff_fd = _raw_pair(
+        monkeypatch, tmp_path
+    )
     marker = f"p0-018-{stage}-secret /private/stage"
     raw_error = _TrackedFailure(marker)
     raw_reference = weakref.ref(raw_error)
@@ -417,6 +477,7 @@ def test_stage_ordinary_failures_are_private(
         assert raw_reference() is None
     finally:
         reader.close()
+        _close_raw(handoff_fd)
         _close_raw(writer_fd)
         _close_raw(owner_fd)
 
@@ -429,7 +490,9 @@ def test_process_control_identity_and_ownership_are_preserved(
     stage: str,
     control_factory: type[BaseException],
 ) -> None:
-    _config, store, arguments, reader, owner_fd, writer_fd = _raw_pair(monkeypatch, tmp_path)
+    _config, store, arguments, reader, owner_fd, writer_fd, handoff_fd = _raw_pair(
+        monkeypatch, tmp_path
+    )
     control = control_factory()
     control.add_note("existing-control-note")
 
@@ -469,6 +532,7 @@ def test_process_control_identity_and_ownership_are_preserved(
         _assert_successor_can_acquire(store)
     finally:
         reader.close()
+        _close_raw(handoff_fd)
         _close_raw(writer_fd)
         _close_raw(owner_fd)
 
@@ -484,7 +548,9 @@ def test_caller_baseline_never_selects_the_composition_failure(
     baseline_factory: type[BaseException],
     outcome: str,
 ) -> None:
-    _config, store, arguments, reader, owner_fd, writer_fd = _raw_pair(monkeypatch, tmp_path)
+    _config, store, arguments, reader, owner_fd, writer_fd, handoff_fd = _raw_pair(
+        monkeypatch, tmp_path
+    )
     baseline = baseline_factory("caller baseline")
     baseline.add_note("caller-note")
     process_control = _Control()
@@ -572,6 +638,7 @@ def test_caller_baseline_never_selects_the_composition_failure(
         if owner is not None:
             owner.close()
         reader.close()
+        _close_raw(handoff_fd)
         _close_raw(writer_fd)
         _close_raw(owner_fd)
 
@@ -580,7 +647,9 @@ def test_public_dependency_replacement_cannot_redirect_captured_dispatch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _config, store, arguments, reader, owner_fd, writer_fd = _raw_pair(monkeypatch, tmp_path)
+    _config, store, arguments, reader, owner_fd, writer_fd, handoff_fd = _raw_pair(
+        monkeypatch, tmp_path
+    )
     calls: list[str] = []
 
     def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
@@ -619,6 +688,7 @@ def test_public_dependency_replacement_cannot_redirect_captured_dispatch(
         if owner is not None:
             owner.close()
         reader.close()
+        _close_raw(handoff_fd)
         _close_raw(writer_fd)
         _close_raw(owner_fd)
 
@@ -629,7 +699,9 @@ def test_invocation_preserves_existing_paths_and_emits_nothing(
     capsys: pytest.CaptureFixture[str],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    config, store, arguments, reader, owner_fd, writer_fd = _raw_pair(monkeypatch, tmp_path)
+    config, store, arguments, reader, owner_fd, writer_fd, handoff_fd = _raw_pair(
+        monkeypatch, tmp_path
+    )
     state_bytes = b'{"sentinel":"unchanged"}\n'
     store.state_path.write_bytes(state_bytes)
     store.state_path.chmod(0o600)
@@ -685,6 +757,7 @@ def test_invocation_preserves_existing_paths_and_emits_nothing(
         if owner is not None:
             owner.close()
         reader.close()
+        _close_raw(handoff_fd)
         _close_raw(writer_fd)
         _close_raw(owner_fd)
 
@@ -724,6 +797,7 @@ def test_production_ast_enforces_only_the_composition_boundary() -> None:
                 ("decode_sidecar_child_bootstrap", None),
             ),
         ),
+        (1, "parent_handoff", (("await_parent_handoff", None),)),
         (1, "owner_lock", (("OwnerLock", None),)),
         (1, "runtime_config", (("SidecarRuntimeConfig", None),)),
         (1, "startup_channel", (("StartupWriter", None),)),
@@ -757,12 +831,14 @@ def test_production_ast_enforces_only_the_composition_boundary() -> None:
         "_BOOTSTRAP_TYPE",
         "_CONFIG_TYPE",
         "_DECODE_BOOTSTRAP",
+        "_AWAIT_PARENT_HANDOFF",
         "_ADOPT_DESCRIPTORS",
     }
     expected_binding_values = {
         "_BOOTSTRAP_TYPE": "SidecarChildBootstrap",
         "_CONFIG_TYPE": "SidecarRuntimeConfig",
         "_DECODE_BOOTSTRAP": "decode_sidecar_child_bootstrap",
+        "_AWAIT_PARENT_HANDOFF": "await_parent_handoff",
         "_ADOPT_DESCRIPTORS": "adopt_sidecar_child_descriptors",
     }
     for name, node in captured_bindings.items():
@@ -789,13 +865,18 @@ def test_production_ast_enforces_only_the_composition_boundary() -> None:
     assert set(module_functions) == {
         "_decode_bootstrap",
         "_decode_stage",
+        "_await_handoff",
         "_prepare_child",
         "_raise_decode_failure",
         "_raise_adoption_failure",
         "prepare_sidecar_child",
     }
     module_classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
-    assert set(module_classes) == {"_DecodeStageFailure", "_AdoptionStageFailure"}
+    assert set(module_classes) == {
+        "_DecodeStageFailure",
+        "_HandoffStageFailure",
+        "_AdoptionStageFailure",
+    }
     assert all(
         len(node.bases) == 1
         and isinstance(node.bases[0], ast.Name)
@@ -842,7 +923,6 @@ def test_production_ast_enforces_only_the_composition_boundary() -> None:
         and isinstance(node.ctx, (ast.Store, ast.Del))
         for node in ast.walk(tree)
     )
-
     calls_by_function = {
         name: sorted(_call_name(node) for node in ast.walk(function) if isinstance(node, ast.Call))
         for name, function in module_functions.items()
@@ -858,7 +938,8 @@ def test_production_ast_enforces_only_the_composition_boundary() -> None:
                 "object.__getattribute__",
             ]
         ),
-        "_prepare_child": sorted(["_decode_stage", "_ADOPT_DESCRIPTORS"]),
+        "_await_handoff": ["_AWAIT_PARENT_HANDOFF"],
+        "_prepare_child": sorted(["_decode_stage", "_await_handoff", "_ADOPT_DESCRIPTORS"]),
         "_raise_decode_failure": ["ValueError"],
         "_raise_adoption_failure": ["RuntimeError"],
         "prepare_sidecar_child": sorted(
@@ -882,7 +963,8 @@ def test_production_ast_enforces_only_the_composition_boundary() -> None:
     assert raises_by_function == {
         "_decode_bootstrap": [],
         "_decode_stage": sorted(["ValueError", "ValueError", "ValueError", "_DecodeStageFailure"]),
-        "_prepare_child": ["_AdoptionStageFailure"],
+        "_await_handoff": [],
+        "_prepare_child": sorted(["_AdoptionStageFailure", "_HandoffStageFailure"]),
         "_raise_decode_failure": ["ValueError"],
         "_raise_adoption_failure": ["RuntimeError"],
         "prepare_sidecar_child": [],
@@ -903,6 +985,31 @@ def test_production_ast_enforces_only_the_composition_boundary() -> None:
     ]
     assert len(config_reads) == 2
     assert all(decode_call.lineno < node.lineno for node in config_reads)
+    handoff_call = next(
+        node
+        for node in ast.walk(prepare_child)
+        if isinstance(node, ast.Call) and _call_name(node) == "_await_handoff"
+    )
+    adoption_call = next(
+        node
+        for node in ast.walk(prepare_child)
+        if isinstance(node, ast.Call) and _call_name(node) == "_ADOPT_DESCRIPTORS"
+    )
+    assert handoff_call.lineno < adoption_call.lineno
+
+    handoff_try = next(
+        node
+        for node in ast.walk(prepare_child)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(candidate, ast.Call) and _call_name(candidate) == "_await_handoff"
+            for candidate in ast.walk(node)
+        )
+    )
+    assert len(handoff_try.body) == 1
+    assert len(handoff_try.handlers) == 2
+    assert handoff_try.orelse == []
+    assert handoff_try.finalbody == []
 
     adopter_try = next(
         node
@@ -914,7 +1021,7 @@ def test_production_ast_enforces_only_the_composition_boundary() -> None:
         )
     )
     assert len(adopter_try.body) == 1
-    assert len(adopter_try.handlers) == 1
+    assert len(adopter_try.handlers) == 2
     assert len(adopter_try.orelse) == 1
     assert isinstance(adopter_try.orelse[0], ast.Return)
     assert adopter_try.finalbody == []
@@ -938,22 +1045,32 @@ def test_production_ast_enforces_only_the_composition_boundary() -> None:
         "_prepare_child",
         "prepare_sidecar_child",
     }
-    for name in ("_decode_stage", "_prepare_child"):
-        handlers = handlers_by_function[name]
-        assert len(handlers) == 1
-        handler = handlers[0]
-        assert isinstance(handler.type, ast.Name) and handler.type.id == "Exception"
-        assert handler.name is None
-        assert len(handler.body) == 1 and isinstance(handler.body[0], ast.Pass)
+    decode_handlers = handlers_by_function["_decode_stage"]
+    assert len(decode_handlers) == 1
+    decode_handler = decode_handlers[0]
+    assert isinstance(decode_handler.type, ast.Name) and decode_handler.type.id == "Exception"
+    assert decode_handler.name is None
+    assert len(decode_handler.body) == 1 and isinstance(decode_handler.body[0], ast.Pass)
+    prepare_handlers = handlers_by_function["_prepare_child"]
+    assert len(prepare_handlers) == 4
+    assert [
+        handler.type.id if isinstance(handler.type, ast.Name) else None
+        for handler in prepare_handlers
+    ] == ["Exception", "BaseException", "Exception", "BaseException"]
+    assert all(handler.name is None for handler in prepare_handlers)
+    assert all(len(handler.body) == 2 for handler in prepare_handlers)
     public_handlers = handlers_by_function["prepare_sidecar_child"]
     assert len(public_handlers) == 2
-    expected_public_handlers = {
-        "_DecodeStageFailure": 1,
-        "_AdoptionStageFailure": 2,
-    }
-    for handler in public_handlers:
-        assert isinstance(handler.type, ast.Name)
-        assert handler.type.id in expected_public_handlers
+    assert isinstance(public_handlers[0].type, ast.Name)
+    assert public_handlers[0].type.id == "_DecodeStageFailure"
+    assert isinstance(public_handlers[1].type, ast.Tuple)
+    assert [
+        element.id for element in public_handlers[1].type.elts if isinstance(element, ast.Name)
+    ] == [
+        "_HandoffStageFailure",
+        "_AdoptionStageFailure",
+    ]
+    for handler, expected_failure in zip(public_handlers, (1, 2), strict=True):
         assert handler.name is None
         assert len(handler.body) == 1 and isinstance(handler.body[0], ast.Assign)
         assignment = handler.body[0]
@@ -961,7 +1078,7 @@ def test_production_ast_enforces_only_the_composition_boundary() -> None:
         assert isinstance(assignment.targets[0], ast.Name)
         assert assignment.targets[0].id == "failure"
         assert isinstance(assignment.value, ast.Constant)
-        assert assignment.value.value == expected_public_handlers[handler.type.id]
+        assert assignment.value.value == expected_failure
 
 
 CHILD_SOURCE = r"""
@@ -998,7 +1115,7 @@ checks = (
     os.environ.get("XDG_RUNTIME_DIR") == str(base / "xdg-runtime"),
     os.getcwd() == str(base / "child-cwd"),
     Path(preparation_module.__file__).resolve() == expected_origin,
-    len(sys.argv[4:]) == 8,
+    len(sys.argv[4:]) == 9,
 )
 if not all(checks):
     raise SystemExit(31)
@@ -1075,7 +1192,7 @@ def _spawn_child(
     *,
     mode: str,
     arguments: tuple[str, ...],
-    pass_fds: tuple[int, int],
+    pass_fds: tuple[int, ...],
 ) -> subprocess.Popen[bytes]:
     child_cwd = tmp_path / "child-cwd"
     child_cwd.mkdir(exist_ok=True)
@@ -1140,7 +1257,15 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
 def _parent_exec_resources(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-) -> tuple[SidecarRuntimeConfig, StateStore, OwnerLock, StartupReader, StartupWriter]:
+) -> tuple[
+    SidecarRuntimeConfig,
+    StateStore,
+    OwnerLock,
+    StartupReader,
+    StartupWriter,
+    int,
+    int,
+]:
     config, store = _prepare(monkeypatch, tmp_path)
     owner = OwnerLock.acquire(store)
     try:
@@ -1148,15 +1273,22 @@ def _parent_exec_resources(
     except BaseException:
         owner.close()
         raise
-    return config, store, owner, reader, writer
+    try:
+        handoff_reader, handoff_writer = os.pipe()
+    except BaseException:
+        writer.close()
+        reader.close()
+        owner.close()
+        raise
+    return config, store, owner, reader, writer, handoff_reader, handoff_writer
 
 
 def test_real_exec_child_alone_retains_the_owner_lock(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    config, store, parent_owner, reader, parent_writer = _parent_exec_resources(
-        monkeypatch, tmp_path
+    config, store, parent_owner, reader, parent_writer, handoff_reader, handoff_writer = (
+        _parent_exec_resources(monkeypatch, tmp_path)
     )
     process: subprocess.Popen[bytes] | None = None
     try:
@@ -1165,13 +1297,18 @@ def test_real_exec_child_alone_retains_the_owner_lock(
             config,
             owner_lock_fd=parent_owner.fileno(),
             startup_writer_fd=parent_writer.fileno(),
+            parent_handoff_fd=handoff_reader,
         )
         process = _spawn_child(
             tmp_path,
             mode="success",
             arguments=arguments,
-            pass_fds=(parent_owner.fileno(), parent_writer.fileno()),
+            pass_fds=(parent_owner.fileno(), parent_writer.fileno(), handoff_reader),
         )
+        _close_raw(handoff_reader)
+        handoff_reader = -1
+        _close_raw(handoff_writer)
+        handoff_writer = -1
         parent_writer.close()
         assert reader.receive(timeout=CHILD_TIMEOUT) == STARTUP_FAILURE
         parent_owner.close()
@@ -1196,6 +1333,8 @@ def test_real_exec_child_alone_retains_the_owner_lock(
     finally:
         parent_writer.close()
         parent_owner.close()
+        _close_raw(handoff_reader)
+        _close_raw(handoff_writer)
         reader.close()
         if process is not None:
             _terminate_and_reap(process)
@@ -1207,8 +1346,8 @@ def test_real_exec_invalid_pairs_fail_without_a_startup_signal(
     tmp_path: Path,
     case: str,
 ) -> None:
-    config, store, parent_owner, reader, parent_writer = _parent_exec_resources(
-        monkeypatch, tmp_path
+    config, store, parent_owner, reader, parent_writer, handoff_reader, handoff_writer = (
+        _parent_exec_resources(monkeypatch, tmp_path)
     )
     sentinel_fd = -1
     process: subprocess.Popen[bytes] | None = None
@@ -1225,13 +1364,18 @@ def test_real_exec_invalid_pairs_fail_without_a_startup_signal(
             config,
             owner_lock_fd=pair[0],
             startup_writer_fd=pair[1],
+            parent_handoff_fd=handoff_reader,
         )
         process = _spawn_child(
             tmp_path,
             mode="invalid",
             arguments=arguments,
-            pass_fds=pair,
+            pass_fds=(*pair, handoff_reader),
         )
+        _close_raw(handoff_reader)
+        handoff_reader = -1
+        _close_raw(handoff_writer)
+        handoff_writer = -1
         parent_writer.close()
         with pytest.raises(StartupChannelError) as closed:
             reader.receive(timeout=CHILD_TIMEOUT)
@@ -1244,6 +1388,8 @@ def test_real_exec_invalid_pairs_fail_without_a_startup_signal(
     finally:
         parent_writer.close()
         parent_owner.close()
+        _close_raw(handoff_reader)
+        _close_raw(handoff_writer)
         reader.close()
         _close_raw(sentinel_fd)
         if process is not None:
@@ -1256,8 +1402,8 @@ def test_real_exec_harness_always_performs_bounded_reaping(
     tmp_path: Path,
     injection: str,
 ) -> None:
-    config, store, parent_owner, reader, parent_writer = _parent_exec_resources(
-        monkeypatch, tmp_path
+    config, store, parent_owner, reader, parent_writer, handoff_reader, handoff_writer = (
+        _parent_exec_resources(monkeypatch, tmp_path)
     )
     process: subprocess.Popen[bytes] | None = None
     try:
@@ -1265,14 +1411,19 @@ def test_real_exec_harness_always_performs_bounded_reaping(
             config,
             owner_lock_fd=parent_owner.fileno(),
             startup_writer_fd=parent_writer.fileno(),
+            parent_handoff_fd=handoff_reader,
         )
         mode = "stubborn" if injection == "timeout" else "success"
         process = _spawn_child(
             tmp_path,
             mode=mode,
             arguments=arguments,
-            pass_fds=(parent_owner.fileno(), parent_writer.fileno()),
+            pass_fds=(parent_owner.fileno(), parent_writer.fileno(), handoff_reader),
         )
+        _close_raw(handoff_reader)
+        handoff_reader = -1
+        _close_raw(handoff_writer)
+        handoff_writer = -1
         parent_writer.close()
         assert reader.receive(timeout=CHILD_TIMEOUT) == STARTUP_FAILURE
         parent_owner.close()
@@ -1304,6 +1455,8 @@ def test_real_exec_harness_always_performs_bounded_reaping(
     finally:
         parent_writer.close()
         parent_owner.close()
+        _close_raw(handoff_reader)
+        _close_raw(handoff_writer)
         reader.close()
         if process is not None:
             _terminate_and_reap(process)

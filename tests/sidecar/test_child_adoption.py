@@ -135,6 +135,7 @@ def _real_pair(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _RealPair:
                 config,
                 owner_lock_fd=owner_fd,
                 startup_writer_fd=writer_fd,
+                parent_handoff_fd=999,
             )
         )
         return config, store, bootstrap, reader, owner_fd, writer_fd
@@ -155,6 +156,7 @@ def _forge_bootstrap(
     config: object,
     owner_lock_fd: object,
     startup_writer_fd: object,
+    parent_handoff_fd: object = 999,
     *,
     omit: str | None = None,
 ) -> SidecarChildBootstrap:
@@ -165,6 +167,8 @@ def _forge_bootstrap(
         object.__setattr__(result, "owner_lock_fd", owner_lock_fd)
     if omit != "startup_writer_fd":
         object.__setattr__(result, "startup_writer_fd", startup_writer_fd)
+    if omit != "parent_handoff_fd":
+        object.__setattr__(result, "parent_handoff_fd", parent_handoff_fd)
     return result
 
 
@@ -268,6 +272,7 @@ def test_shallow_admission_is_the_only_preconsume_boundary(
         object.__setattr__(derived, "config", config)
         object.__setattr__(derived, "owner_lock_fd", owner_fd)
         object.__setattr__(derived, "startup_writer_fd", writer_fd)
+        object.__setattr__(derived, "parent_handoff_fd", 999)
         candidate = derived
     elif case == "missing-config":
         candidate = _forge_bootstrap(config, owner_fd, writer_fd, omit="config")
@@ -689,6 +694,7 @@ def test_canonical_preflight_runs_once_with_only_snapshotted_inputs(
         candidate_config: SidecarRuntimeConfig,
         candidate_owner_fd: int,
         candidate_writer_fd: int,
+        candidate_handoff_fd: int,
     ) -> object:
         calls.append(
             (
@@ -696,12 +702,14 @@ def test_canonical_preflight_runs_once_with_only_snapshotted_inputs(
                 candidate_config,
                 candidate_owner_fd,
                 candidate_writer_fd,
+                candidate_handoff_fd,
             )
         )
         return real_encode(
             candidate_config,
             candidate_owner_fd,
             candidate_writer_fd,
+            candidate_handoff_fd,
         )
 
     def construct(runtime_root: str, project_id: str) -> object:
@@ -714,13 +722,53 @@ def test_canonical_preflight_runs_once_with_only_snapshotted_inputs(
     owner, writer = adopt_sidecar_child_descriptors(bootstrap)
 
     assert calls == [
-        ("encode", config, owner_fd, writer_fd),
+        ("encode", config, owner_fd, writer_fd, 999),
         ("store", config.runtime_root, config.project_id),
     ]
     writer.close()
     owner.close()
     reader.close()
     _assert_successor_can_acquire(store)
+
+
+def test_pair_adoption_never_consumes_the_inert_handoff_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, store, _bootstrap, reader, owner_fd, writer_fd = _real_pair(monkeypatch, tmp_path)
+    handoff_reader, handoff_writer = os.pipe()
+    owner: OwnerLock | None = None
+    writer: StartupWriter | None = None
+    try:
+        bootstrap = decode_sidecar_child_bootstrap(
+            encode_sidecar_child_bootstrap(
+                config,
+                owner_lock_fd=owner_fd,
+                startup_writer_fd=writer_fd,
+                parent_handoff_fd=handoff_reader,
+            )
+        )
+        owner, writer = adopt_sidecar_child_descriptors(bootstrap)
+        owner_fd = -1
+        writer_fd = -1
+        assert os.fstat(handoff_reader).st_size == 0
+        writer.close()
+        writer = None
+        owner.close()
+        owner = None
+        _assert_successor_can_acquire(store)
+    finally:
+        if writer is not None:
+            writer.close()
+        if owner is not None:
+            owner.close()
+        reader.close()
+        os.close(handoff_writer)
+        os.close(handoff_reader)
+        if writer_fd >= 0:
+            os.close(writer_fd)
+        if owner_fd >= 0:
+            os.close(owner_fd)
 
 
 @pytest.mark.parametrize("shape", ["list", "derived", "reversed", "extra"])
@@ -1523,7 +1571,12 @@ def test_production_ast_is_a_positive_allowlist() -> None:
     assert all(node.decorator_list == [] for node in module_functions)
     assert module_classes[0].decorator_list == []
     expected_arguments = {
-        "_encode_bootstrap": ("config", "owner_lock_fd", "startup_writer_fd"),
+        "_encode_bootstrap": (
+            "config",
+            "owner_lock_fd",
+            "startup_writer_fd",
+            "parent_handoff_fd",
+        ),
         "_construct_state_store": ("runtime_root", "project_id"),
         "_adopt_owner": ("store", "file_descriptor"),
         "_adopt_writer": ("file_descriptor",),
@@ -1722,8 +1775,8 @@ def test_production_ast_is_a_positive_allowlist() -> None:
             "all": 1,
             "isinstance": 2,
             "len": 4,
-            "object.__getattribute__": 7,
-            "type": 19,
+            "object.__getattribute__": 8,
+            "type": 20,
         }
     )
     frozen_call_owners = {
