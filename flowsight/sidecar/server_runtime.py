@@ -546,3 +546,110 @@ def serve_prebound_sidecar_app(
         del succeeded
         _raise_server_failure()
     del succeeded
+
+
+def _serve_after_owned_admission(
+    state: SidecarState,
+    listener: socket.socket,
+    on_started: FunctionType,
+) -> bool:
+    synchronous_hook: bool | None = None
+    candidate_port: object = None
+    admitted_port: int | None = None
+    close_ok: bool | None = None
+    try:
+        try:
+            synchronous_hook = _is_sync_function(on_started)
+        except Exception:
+            pass
+        if synchronous_hook is True:
+            try:
+                candidate_port = _preflight(state, listener)
+            except Exception:
+                pass
+            if type(candidate_port) is int:
+                admitted_port = candidate_port
+    except BaseException as active_error:
+        _close_during_control(listener, active_error)
+        del (
+            state,
+            listener,
+            on_started,
+            synchronous_hook,
+            candidate_port,
+            admitted_port,
+            close_ok,
+            active_error,
+        )
+        raise
+
+    if synchronous_hook is not True or admitted_port is None:
+        try:
+            try:
+                close_ok = _close_listener(listener)
+            except Exception:
+                pass
+        except BaseException:
+            del (
+                state,
+                listener,
+                on_started,
+                synchronous_hook,
+                candidate_port,
+                admitted_port,
+                close_ok,
+            )
+            raise
+        del state, listener, on_started
+        if close_ok is not True:
+            del synchronous_hook, candidate_port, admitted_port, close_ok
+            _raise_server_failure()
+        del close_ok
+        if synchronous_hook is not True:
+            del synchronous_hook, candidate_port, admitted_port
+            _raise_hook_type()
+        del synchronous_hook, candidate_port, admitted_port
+        _raise_incompatible()
+
+    try:
+        return _serve_owned(state, listener, on_started, admitted_port)
+    except BaseException:
+        del (
+            state,
+            listener,
+            on_started,
+            synchronous_hook,
+            candidate_port,
+            admitted_port,
+            close_ok,
+        )
+        raise
+
+
+def serve_owned_prebound_sidecar_app(
+    state: SidecarState,
+    listener: socket.socket,
+    *,
+    on_started: Callable[[], None],
+) -> None:
+    """Consume and serve one exact private app on the supplied listener."""
+
+    if type(state) is not _STATE_TYPE:
+        del state, listener, on_started
+        _raise_state_type()
+    if type(listener) is not _SOCKET_TYPE:
+        del state, listener, on_started
+        _raise_listener_type()
+    if type(on_started) is not _FUNCTION_TYPE:
+        del state, listener, on_started
+        _raise_hook_type()
+    try:
+        succeeded = _serve_after_owned_admission(state, listener, on_started)
+    except BaseException:
+        del state, listener, on_started
+        raise
+    del state, listener, on_started
+    if succeeded is not True:
+        del succeeded
+        _raise_server_failure()
+    del succeeded

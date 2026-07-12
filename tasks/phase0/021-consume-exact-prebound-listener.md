@@ -54,23 +54,25 @@ outcome, without changing the existing API or adding child/state/READY scope.
   exact Python `FunctionType`. Wrong top-level inputs fail before transfer and
   leave a valid supplied listener caller-owned and untouched.
 - With all three top-level types admitted, production immediately calls one
-  private owned helper. Entry into that helper is the sole transfer point. There
-  is no dependency call, function-kind inspection, compatibility check,
-  callback, mutable seam, or other fallible operation in the admission-to-helper
-  gap, and no local ownership marker or boolean exists.
+  private owned helper. That helper initializes only four fixed local scalar
+  slots, then enters its close-bearing failure region; entry into that region is
+  the sole transfer point. The scalar initialization is caller-owned mechanical
+  setup with no dependency call, allocation protocol, function-kind inspection,
+  compatibility check, callback, mutable seam, or ownership marker/boolean.
 - The owned helper's close-bearing failure region contains only the captured
   exact sync/coroutine/generator/async-generator checks, the complete captured
   P0-020 compatibility preflight, and the exact built-in integer port
   postcondition. Rejection, ordinary failure, or synchronous process control in
   that region receives exactly one bridge-owned canonical close attempt.
-- On the successful path, execution leaves the close-bearing failure region and
-  the next statement is the direct
-  `return _serve_owned(state, listener, on_started, port)`. That call is not
-  inside any `except` or `finally` that can close the listener. There is no
-  validation, callback, mutation, helper, marker, or other fallible operation in
-  the handoff gap. Existing `_serve_owned` is then the sole closer. OOM, fatal
-  signals, `os._exit`, and arbitrary asynchronous bytecode injection in that
-  mechanical gap remain outside P0-020's fail-stop boundary.
+- After that region, one identity-only rejection selection either performs the
+  fixed outer cleanup/error mapping or falls through to a direct
+  `return _serve_owned(state, listener, on_started, admitted_port)` inside a
+  traceback-scrub handler that never closes. There is no dependency call,
+  callback, validation protocol, ownership mutation, marker, or helper in the
+  admitted handoff. Existing `_serve_owned` is then the sole closer. OOM, fatal
+  signals, `os._exit`, and arbitrary asynchronous bytecode injection during
+  scalar setup, the mechanical rejection selection, or the direct handoff are
+  outside this reviewed synchronous-dependency boundary.
 - The rejection/cleanup matrix is fixed. A successful close preserves the hook
   `TypeError` or compatibility `ValueError`. An ordinary, ambiguous, or
   non-`None` close outcome replaces that ordinary rejection with P0-020's fixed
@@ -83,9 +85,16 @@ outcome, without changing the existing API or adding child/state/READY scope.
   function-kind checks, preflight, `_serve_owned`, close helpers, errors, Config,
   Server, notifier, and signal behavior; it does not copy or fork them. Public
   package/module/class replacement cannot redirect captured dependencies.
-  Private test seams may only delegate to their captured canonical dependency
-  or synchronously fail before returning; forged successful results are outside
-  the seam contract.
+  Authorized private dependency seams may only delegate to their captured
+  canonical dependency or synchronously fail before returning; forged
+  successful results are outside the seam contract. The two structural
+  ownership helpers `_serve_after_owned_admission` and `_serve_owned` are not
+  fault seams: a test wrapper may only delegate directly to the canonical helper
+  without injecting a failure before or after that delegation. P0-020's
+  canonical `_close_listener` and `_close_during_control` are likewise
+  structural cleanup helpers rather than whole-helper fault seams; their
+  captured `_SOCKET_CLOSE` and `_ADD_NOTE` dependencies carry the authorized
+  cleanup fault matrix.
 - Default SIGTERM retains P0-020's exact boundary: Uvicorn may restore and replay
   `SIG_DFL` after its own listener shutdown and terminate before an outer Python
   frame resumes. This task proves bridge/P0-020/OS listener release, not general
@@ -138,9 +147,10 @@ control-plane records; they do not expand the product-code allowlist above.
   helper, retry, detach, dup, socket allocation/bind/listen/fromfd, returned
   server/handle, async public API, mutable registry/cache, task, or thread.
 - Do not infer ownership from exception type, traceback, note, `fileno`, socket
-  state, health, or close outcome. Top-level rejection is caller-owned; outer
-  owned-helper entry is transfer; the direct `_serve_owned` return after the
-  close-bearing region is the only later ownership handoff.
+  state, health, or close outcome. Top-level rejection and the four fixed scalar
+  initializations are caller-owned; entry into the immediately following owned
+  guard is transfer; the direct `_serve_owned` return after the close-bearing
+  region is the only later ownership handoff.
 - Do not add child bootstrap/preparation, state construction/publication,
   startup channel, READY/FAILURE, owner lock, discovery/election, P0-019,
   launcher/argv/`__main__`/process APIs, SQLite/writer, SDK/FlowSight, OTel,
@@ -164,9 +174,11 @@ control-plane records; they do not expand the product-code allowlist above.
   unknown protocols.
 - [ ] Immediately after the third exact type admission, production calls one
   private owned helper with no dependency call, function-kind check, callback,
-  mutable seam, or other fallible operation in the gap. Helper entry terminally
-  transfers the listener for every later ordinary and process-control outcome;
-  production contains no ownership marker or boolean.
+  mutable seam, or other fallible operation in the gap. The helper initializes
+  only four fixed scalar locals; entry into its immediately following
+  close-bearing region terminally transfers the listener for every reviewed
+  later ordinary and process-control outcome. Production contains no ownership
+  marker or boolean.
 - [ ] The close-bearing failure region inside that helper wraps only P0-020's
   captured exact coroutine/generator/async-generator checks, captured preflight,
   and exact integer port postcondition. Exact unsupported function shapes enter
@@ -182,13 +194,17 @@ control-plane records; they do not expand the product-code allowlist above.
   non-`None` close becomes the fixed server `RuntimeError`; cleanup process
   control without active control propagates unchanged; active process control
   preserves identity/payload/notes/traceback and may receive at most one
-  P0-021-added copy of P0-020's existing fixed safe cleanup note.
-- [ ] After exact port success leaves the close-bearing region, the next
-  statement is directly
-  `return _serve_owned(state, listener, on_started, port)`. The call is outside
-  every listener-closing `except`/`finally`, and no call, callback, validation,
-  allocation seam, await, yield, context manager, mutation, marker, or boolean
-  lies in the mechanical handoff gap. `_serve_owned` alone closes thereafter.
+  P0-021-added copy of P0-020's existing fixed safe cleanup note. Dynamic fault
+  seams cover only canonical delegation or synchronous failure; defensive
+  false/non-`None` close-result branches are frozen by exact helper-body and
+  full-tree AST evidence rather than a forged return.
+- [ ] After exact port success leaves the close-bearing region, one
+  identity-only rejection selection falls through to the direct
+  `return _serve_owned(state, listener, on_started, admitted_port)`. The call is
+  outside every listener-closing `except`/`finally`; its sole handler scrubs
+  traceback locals and re-raises without any call. No callback, validation
+  protocol, ownership mutation, marker, or boolean lies in the admitted
+  handoff, and `_serve_owned` alone closes thereafter.
 - [ ] Normal return, every ordinary app/Config/Server/run/notifier/result/close
   failure, and synchronous process control after `_serve_owned` delegation keep
   all P0-020 behavior and perform no second P0-021 close. Ordinary failures retain
@@ -201,15 +217,23 @@ control-plane records; they do not expand the product-code allowlist above.
 - [ ] The old `serve_prebound_sidecar_app` public identity, signature, top-level
   error order, caller-owned incompatibility behavior, transfer point, Config,
   runtime, and full existing test suite remain unchanged. Public replacement
-  cannot redirect either API away from captured helpers. Every private seam may
-  only delegate to its captured canonical dependency or synchronously fail
-  before returning; no private seam may forge a successful result.
-- [ ] Deterministic fault tests cover top-level admission, owned-helper entry,
-  every failure-region seam, direct handoff, and delegated dependency outcome;
-  exact call counts/order; unsupported function shapes; all compatibility
-  failures; ordinary/control cleanup arbitration; caller-active contexts; no
-  retention/output/log leakage; and mutations that would otherwise survive a
-  weak ownership test.
+  cannot redirect either API away from captured helpers. Every authorized
+  private dependency seam may only delegate to its captured canonical dependency
+  or synchronously fail before returning; no seam may forge a successful result.
+  `_serve_after_owned_admission` and `_serve_owned` are structural ownership
+  helpers, not fault seams; wrappers may only delegate directly to their
+  canonical implementation without pre/post-delegation failure injection.
+  `_close_listener` and `_close_during_control` remain canonical structural
+  cleanup helpers; fault injection uses only their captured `_SOCKET_CLOSE` and
+  `_ADD_NOTE` dependencies.
+- [ ] Deterministic fault tests cover top-level admission, owned-guard entry and
+  the first guarded dependency, every authorized failure-region seam, direct
+  handoff, and delegated dependency outcome; exact call counts/order;
+  unsupported function shapes; all
+  compatibility failures; ordinary/control cleanup arbitration; an exact
+  post-preflight port-check control injection inside the guard; caller-active
+  contexts; no retention/output/log leakage; and mutations that would otherwise
+  survive a weak ownership test.
 - [ ] Real child tests invoke the new API on one P0-003 listener/P0-007 state,
   forbid any later network bind, and prove authenticated health uses that exact
   PID/port/listener with wrong-token/Host rejection and no token/server/date/
@@ -220,9 +244,10 @@ control-plane records; they do not expand the product-code allowlist above.
   and reap evidence without claiming arbitrary Python-finally execution.
 - [ ] A positive full-tree AST allowlist freezes exact imports, immutable
   captures, both public signatures, top-level admission order, immediate owned
-  helper, the narrow close-bearing region, absence of ownership markers, direct
-  return handoff outside closing handlers, rejection/cleanup matrix, mutually
-  exclusive close ownership, calls/counts, fixed errors, and exact-`None` return.
+  helper, four scalar initializations, the narrow close-bearing region, absence
+  of ownership markers, identity-only rejection selection, direct return handoff
+  outside closing handlers, rejection/cleanup matrix, mutually exclusive close
+  ownership, calls/counts, fixed errors, and exact-`None` return.
   It rejects copied Config/Server/runtime logic, ownership inference, new socket/
   process/state/channel/storage/SDK/OTel/UI/tracepoint behavior, dynamic calls,
   logging, output, mutable state, or unreviewed nested definitions.
@@ -257,21 +282,23 @@ the existing P0-020 API and runtime remain unchanged
 
 ## Risks
 
-- Leaving function-kind or compatibility work before the owned helper recreates
+- Leaving function-kind or compatibility work before the owned guard recreates
   the exact pre/post-transfer control ambiguity this task exists to remove.
 - A local ownership marker reintroduces a before/after mutation gap. The narrow
-  close-bearing region must end before an immediate direct `_serve_owned` return
-  that is not covered by a closing handler.
+  close-bearing region must cover every fallible dependency and exact port
+  postcondition; admitted execution then reaches `_serve_owned` through only the
+  documented identity-only mechanical selection and zero-close scrub handler.
 - Refactoring Config/Server/notifier code instead of reusing `_serve_owned` can
   silently drift P0-020 security, logging, signal, or same-socket guarantees.
 
 ## Reviewer Focus
 
-- Are the three top-level type checks the only caller-owned work?
-- Does owned-helper entry precede every fallible function-kind/preflight
-  operation without a local ownership marker?
-- Does the close-bearing region contain only the frozen preflight work, followed
-  immediately by direct `_serve_owned` return outside closing handlers?
+- Are the three top-level type checks plus four fixed scalar initializations the
+  only caller-owned work?
+- Does guard entry precede every fallible function-kind/preflight operation and
+  the exact port postcondition without a local ownership marker?
+- Does admitted execution reach direct `_serve_owned` return through only the
+  frozen identity selection and a zero-close traceback-scrub handler?
 - Did the old API and all P0-020 Config/runtime/signal/privacy behavior remain
   byte-for-behavior unchanged?
 - Did the task avoid child/state/READY/launcher/storage/SDK/OTel/UI scope?
@@ -279,36 +306,62 @@ the existing P0-020 API and runtime remain unchanged
 ## Role Outputs
 
 Implementer:
-- Implementation is pending. Planning freezes one sibling serving surface and
-  reuses P0-020 helpers; no product file changes belong in the planning commit.
+- Added the exact `serve_owned_prebound_sidecar_app` sibling and export. The
+  admitted helper transfers at its close-bearing guard, keeps every fallible
+  function-kind/preflight/port check inside that guard, routes rejection through
+  the existing canonical close arbitration, and delegates admitted serving
+  directly to unchanged `_serve_owned`.
+- Added deterministic ownership, fault, cleanup, traceback-scrubbing, AST, old
+  API regression, and real-child custom/default-SIGTERM coverage without adding
+  child/state/READY behavior or changing P0-020's public surface.
 
 Adversarial Reviewer:
 - Reviewer 1: identified the same-shaped pre/post-transfer `BaseException` as
   unsolvable by an outer caller and required transfer before function-kind and
-  compatibility work with exact top-level type rejection remaining caller-owned;
-  actual-card review removed every local ownership marker.
+  compatibility work with exact top-level type rejection and fixed scalar setup
+  remaining caller-owned; actual-card review removed every local ownership
+  marker and placed the exact port postcondition inside the guard.
 - Reviewer 2: required adjacent delegation to existing `_serve_owned`, mutually
   exclusive failure-region/inner close attempts, the exact rejection/cleanup
   matrix, unchanged old API behavior, and the complete P0-020
   ordinary/control/cleanup/signal/privacy regression matrix.
+- Final independent behavior, runtime-safety, and scope reviews each reported
+  `P0/P1/P2 = 0/0/0` and GO. They specifically rechecked exact port validation
+  inside the guard, traceback-local scrubbing, canonical structural-helper
+  delegation, five-path scope, real-child evidence, and unchanged old runtime.
 
 Fixer:
-- Planning incorporates every actual-card finding without a token, marker, or
-  copied runtime: the owned helper's narrow failure region owns preflight, its
-  next statement directly returns `_serve_owned`, and all child/state/READY
-  behavior remains deferred.
+- Applied every accepted review finding without a token, marker, or copied
+  runtime: removed forged close-result seams, added the two missing captured
+  compatibility seams, moved exact port validation inside the guard, scrubbed
+  safe scalar locals on control propagation, restored P0-022 to zero diff, and
+  constrained structural-helper wrappers to direct canonical delegation.
 
 Quality Governor:
 - This is one Phase 0 ownership bridge with the exact P0-020 four-file allowlist,
   `scope_override: none`, no gate claim, and no v1 non-goal or later-phase drift.
+- The final diff is exactly those four product/test paths plus this task card;
+  P0-022 remains unchanged.
 
 ## Verifier Evidence
 
-- Command: `.venv/bin/python scripts/validate_agent_system.py`; `git diff --check`
-- Result: passed
-- Notes: planned task-record validation and whitespace checks passed;
-  implementation has not started and every acceptance criterion remains
-  unchecked by design.
+- Command: `.venv/bin/ruff format --check flowsight/sidecar/server_runtime.py flowsight/sidecar/__init__.py tests/sidecar/test_server_runtime.py tests/sidecar/test_runtime_config.py`
+- Result: passed; 4 files already formatted
+- Command: `.venv/bin/ruff check flowsight/sidecar/server_runtime.py flowsight/sidecar/__init__.py tests/sidecar/test_server_runtime.py tests/sidecar/test_runtime_config.py`; `.venv/bin/mypy flowsight/sidecar/server_runtime.py`
+- Result: passed; no lint or type errors
+- Command: `.venv/bin/python -m pytest tests/sidecar/test_server_runtime.py tests/sidecar/test_runtime_config.py -q`
+- Result: passed; 521 tests
+- Command: `make test-phase0`
+- Result: passed; 2495 tests
+- Command: `make gate-phase0`
+- Result: passed; agent-system checks, formatting, lint, type checks, 2620 tests,
+  and the `phase0-sustained` gate all passed; the partial-scaffold disclaimer
+  remained explicit
+- Command: `.venv/bin/python scripts/validate_agent_system.py`; `git diff --check`; `git diff -- tasks/phase0/022-run-sidecar-child-transaction.md`
+- Result: passed; exact five-path working diff and zero P0-022 diff
+- Notes: candidate CI evidence is pending, so status remains `in_progress` and
+  every acceptance criterion remains unchecked until the authorized branch push
+  passes macOS/Linux on CPython 3.12/3.13.
 
 ## Failure Queue Items
 

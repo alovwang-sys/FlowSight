@@ -31,6 +31,7 @@ from flowsight.sidecar import (
     StateStore,
     bind_loopback_listener,
     create_startup_state,
+    serve_owned_prebound_sidecar_app,
     serve_prebound_sidecar_app,
 )
 from flowsight.sidecar import server_runtime as server_module
@@ -392,16 +393,26 @@ import sys
 
 from flowsight.sidecar import StateStore, bind_loopback_listener, create_startup_state
 from flowsight.sidecar import server_runtime as runtime_module
-from flowsight.sidecar.server_runtime import serve_prebound_sidecar_app
+from flowsight.sidecar.server_runtime import (
+    serve_owned_prebound_sidecar_app,
+    serve_prebound_sidecar_app,
+)
 
 mode = sys.argv[1]
 fixture_fd = int(sys.argv[2])
 signal_fd = int(sys.argv[3])
 runtime_root = Path(sys.argv[4])
 expected_origin = Path(sys.argv[5]).resolve()
+serving_api = sys.argv[6]
 
 if Path(runtime_module.__file__).resolve() != expected_origin:
     raise SystemExit(70)
+if serving_api == "caller-owned":
+    serve_app = serve_prebound_sidecar_app
+elif serving_api == "owned":
+    serve_app = serve_owned_prebound_sidecar_app
+else:
+    raise SystemExit(84)
 
 store = StateStore(runtime_root, project_id="project-v1-" + "a" * 64)
 listener = bind_loopback_listener(0)
@@ -500,7 +511,7 @@ if mode == "custom":
         except ValueError as observed_inner:
             if observed_inner is not inner_context:
                 raise SystemExit(76)
-            result = serve_prebound_sidecar_app(state, listener, on_started=on_started)
+            result = serve_app(state, listener, on_started=on_started)
             if (
                 sys.exception() is not inner_context
                 or inner_context.__notes__ != ["inner-caller-note"]
@@ -513,7 +524,7 @@ if mode == "custom":
             raise SystemExit(78)
 else:
     try:
-        result = serve_prebound_sidecar_app(state, listener, on_started=on_started)
+        result = serve_app(state, listener, on_started=on_started)
     except BaseException as error:
         if mode in {"hook-ordinary", "hook-non-none"}:
             if (
@@ -573,6 +584,7 @@ def _spawn_real_child(
     tmp_path: Path,
     *,
     mode: str,
+    serving_api: str = "caller-owned",
 ) -> tuple[subprocess.Popen[bytes], int, int]:
     fixture_reader, fixture_writer = os.pipe()
     signal_reader, signal_writer = os.pipe()
@@ -594,6 +606,7 @@ def _spawn_real_child(
         str(signal_writer),
         str(runtime_root),
         str(Path(server_module.__file__).resolve()),
+        serving_api,
     )
     try:
         process = subprocess.Popen(
@@ -1030,6 +1043,275 @@ def test_running_loop_fails_without_unawaited_coroutine_warning(tmp_path: Path) 
         listener.close()
 
 
+def test_owned_public_surface_signature_and_top_level_admission_are_exact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    assert sidecar_package.serve_owned_prebound_sidecar_app is serve_owned_prebound_sidecar_app
+    assert sidecar_package.__all__.count("serve_owned_prebound_sidecar_app") == 1
+    assert server_module.serve_owned_prebound_sidecar_app is serve_owned_prebound_sidecar_app
+
+    signature = inspect.signature(serve_owned_prebound_sidecar_app)
+    assert tuple(signature.parameters) == ("state", "listener", "on_started")
+    assert signature.parameters["state"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    assert signature.parameters["listener"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    assert signature.parameters["on_started"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert signature.parameters["on_started"].default is inspect.Parameter.empty
+    assert signature.return_annotation == "None"
+    assert get_type_hints(serve_owned_prebound_sidecar_app) == {
+        "state": SidecarState,
+        "listener": socket.socket,
+        "on_started": Callable[[], None],
+        "return": type(None),
+    }
+
+    _store, listener, state = _live_pair(tmp_path)
+    before = _listener_snapshot(listener)
+    canonical_owned_admission = server_module._serve_after_owned_admission
+    events: list[str] = []
+
+    def delegate_owned_admission(
+        observed_state: SidecarState,
+        observed_listener: socket.socket,
+        observed_hook: Callable[[], None],
+    ) -> bool:
+        events.append("owned-helper")
+        return canonical_owned_admission(
+            observed_state,
+            observed_listener,
+            observed_hook,  # type: ignore[arg-type]
+        )
+
+    def unexpected_close(_listener: socket.socket) -> NoReturn:
+        events.append("close")
+        raise AssertionError("caller-owned listener was closed")
+
+    monkeypatch.setattr(
+        server_module,
+        "_serve_after_owned_admission",
+        delegate_owned_admission,
+    )
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", unexpected_close)
+    try:
+        for wrong_state in (object(), object.__new__(_DerivedState), _ExplodingProxy()):
+            wrong_listener = _ExplodingProxy()
+            wrong_hook = _ExplodingProxy()
+            with pytest.raises(TypeError) as captured:
+                serve_owned_prebound_sidecar_app(
+                    wrong_state,  # type: ignore[arg-type]
+                    wrong_listener,  # type: ignore[arg-type]
+                    on_started=wrong_hook,  # type: ignore[arg-type]
+                )
+            _assert_fixed_error(captured.value, TypeError, STATE_TYPE_ERROR)
+            _assert_frames_hide(
+                captured.value,
+                wrong_state,
+                wrong_listener,
+                wrong_hook,
+            )
+
+        malformed_state = _forge_state(state, missing="pid")
+        wrong_listener = _ExplodingProxy()
+        wrong_hook = _ExplodingProxy()
+        with pytest.raises(TypeError) as captured_listener:
+            serve_owned_prebound_sidecar_app(
+                malformed_state,
+                wrong_listener,  # type: ignore[arg-type]
+                on_started=wrong_hook,  # type: ignore[arg-type]
+            )
+        _assert_fixed_error(captured_listener.value, TypeError, LISTENER_TYPE_ERROR)
+
+        invalid_hooks = (
+            object(),
+            _CallableObject(),
+            _BoundHook().run,
+            len,
+            _ExplodingProxy(),
+        )
+        for invalid_hook in invalid_hooks:
+            with pytest.raises(TypeError) as captured_hook:
+                serve_owned_prebound_sidecar_app(
+                    malformed_state,
+                    listener,
+                    on_started=invalid_hook,  # type: ignore[arg-type]
+                )
+            _assert_fixed_error(captured_hook.value, TypeError, HOOK_TYPE_ERROR)
+            _assert_frames_hide(captured_hook.value, malformed_state, listener, invalid_hook)
+            _assert_usable_unchanged(listener, before)
+        assert events == []
+    finally:
+        listener.close()
+
+    derived_listener = _DerivedSocket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        with pytest.raises(TypeError) as captured_derived:
+            serve_owned_prebound_sidecar_app(
+                state,
+                derived_listener,
+                on_started=_started,
+            )
+        _assert_fixed_error(captured_derived.value, TypeError, LISTENER_TYPE_ERROR)
+        assert derived_listener.fileno() >= 3
+        assert events == []
+    finally:
+        derived_listener.close()
+
+
+@pytest.mark.parametrize(
+    "invalid_hook",
+    [_async_started, _generator_started, _async_generator_started],
+    ids=["coroutine-function", "generator-function", "async-generator-function"],
+)
+def test_owned_unsupported_function_shapes_fail_closed_without_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    invalid_hook: Callable[[], object],
+) -> None:
+    _store, listener, state = _live_pair(tmp_path)
+    canonical_close = server_module._SOCKET_CLOSE
+    close_calls: list[socket.socket] = []
+
+    def close(observed_listener: socket.socket) -> object:
+        close_calls.append(observed_listener)
+        return canonical_close(observed_listener)
+
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", close)
+    with warnings.catch_warnings(record=True) as captured_warnings:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError) as captured:
+            serve_owned_prebound_sidecar_app(
+                state,
+                listener,
+                on_started=invalid_hook,  # type: ignore[arg-type]
+            )
+        gc.collect()
+
+    _assert_fixed_error(captured.value, TypeError, HOOK_TYPE_ERROR)
+    _assert_frames_hide(captured.value, state, listener, invalid_hook)
+    assert captured_warnings == []
+    assert close_calls == [listener]
+    assert listener.fileno() == -1
+    _assert_port_rebinds(state.port)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "missing-pid",
+        "bad-pid",
+        "pid-mismatch",
+        "port-mismatch",
+        "inheritable",
+        "bound-not-listening",
+    ],
+)
+def test_owned_representative_compatibility_rejections_close_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    if kind == "bound-not-listening":
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", 0))
+        actual_port = int(listener.getsockname()[1])
+        state = _state_for_port(tmp_path, actual_port)
+    else:
+        _store, listener, state = _live_pair(tmp_path)
+        actual_port = state.port
+        if kind == "missing-pid":
+            state = _forge_state(state, missing="pid")
+        elif kind == "bad-pid":
+            state = _forge_state(state, replacements={"pid": True})
+        elif kind == "pid-mismatch":
+            state = _replace_state(state, pid=os.getpid() + 1)
+        elif kind == "port-mismatch":
+            state = _replace_state(state, port=_wrong_port(state.port))
+        else:
+            listener.set_inheritable(True)
+
+    canonical_close = server_module._SOCKET_CLOSE
+    close_calls: list[socket.socket] = []
+
+    def close(observed_listener: socket.socket) -> object:
+        close_calls.append(observed_listener)
+        return canonical_close(observed_listener)
+
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", close)
+    with pytest.raises(ValueError) as captured:
+        serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+
+    _assert_fixed_error(captured.value, ValueError, COMPATIBILITY_ERROR)
+    _assert_frames_hide(captured.value, state, listener)
+    _assert_no_sensitive_text(captured.value, state)
+    assert close_calls == [listener]
+    assert listener.fileno() == -1
+    _assert_port_rebinds(actual_port)
+
+
+def test_owned_off_main_thread_rejection_closes_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _store, listener, state = _live_pair(tmp_path)
+    canonical_close = server_module._SOCKET_CLOSE
+    close_calls: list[socket.socket] = []
+    errors: list[BaseException] = []
+
+    def close(observed_listener: socket.socket) -> object:
+        close_calls.append(observed_listener)
+        return canonical_close(observed_listener)
+
+    def invoke() -> None:
+        try:
+            serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+        except BaseException as error:
+            errors.append(error)
+
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", close)
+    worker = threading.Thread(target=invoke, name="p0-021-off-main", daemon=False)
+    worker.start()
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+    assert len(errors) == 1
+    _assert_fixed_error(errors[0], ValueError, COMPATIBILITY_ERROR)
+    _assert_frames_hide(errors[0], state, listener)
+    assert close_calls == [listener]
+    assert listener.fileno() == -1
+    _assert_port_rebinds(state.port)
+
+
+def test_owned_running_loop_rejection_closes_without_coroutine_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _store, listener, state = _live_pair(tmp_path)
+    canonical_close = server_module._SOCKET_CLOSE
+    close_calls: list[socket.socket] = []
+
+    def close(observed_listener: socket.socket) -> object:
+        close_calls.append(observed_listener)
+        return canonical_close(observed_listener)
+
+    async def invoke() -> BaseException:
+        with pytest.raises(ValueError) as captured:
+            serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+        return captured.value
+
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", close)
+    with warnings.catch_warnings(record=True) as captured_warnings:
+        warnings.simplefilter("always")
+        error = asyncio.run(invoke())
+        gc.collect()
+
+    _assert_fixed_error(error, ValueError, COMPATIBILITY_ERROR)
+    _assert_frames_hide(error, state, listener)
+    assert captured_warnings == []
+    assert close_calls == [listener]
+    assert listener.fileno() == -1
+    _assert_port_rebinds(state.port)
+
+
 def test_private_one_shot_notifier_calls_once_and_clears_reference() -> None:
     calls: list[tuple[object, ...]] = []
 
@@ -1358,6 +1640,95 @@ _PREFLIGHT_DEPENDENCIES = (
 )
 
 
+_OWNED_FAILURE_REGION_DEPENDENCIES = (
+    ("_is_sync_function", "hook"),
+    ("_IS_COROUTINE_FUNCTION", "hook"),
+    ("_IS_GENERATOR_FUNCTION", "hook"),
+    ("_IS_ASYNC_GENERATOR_FUNCTION", "hook"),
+    ("_preflight", "compatibility"),
+    ("_no_running_loop", "compatibility"),
+    ("_listener_is_accepting", "compatibility"),
+    *((dependency, "compatibility") for dependency in _PREFLIGHT_DEPENDENCIES),
+)
+
+
+@pytest.mark.parametrize(
+    ("dependency", "rejection_kind"),
+    _OWNED_FAILURE_REGION_DEPENDENCIES,
+)
+@pytest.mark.parametrize("outcome", ["ordinary", "control"])
+def test_owned_failure_region_each_seam_fails_closed_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    dependency: str,
+    rejection_kind: str,
+    outcome: str,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _TrackedFailure.references.clear()
+    _store, listener, state = _live_pair(tmp_path)
+    canonical_close = server_module._SOCKET_CLOSE
+    secret = f"private-owned-failure-{dependency}-{outcome}"
+    control = _Control(secret)
+    control.add_note("caller-note")
+    calls: list[str] = []
+
+    def fail(*_args: object, **_kwargs: object) -> NoReturn:
+        calls.append(dependency)
+        if outcome == "control":
+            raise control
+        raise _TrackedFailure(secret)
+
+    def close(observed_listener: socket.socket) -> object:
+        assert observed_listener is listener
+        calls.append("close")
+        return canonical_close(observed_listener)
+
+    def unexpected_app(_state: SidecarState) -> NoReturn:
+        calls.append("app")
+        raise AssertionError("serving began after owned preflight failure")
+
+    monkeypatch.setattr(server_module, dependency, fail)
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", close)
+    monkeypatch.setattr(server_module, "_CREATE_SIDECAR_APP", unexpected_app)
+    caplog.clear()
+
+    expected_type: type[TypeError] | type[ValueError]
+    expected_text: str
+    if rejection_kind == "hook":
+        expected_type = TypeError
+        expected_text = HOOK_TYPE_ERROR
+    else:
+        expected_type = ValueError
+        expected_text = COMPATIBILITY_ERROR
+
+    if outcome == "ordinary":
+        with pytest.raises(expected_type) as captured:
+            serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+        _assert_fixed_error(captured.value, expected_type, expected_text)
+        formatted = "".join(traceback.format_exception(captured.value))
+        assert secret not in formatted
+        _assert_frames_hide(captured.value, state, listener, _started)
+    else:
+        with pytest.raises(_Control) as captured:
+            serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+        assert captured.value is control
+        assert captured.value.__notes__ == ["caller-note"]
+        assert traceback.extract_tb(captured.value.__traceback__)[-1].name == "fail"
+        _assert_frames_hide(captured.value, state, listener, _started)
+
+    assert calls == [dependency, "close"]
+    assert listener.fileno() == -1
+    assert capsys.readouterr() == ("", "")
+    assert caplog.records == []
+    _assert_port_rebinds(state.port)
+    if outcome == "ordinary":
+        gc.collect()
+        assert _TrackedFailure.references
+        assert all(reference() is None for reference in _TrackedFailure.references)
+
+
 @pytest.mark.parametrize("dependency", _PREFLIGHT_DEPENDENCIES)
 def test_each_preflight_ordinary_fault_becomes_fixed_incompatibility(
     monkeypatch: pytest.MonkeyPatch,
@@ -1426,6 +1797,490 @@ def test_each_preflight_process_control_preserves_identity_without_cleanup(
         _assert_usable_unchanged(listener, before)
     finally:
         listener.close()
+
+
+@pytest.mark.parametrize(
+    ("rejection_kind", "close_outcome", "expected_kind"),
+    [
+        ("hook", "success", "hook"),
+        ("compatibility", "success", "compatibility"),
+        ("hook", "ordinary", "server"),
+        ("hook", "close-then-error", "server"),
+        ("compatibility", "keyboard", "control"),
+        ("compatibility", "system-exit", "control"),
+        ("compatibility", "custom-control", "control"),
+    ],
+)
+def test_owned_rejection_close_arbitration_is_exhaustive_and_single_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    rejection_kind: str,
+    close_outcome: str,
+    expected_kind: str,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _store, listener, state = _live_pair(tmp_path)
+    actual_port = state.port
+    if rejection_kind == "hook":
+        hook: Callable[[], object] = _async_started
+    else:
+        hook = _started
+        state = _replace_state(state, pid=os.getpid() + 1)
+    canonical_close = server_module._SOCKET_CLOSE
+    control_types = {
+        "keyboard": KeyboardInterrupt,
+        "system-exit": SystemExit,
+        "custom-control": _Control,
+    }
+    cleanup_control: BaseException | None = None
+    if close_outcome in control_types:
+        cleanup_control = control_types[close_outcome]("private-cleanup-control")
+        cleanup_control.add_note("cleanup-note")
+    calls: list[str] = []
+
+    def close(observed_listener: socket.socket) -> object:
+        assert observed_listener is listener
+        calls.append("close")
+        if close_outcome == "success":
+            return canonical_close(observed_listener)
+        if close_outcome == "ordinary":
+            raise OSError("private-cleanup-ordinary")
+        if close_outcome == "close-then-error":
+            canonical_close(observed_listener)
+            raise OSError("private-cleanup-ambiguous")
+        assert cleanup_control is not None
+        raise cleanup_control
+
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", close)
+    caplog.clear()
+    try:
+        if expected_kind == "control":
+            assert cleanup_control is not None
+            with pytest.raises(type(cleanup_control)) as captured:
+                serve_owned_prebound_sidecar_app(
+                    state,
+                    listener,
+                    on_started=hook,  # type: ignore[arg-type]
+                )
+            assert captured.value is cleanup_control
+            assert captured.value.__notes__ == ["cleanup-note"]
+            assert traceback.extract_tb(captured.value.__traceback__)[-1].name == "close"
+            _assert_frames_hide(captured.value, state, listener, hook)
+        else:
+            expected_type: type[TypeError] | type[ValueError] | type[RuntimeError]
+            expected_text: str
+            if expected_kind == "hook":
+                expected_type = TypeError
+                expected_text = HOOK_TYPE_ERROR
+            elif expected_kind == "compatibility":
+                expected_type = ValueError
+                expected_text = COMPATIBILITY_ERROR
+            else:
+                expected_type = RuntimeError
+                expected_text = SERVER_ERROR
+            with pytest.raises(expected_type) as captured:
+                serve_owned_prebound_sidecar_app(
+                    state,
+                    listener,
+                    on_started=hook,  # type: ignore[arg-type]
+                )
+            _assert_fixed_error(captured.value, expected_type, expected_text)
+            _assert_frames_hide(captured.value, state, listener, hook)
+            formatted = "".join(traceback.format_exception(captured.value))
+            assert "private-cleanup" not in formatted
+
+        assert calls == ["close"]
+        physically_closed = close_outcome in {"success", "close-then-error"}
+        assert (listener.fileno() == -1) is physically_closed
+        assert capsys.readouterr() == ("", "")
+        assert caplog.records == []
+        if physically_closed:
+            _assert_port_rebinds(actual_port)
+    finally:
+        if listener.fileno() >= 0:
+            listener.close()
+
+
+@pytest.mark.parametrize("control_type", [KeyboardInterrupt, SystemExit, _Control])
+def test_owned_active_control_types_preserve_identity_and_close_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    control_type: type[BaseException],
+) -> None:
+    _store, listener, state = _live_pair(tmp_path)
+    canonical_close = server_module._SOCKET_CLOSE
+    active = control_type("owned-preflight-control")
+    active.add_note("caller-note")
+    calls: list[str] = []
+
+    def fail_preflight(*_args: object, **_kwargs: object) -> NoReturn:
+        calls.append("preflight")
+        raise active
+
+    def close(observed_listener: socket.socket) -> object:
+        assert observed_listener is listener
+        calls.append("close")
+        return canonical_close(observed_listener)
+
+    monkeypatch.setattr(server_module, "_preflight", fail_preflight)
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", close)
+    with pytest.raises(control_type) as captured:
+        serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+
+    assert captured.value is active
+    assert captured.value.__notes__ == ["caller-note"]
+    assert traceback.extract_tb(captured.value.__traceback__)[-1].name == "fail_preflight"
+    _assert_frames_hide(captured.value, state, listener)
+    assert calls == ["preflight", "close"]
+    assert listener.fileno() == -1
+    _assert_port_rebinds(state.port)
+
+
+def test_owned_trace_control_after_preflight_port_return_closes_and_scrubs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _store, listener, state = _live_pair(tmp_path)
+    expected_port = state.port
+    helper = server_module._serve_after_owned_admission
+    source_lines, first_line = inspect.getsourcelines(helper)
+    target_offsets = [
+        offset
+        for offset, line in enumerate(source_lines)
+        if line.strip() == "if type(candidate_port) is int:"
+    ]
+    assert len(target_offsets) == 1
+    target_line = first_line + target_offsets[0]
+    canonical_close = server_module._SOCKET_CLOSE
+    active = _Control("trace-after-preflight-control")
+    active.add_note("caller-note")
+    close_calls: list[socket.socket] = []
+    observations: list[tuple[int, object, object, object]] = []
+
+    def close(observed_listener: socket.socket) -> object:
+        assert observed_listener is listener
+        close_calls.append(observed_listener)
+        return canonical_close(observed_listener)
+
+    def line_trace(
+        frame: object,
+        event: str,
+        _argument: object,
+    ) -> Callable[..., object] | None:
+        assert hasattr(frame, "f_lineno") and hasattr(frame, "f_locals")
+        if event == "line" and frame.f_lineno == target_line:  # type: ignore[union-attr]
+            local_values = frame.f_locals  # type: ignore[union-attr]
+            observations.append(
+                (
+                    frame.f_lineno,  # type: ignore[union-attr]
+                    local_values["candidate_port"],
+                    local_values["synchronous_hook"],
+                    local_values["admitted_port"],
+                )
+            )
+            raise active
+        return line_trace
+
+    def global_trace(
+        frame: object,
+        event: str,
+        _argument: object,
+    ) -> Callable[..., object] | None:
+        if (
+            event == "call" and hasattr(frame, "f_code") and frame.f_code is helper.__code__  # type: ignore[union-attr]
+        ):
+            return line_trace
+        return None
+
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", close)
+    previous_trace = sys.gettrace()
+    try:
+        sys.settrace(global_trace)
+        with pytest.raises(_Control) as captured:
+            serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+    finally:
+        sys.settrace(previous_trace)
+
+    assert captured.value is active
+    assert captured.value.__notes__ == ["caller-note"]
+    assert observations == [(target_line, expected_port, True, None)]
+    assert close_calls == [listener]
+    assert listener.fileno() == -1
+    _assert_frames_hide(captured.value, state, listener, expected_port)
+    helper_frames = [
+        local_values
+        for name, local_values in _production_frames(captured.value)
+        if name == "_serve_after_owned_admission"
+    ]
+    assert len(helper_frames) == 1
+    assert set(helper_frames[0]).isdisjoint(
+        {
+            "state",
+            "listener",
+            "candidate_port",
+            "admitted_port",
+            "active_error",
+        }
+    )
+    assert not _contains_identity(helper_frames[0], (state, listener, expected_port))
+    _assert_port_rebinds(expected_port)
+
+
+@pytest.mark.parametrize(
+    "cleanup_outcome",
+    ["ordinary", "control", "close-then-error"],
+)
+def test_owned_active_control_cleanup_failure_adds_one_safe_note(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cleanup_outcome: str,
+) -> None:
+    _store, listener, state = _live_pair(tmp_path)
+    canonical_close = server_module._SOCKET_CLOSE
+    active = _Control("active-owned-control")
+    active.add_note("caller-note")
+    cleanup_control = KeyboardInterrupt("cleanup-owned-control")
+    cleanup_control.add_note("cleanup-private-note")
+    calls: list[str] = []
+
+    def fail_preflight(*_args: object, **_kwargs: object) -> NoReturn:
+        calls.append("preflight")
+        raise active
+
+    def fail_close(observed_listener: socket.socket) -> object:
+        assert observed_listener is listener
+        calls.append("close")
+        if cleanup_outcome == "ordinary":
+            raise OSError("private-cleanup-error")
+        if cleanup_outcome == "control":
+            raise cleanup_control
+        canonical_close(observed_listener)
+        raise OSError("private-ambiguous-cleanup-error")
+
+    canonical_add_note = server_module._ADD_NOTE
+
+    def add_note(error: BaseException, note: str) -> None:
+        assert error is active
+        assert note == "prebound sidecar server cleanup failed"
+        calls.append("note")
+        canonical_add_note(error, note)
+
+    monkeypatch.setattr(server_module, "_preflight", fail_preflight)
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", fail_close)
+    monkeypatch.setattr(server_module, "_ADD_NOTE", add_note)
+    with pytest.raises(_Control) as captured:
+        serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+
+    assert captured.value is active
+    assert captured.value.__notes__ == [
+        "caller-note",
+        "prebound sidecar server cleanup failed",
+    ]
+    assert cleanup_control.__notes__ == ["cleanup-private-note"]
+    assert calls == ["preflight", "close", "note"]
+    _assert_frames_hide(captured.value, state, listener, cleanup_control)
+    if cleanup_outcome == "close-then-error":
+        assert listener.fileno() == -1
+        _assert_port_rebinds(state.port)
+    else:
+        assert listener.fileno() >= 3
+        listener.close()
+
+
+def test_owned_add_note_control_cannot_replace_active_control(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _store, listener, state = _live_pair(tmp_path)
+    active = _Control("active-owned-control")
+    active.add_note("caller-note")
+    note_control = SystemExit("private-add-note-control")
+    calls: list[str] = []
+
+    def fail_preflight(*_args: object, **_kwargs: object) -> NoReturn:
+        calls.append("preflight")
+        raise active
+
+    def fail_close(observed_listener: socket.socket) -> NoReturn:
+        assert observed_listener is listener
+        calls.append("close")
+        raise OSError("private-cleanup-error")
+
+    def fail_add_note(error: BaseException, note: str) -> NoReturn:
+        assert error is active
+        assert note == "prebound sidecar server cleanup failed"
+        calls.append("note")
+        raise note_control
+
+    monkeypatch.setattr(server_module, "_preflight", fail_preflight)
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", fail_close)
+    monkeypatch.setattr(server_module, "_ADD_NOTE", fail_add_note)
+    with pytest.raises(_Control) as captured:
+        serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+
+    assert captured.value is active
+    assert captured.value.__notes__ == ["caller-note"]
+    assert calls == ["preflight", "close", "note"]
+    _assert_frames_hide(captured.value, state, listener, note_control)
+    assert listener.fileno() >= 3
+    listener.close()
+
+
+@pytest.mark.parametrize("caller_type", [ValueError, KeyboardInterrupt])
+@pytest.mark.parametrize("rejection_kind", ["hook", "compatibility"])
+def test_owned_rejection_preserves_caller_active_context(
+    tmp_path: Path,
+    caller_type: type[BaseException],
+    rejection_kind: str,
+) -> None:
+    _store, listener, state = _live_pair(tmp_path)
+    actual_port = state.port
+    caller_error = caller_type("caller-private-context")
+    caller_error.add_note("caller-note")
+    if rejection_kind == "hook":
+        hook: Callable[[], object] = _async_started
+        expected_type: type[TypeError] | type[ValueError] = TypeError
+        expected_text = HOOK_TYPE_ERROR
+    else:
+        hook = _started
+        state = _replace_state(state, port=_wrong_port(state.port))
+        expected_type = ValueError
+        expected_text = COMPATIBILITY_ERROR
+
+    try:
+        raise caller_error
+    except caller_type:
+        with pytest.raises(expected_type) as captured:
+            serve_owned_prebound_sidecar_app(
+                state,
+                listener,
+                on_started=hook,  # type: ignore[arg-type]
+            )
+
+    _assert_fixed_error(
+        captured.value,
+        expected_type,
+        expected_text,
+        context=caller_error,
+    )
+    assert caller_error.__notes__ == ["caller-note"]
+    formatted = "".join(traceback.format_exception(captured.value))
+    assert "caller-private-context" not in formatted
+    assert listener.fileno() == -1
+    _assert_port_rebinds(actual_port)
+
+
+@pytest.mark.parametrize("caller_type", [ValueError, KeyboardInterrupt])
+def test_owned_dependency_control_preserves_caller_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caller_type: type[BaseException],
+) -> None:
+    _store, listener, state = _live_pair(tmp_path)
+    caller_error = caller_type("caller-private-context")
+    caller_error.add_note("caller-note")
+    control = _Control("owned-dependency-control")
+    control.add_note("control-note")
+
+    def fail_preflight(*_args: object, **_kwargs: object) -> NoReturn:
+        raise control
+
+    monkeypatch.setattr(server_module, "_preflight", fail_preflight)
+    try:
+        raise caller_error
+    except caller_type:
+        with pytest.raises(_Control) as captured:
+            serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+
+    assert captured.value is control
+    assert captured.value.__context__ is caller_error
+    assert captured.value.__notes__ == ["control-note"]
+    assert caller_error.__notes__ == ["caller-note"]
+    _assert_frames_hide(captured.value, state, listener)
+    assert listener.fileno() == -1
+    _assert_port_rebinds(state.port)
+
+
+@pytest.mark.parametrize("outcome", ["ordinary", "control"])
+def test_owned_direct_handoff_delegates_once_without_bridge_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    outcome: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _store, listener, state = _live_pair(tmp_path)
+    canonical_sync = server_module._is_sync_function
+    canonical_preflight = server_module._preflight
+    canonical_owned = server_module._serve_owned
+    canonical_close = server_module._SOCKET_CLOSE
+    logger_snapshots = _snapshot_uvicorn_loggers()
+    control = _Control("private-delegated-control")
+    control.add_note("caller-note")
+    events: list[str] = []
+
+    def sync(callback: object) -> bool:
+        assert callback is _started
+        events.append("sync")
+        return canonical_sync(callback)  # type: ignore[arg-type]
+
+    def preflight(observed_state: SidecarState, observed_listener: socket.socket) -> int:
+        assert observed_state is state
+        assert observed_listener is listener
+        events.append("preflight")
+        return canonical_preflight(observed_state, observed_listener)
+
+    def owned(
+        observed_state: SidecarState,
+        observed_listener: socket.socket,
+        observed_hook: Callable[[], None],
+        port: int,
+    ) -> bool:
+        assert observed_state is state
+        assert observed_listener is listener
+        assert observed_hook is _started
+        assert port == state.port
+        events.append("serve-owned")
+        return canonical_owned(observed_state, observed_listener, observed_hook, port)
+
+    def fail_run(_server: object, *, sockets: list[socket.socket]) -> NoReturn:
+        assert type(sockets) is list and sockets == [listener]
+        events.append("run")
+        if outcome == "control":
+            raise control
+        raise OSError("private-delegated-ordinary")
+
+    def close(observed_listener: socket.socket) -> object:
+        assert observed_listener is listener
+        events.append("close")
+        return canonical_close(observed_listener)
+
+    monkeypatch.setattr(server_module, "_is_sync_function", sync)
+    monkeypatch.setattr(server_module, "_preflight", preflight)
+    monkeypatch.setattr(server_module, "_serve_owned", owned)
+    monkeypatch.setattr(server_module, "_SERVER_RUN", fail_run)
+    monkeypatch.setattr(server_module, "_SOCKET_CLOSE", close)
+    try:
+        if outcome == "ordinary":
+            with pytest.raises(RuntimeError) as captured:
+                serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+            _assert_fixed_error(captured.value, RuntimeError, SERVER_ERROR)
+            assert "private-delegated-ordinary" not in "".join(
+                traceback.format_exception(captured.value)
+            )
+        else:
+            with pytest.raises(_Control) as captured:
+                serve_owned_prebound_sidecar_app(state, listener, on_started=_started)
+            assert captured.value is control
+            assert captured.value.__notes__ == ["caller-note"]
+            _assert_frames_hide(captured.value, state, listener)
+    finally:
+        _restore_uvicorn_loggers(logger_snapshots)
+
+    assert events == ["sync", "preflight", "serve-owned", "run", "close"]
+    assert listener.fileno() == -1
+    assert capsys.readouterr() == ("", "")
+    _assert_port_rebinds(state.port)
 
 
 def test_canonical_pipeline_order_same_socket_and_captured_provenance(
@@ -1928,9 +2783,15 @@ def test_caller_context_and_dependency_control_both_preserve_identity(
     _assert_port_rebinds(state.port)
 
 
+@pytest.mark.parametrize(
+    "serving_api",
+    [serve_prebound_sidecar_app, serve_owned_prebound_sidecar_app],
+    ids=["caller-owned", "owned"],
+)
 def test_live_public_alias_constant_cast_and_enum_replacements_cannot_redirect_runtime(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    serving_api: Callable[..., None],
 ) -> None:
     _store, listener, state = _live_pair(tmp_path)
     logger_snapshots = _snapshot_uvicorn_loggers()
@@ -1960,6 +2821,16 @@ def test_live_public_alias_constant_cast_and_enum_replacements_cannot_redirect_r
             replacements.setattr(server_module, "create_sidecar_app", unexpected)
             replacements.setattr(server_module, "Config", unexpected)
             replacements.setattr(server_module, "Server", unexpected)
+            replacements.setattr(
+                server_module,
+                "serve_prebound_sidecar_app",
+                unexpected,
+            )
+            replacements.setattr(
+                server_module,
+                "serve_owned_prebound_sidecar_app",
+                unexpected,
+            )
             replacements.setattr(server_module, "LOOPBACK_HOST", "203.0.113.77")
             replacements.setattr(server_module, "cast", unexpected, raising=False)
             replacements.setattr(sidecar_package, "create_sidecar_app", unexpected)
@@ -1975,8 +2846,18 @@ def test_live_public_alias_constant_cast_and_enum_replacements_cannot_redirect_r
             replacements.setattr(server_module.threading, "get_ident", unexpected)
             replacements.setattr(server_module.threading, "current_thread", unexpected)
             replacements.setattr(server_module.threading, "main_thread", unexpected)
+            replacements.setattr(
+                sidecar_package,
+                "serve_prebound_sidecar_app",
+                unexpected,
+            )
+            replacements.setattr(
+                sidecar_package,
+                "serve_owned_prebound_sidecar_app",
+                unexpected,
+            )
             with pytest.raises(RuntimeError) as captured:
-                serve_prebound_sidecar_app(state, listener, on_started=_started)
+                serving_api(state, listener, on_started=_started)
     finally:
         _restore_uvicorn_loggers(logger_snapshots)
         if listener.fileno() >= 0:
@@ -2031,8 +2912,16 @@ def test_physical_close_capture_ignores_later_socket_real_close_replacement(
     _assert_port_rebinds(state.port)
 
 
-def test_real_prebound_server_auth_socket_identity_and_custom_signal(tmp_path: Path) -> None:
-    process, fixture_reader, signal_reader = _spawn_real_child(tmp_path, mode="custom")
+@pytest.mark.parametrize("serving_api", ["caller-owned", "owned"])
+def test_real_prebound_server_auth_socket_identity_and_custom_signal(
+    tmp_path: Path,
+    serving_api: str,
+) -> None:
+    process, fixture_reader, signal_reader = _spawn_real_child(
+        tmp_path,
+        mode="custom",
+        serving_api=serving_api,
+    )
     state: SidecarState | None = None
     try:
         try:
@@ -2164,10 +3053,16 @@ def test_real_canonical_none_run_makes_close_fault_the_only_fixed_failure(
         raise
 
 
+@pytest.mark.parametrize("serving_api", ["caller-owned", "owned"])
 def test_real_default_sigterm_with_stalled_request_is_bounded_and_reaped(
     tmp_path: Path,
+    serving_api: str,
 ) -> None:
-    process, fixture_reader, signal_reader = _spawn_real_child(tmp_path, mode="default")
+    process, fixture_reader, signal_reader = _spawn_real_child(
+        tmp_path,
+        mode="default",
+        serving_api=serving_api,
+    )
     state: SidecarState | None = None
     stalled: socket.socket | None = None
     try:
@@ -2306,6 +3201,8 @@ def test_server_runtime_source_has_exact_positive_ast_allowlist() -> None:
         "_close_during_control",
         "_serve_owned",
         "serve_prebound_sidecar_app",
+        "_serve_after_owned_admission",
+        "serve_owned_prebound_sidecar_app",
     }
     assert tuple(node.name for node in top_level_definitions) == (
         "_CompatibilityFailure",
@@ -2326,11 +3223,16 @@ def test_server_runtime_source_has_exact_positive_ast_allowlist() -> None:
         "_close_during_control",
         "_serve_owned",
         "serve_prebound_sidecar_app",
+        "_serve_after_owned_admission",
+        "serve_owned_prebound_sidecar_app",
     )
     public_definitions = [
         node.name for node in top_level_definitions if not node.name.startswith("_")
     ]
-    assert public_definitions == ["serve_prebound_sidecar_app"]
+    assert public_definitions == [
+        "serve_prebound_sidecar_app",
+        "serve_owned_prebound_sidecar_app",
+    ]
 
     classes = {node.name: node for node in top_level_definitions if isinstance(node, ast.ClassDef)}
     assert all(
@@ -2612,6 +3514,14 @@ def test_server_runtime_source_has_exact_positive_ast_allowlist() -> None:
             "def expected(state: SidecarState, listener: socket.socket, *, "
             "on_started: Callable[[], None]) -> None: pass"
         ),
+        "_serve_after_owned_admission": (
+            "def expected(state: SidecarState, listener: socket.socket, "
+            "on_started: FunctionType) -> bool: pass"
+        ),
+        "serve_owned_prebound_sidecar_app": (
+            "def expected(state: SidecarState, listener: socket.socket, *, "
+            "on_started: Callable[[], None]) -> None: pass"
+        ),
         "_OneShotNotifier.__init__": (
             "def expected(self, callback: Callable[[], None]) -> None: pass"
         ),
@@ -2712,27 +3622,28 @@ def test_server_runtime_source_has_exact_positive_ast_allowlist() -> None:
             "_STATE_HOST_GETTER": 1,
             "_STATE_PID_GETTER": 1,
             "_STATE_PORT_GETTER": 1,
-            "_close_during_control": 1,
-            "_close_listener": 1,
+            "_close_during_control": 2,
+            "_close_listener": 2,
             "_construct_config": 1,
-            "_is_sync_function": 1,
+            "_is_sync_function": 2,
             "_listener_is_accepting": 1,
             "_no_running_loop": 1,
-            "_preflight": 1,
-            "_raise_hook_type": 2,
-            "_raise_incompatible": 1,
-            "_raise_listener_type": 1,
-            "_raise_server_failure": 1,
-            "_raise_state_type": 1,
+            "_preflight": 2,
+            "_raise_hook_type": 4,
+            "_raise_incompatible": 2,
+            "_raise_listener_type": 2,
+            "_raise_server_failure": 3,
+            "_raise_state_type": 2,
             "_run_server": 1,
-            "_serve_owned": 1,
+            "_serve_after_owned_admission": 1,
+            "_serve_owned": 2,
             "callback": 1,
             "cast": 6,
             "getattr": 1,
             "int": 2,
             "len": 1,
             "main_thread": 1,
-            "type": 25,
+            "type": 29,
         }
     )
     for function in (*functions.values(), *notifier_methods.values()):
@@ -2974,6 +3885,161 @@ def expected(state, listener, on_started, port):
 """
     )
 
+    assert body_dump(functions["serve_prebound_sidecar_app"].body) == expected_body(
+        '''
+def expected(state, listener, *, on_started):
+    """Serve one exact private app on the supplied listener until shutdown."""
+
+    if type(state) is not _STATE_TYPE:
+        del state, listener, on_started
+        _raise_state_type()
+    if type(listener) is not _SOCKET_TYPE:
+        del state, listener, on_started
+        _raise_listener_type()
+    if type(on_started) is not _FUNCTION_TYPE:
+        del state, listener, on_started
+        _raise_hook_type()
+    try:
+        synchronous_hook = _is_sync_function(on_started)
+    except BaseException:
+        del state, listener, on_started
+        raise
+    if not synchronous_hook:
+        del state, listener, on_started, synchronous_hook
+        _raise_hook_type()
+    del synchronous_hook
+
+    compatibility_failed = False
+    port: int | None = None
+    try:
+        port = _preflight(state, listener)
+    except _CompatibilityFailure:
+        compatibility_failed = True
+    except BaseException:
+        del state, listener, on_started, compatibility_failed, port
+        raise
+    if compatibility_failed or type(port) is not int:
+        del state, listener, on_started, compatibility_failed, port
+        _raise_incompatible()
+    del compatibility_failed
+
+    try:
+        succeeded = _serve_owned(state, listener, on_started, port)
+    except BaseException:
+        del state, listener, on_started, port
+        raise
+    del state, listener, on_started, port
+    if not succeeded:
+        del succeeded
+        _raise_server_failure()
+    del succeeded
+'''
+    )
+
+    assert body_dump(functions["_serve_after_owned_admission"].body) == expected_body(
+        """
+def expected(state, listener, on_started):
+    synchronous_hook: bool | None = None
+    candidate_port: object = None
+    admitted_port: int | None = None
+    close_ok: bool | None = None
+    try:
+        try:
+            synchronous_hook = _is_sync_function(on_started)
+        except Exception:
+            pass
+        if synchronous_hook is True:
+            try:
+                candidate_port = _preflight(state, listener)
+            except Exception:
+                pass
+            if type(candidate_port) is int:
+                admitted_port = candidate_port
+    except BaseException as active_error:
+        _close_during_control(listener, active_error)
+        del (
+            state,
+            listener,
+            on_started,
+            synchronous_hook,
+            candidate_port,
+            admitted_port,
+            close_ok,
+            active_error,
+        )
+        raise
+
+    if synchronous_hook is not True or admitted_port is None:
+        try:
+            try:
+                close_ok = _close_listener(listener)
+            except Exception:
+                pass
+        except BaseException:
+            del (
+                state,
+                listener,
+                on_started,
+                synchronous_hook,
+                candidate_port,
+                admitted_port,
+                close_ok,
+            )
+            raise
+        del state, listener, on_started
+        if close_ok is not True:
+            del synchronous_hook, candidate_port, admitted_port, close_ok
+            _raise_server_failure()
+        del close_ok
+        if synchronous_hook is not True:
+            del synchronous_hook, candidate_port, admitted_port
+            _raise_hook_type()
+        del synchronous_hook, candidate_port, admitted_port
+        _raise_incompatible()
+
+    try:
+        return _serve_owned(state, listener, on_started, admitted_port)
+    except BaseException:
+        del (
+            state,
+            listener,
+            on_started,
+            synchronous_hook,
+            candidate_port,
+            admitted_port,
+            close_ok,
+        )
+        raise
+"""
+    )
+
+    assert body_dump(functions["serve_owned_prebound_sidecar_app"].body) == expected_body(
+        '''
+def expected(state, listener, *, on_started):
+    """Consume and serve one exact private app on the supplied listener."""
+
+    if type(state) is not _STATE_TYPE:
+        del state, listener, on_started
+        _raise_state_type()
+    if type(listener) is not _SOCKET_TYPE:
+        del state, listener, on_started
+        _raise_listener_type()
+    if type(on_started) is not _FUNCTION_TYPE:
+        del state, listener, on_started
+        _raise_hook_type()
+    try:
+        succeeded = _serve_after_owned_admission(state, listener, on_started)
+    except BaseException:
+        del state, listener, on_started
+        raise
+    del state, listener, on_started
+    if succeeded is not True:
+        del succeeded
+        _raise_server_failure()
+    del succeeded
+'''
+    )
+
     serve_owned = functions["_serve_owned"]
     top_level_finally = [
         node for node in serve_owned.body if isinstance(node, ast.Try) and bool(node.finalbody)
@@ -3012,14 +4078,111 @@ def expected(state, listener, on_started, port):
     assert isinstance(owned_try.handlers[0].type, ast.Name)
     assert owned_try.handlers[0].type.id == "BaseException"
 
+    owned_admission = functions["_serve_after_owned_admission"]
+    admission_calls = [
+        _call_name(node) for node in ast.walk(owned_admission) if isinstance(node, ast.Call)
+    ]
+    assert Counter(admission_calls) == Counter(
+        {
+            "_close_during_control": 1,
+            "_close_listener": 1,
+            "_is_sync_function": 1,
+            "_preflight": 1,
+            "_raise_hook_type": 1,
+            "_raise_incompatible": 1,
+            "_raise_server_failure": 1,
+            "_serve_owned": 1,
+            "type": 1,
+        }
+    )
+    assert all(isinstance(node, ast.AnnAssign) for node in owned_admission.body[:4])
+    close_bearing_try = owned_admission.body[4]
+    rejection_branch = owned_admission.body[5]
+    handoff_try = owned_admission.body[6]
+    assert isinstance(close_bearing_try, ast.Try)
+    assert isinstance(rejection_branch, ast.If)
+    assert isinstance(handoff_try, ast.Try)
+    assert handoff_try is owned_admission.body[-1]
+    assert handoff_try.orelse == [] and handoff_try.finalbody == []
+    assert len(handoff_try.body) == 1
+    handoff_return = handoff_try.body[0]
+    assert isinstance(handoff_return, ast.Return)
+    assert isinstance(handoff_return.value, ast.Call)
+    assert _call_name(handoff_return.value) == "_serve_owned"
+    assert [_call_name(node) for node in ast.walk(handoff_try) if isinstance(node, ast.Call)] == [
+        "_serve_owned"
+    ]
+    assert len(handoff_try.handlers) == 1
+    handoff_handler = handoff_try.handlers[0]
+    assert isinstance(handoff_handler.type, ast.Name)
+    assert handoff_handler.type.id == "BaseException"
+    assert handoff_handler.name is None
+    assert len(handoff_handler.body) == 2
+    assert isinstance(handoff_handler.body[0], ast.Delete)
+    assert isinstance(handoff_handler.body[1], ast.Raise)
+    assert handoff_handler.body[1].exc is None
+    assert not any(
+        isinstance(node, (ast.With, ast.AsyncWith, ast.Await, ast.Yield, ast.YieldFrom))
+        for node in ast.walk(handoff_try)
+    )
+    assert Counter(
+        _call_name(node) for node in ast.walk(close_bearing_try) if isinstance(node, ast.Call)
+    ) == Counter(
+        {
+            "_close_during_control": 1,
+            "_is_sync_function": 1,
+            "_preflight": 1,
+            "type": 1,
+        }
+    )
+    assert Counter(
+        _call_name(node) for node in ast.walk(rejection_branch) if isinstance(node, ast.Call)
+    ) == Counter(
+        {
+            "_close_listener": 1,
+            "_raise_hook_type": 1,
+            "_raise_incompatible": 1,
+            "_raise_server_failure": 1,
+        }
+    )
+
+    owned_public = functions["serve_owned_prebound_sidecar_app"]
+    assert not any(isinstance(node, ast.Return) for node in ast.walk(owned_public))
+    owned_admission_calls = [
+        node
+        for node in ast.walk(owned_public)
+        if isinstance(node, ast.Call) and _call_name(node) == "_serve_after_owned_admission"
+    ]
+    assert len(owned_admission_calls) == 1
+    admission_parent = parent_by_id[id(owned_admission_calls[0])]
+    assert isinstance(admission_parent, ast.Assign)
+    admission_try = parent_by_id[id(admission_parent)]
+    assert isinstance(admission_try, ast.Try)
+    assert admission_try.body == [admission_parent]
+    assert admission_try.orelse == [] and admission_try.finalbody == []
+    assert len(admission_try.handlers) == 1
+    assert isinstance(admission_try.handlers[0].type, ast.Name)
+    assert admission_try.handlers[0].type.id == "BaseException"
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id
+        in {
+            "owns_listener",
+            "ownership",
+            "transferred",
+            "transfer_complete",
+        }
+        for node in ast.walk(tree)
+    )
+
     assert Counter(
         ast.unparse(node.type) if node.type is not None else None
         for node in ast.walk(tree)
         if isinstance(node, ast.ExceptHandler)
     ) == Counter(
         {
-            "BaseException": 15,
-            "Exception": 5,
+            "BaseException": 19,
+            "Exception": 8,
             "RuntimeError": 1,
             "_CompatibilityFailure": 1,
         }
@@ -3047,50 +4210,50 @@ def expected(state, listener, on_started, port):
     assert Counter(type(node).__name__ for node in ast.walk(tree)) == Counter(
         {
             "And": 8,
-            "AnnAssign": 76,
-            "Assign": 62,
+            "AnnAssign": 80,
+            "Assign": 67,
             "AsyncFunctionDef": 1,
-            "Attribute": 51,
-            "BinOp": 7,
-            "BitOr": 7,
-            "BoolOp": 9,
-            "Call": 84,
+            "Attribute": 53,
+            "BinOp": 10,
+            "BitOr": 10,
+            "BoolOp": 10,
+            "Call": 101,
             "ClassDef": 3,
-            "Compare": 52,
-            "Constant": 149,
-            "Del": 174,
-            "Delete": 37,
+            "Compare": 62,
+            "Constant": 165,
+            "Del": 230,
+            "Delete": 52,
             "Eq": 10,
-            "ExceptHandler": 22,
-            "Expr": 10,
-            "FunctionDef": 16,
+            "ExceptHandler": 29,
+            "Expr": 19,
+            "FunctionDef": 18,
             "GtE": 1,
-            "If": 19,
+            "If": 28,
             "Import": 6,
             "ImportFrom": 7,
             "In": 1,
-            "Is": 29,
-            "IsNot": 10,
-            "List": 10,
-            "Load": 545,
+            "Is": 32,
+            "IsNot": 17,
+            "List": 11,
+            "Load": 613,
             "LtE": 2,
             "Module": 1,
-            "Name": 758,
+            "Name": 883,
             "Not": 6,
-            "Or": 1,
-            "Pass": 4,
-            "Raise": 21,
-            "Return": 11,
+            "Or": 2,
+            "Pass": 7,
+            "Raise": 25,
+            "Return": 12,
             "Set": 1,
-            "Store": 141,
-            "Subscript": 26,
-            "Try": 20,
-            "Tuple": 15,
+            "Store": 150,
+            "Subscript": 27,
+            "Try": 27,
+            "Tuple": 19,
             "TypeAlias": 1,
             "UnaryOp": 6,
             "alias": 18,
-            "arg": 24,
-            "arguments": 17,
+            "arg": 30,
+            "arguments": 19,
             "keyword": 34,
         }
     )

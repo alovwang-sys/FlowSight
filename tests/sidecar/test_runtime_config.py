@@ -116,6 +116,7 @@ EXPECTED_SIDECAR_EXPORTS = (
     "prepare_sidecar_runtime_config",
     "receive_startup_outcome",
     "resolve_owner_election",
+    "serve_owned_prebound_sidecar_app",
     "serve_prebound_sidecar_app",
     "verify_ready_startup",
     "wait_for_owner_election",
