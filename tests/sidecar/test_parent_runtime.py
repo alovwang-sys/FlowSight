@@ -40,19 +40,24 @@ class _Reaper:
         start: BaseException | None = None,
         alive_after_start: bool = True,
         alive_after_join: bool = False,
+        child_reaped_after_join: bool = True,
+        start_result: object = None,
     ) -> None:
         self.start_error = start
         self.alive_after_start = alive_after_start
         self.alive_after_join = alive_after_join
+        self.child_reaped_after_join = child_reaped_after_join
+        self.start_result = start_result
         self.started = False
         self.start_calls = 0
         self.join_calls = 0
 
-    def start(self) -> None:
+    def start(self) -> object:
         self.start_calls += 1
         self.started = self.alive_after_start
         if self.start_error is not None:
             raise self.start_error
+        return self.start_result
 
     def join(self, timeout: float) -> None:
         self.join_calls += 1
@@ -62,6 +67,14 @@ class _Reaper:
         if not self.started:
             return False
         return self.alive_after_join if self.join_calls else self.alive_after_start
+
+    @property
+    def wait_ownership(self) -> bool:
+        return self.started
+
+    @property
+    def child_reaped(self) -> bool:
+        return self.join_calls > 0 and self.child_reaped_after_join
 
 
 def _writer() -> tuple[int, int]:
@@ -124,7 +137,7 @@ def test_cleanup_attempt_permanently_rejects_later_gate_release() -> None:
     reader, writer = _writer()
     process = _Process(wait=RuntimeError("still alive"))
     handoff = runtime_module._ChildHandoff(process, writer)
-    reaper = _Reaper(alive_after_join=True)
+    reaper = _Reaper(alive_after_join=True, child_reaped_after_join=False)
     try:
         handoff.transfer_wait_ownership(reaper)
         assert handoff.cleanup_before_commit() is False
@@ -134,6 +147,41 @@ def test_cleanup_attempt_permanently_rejects_later_gate_release() -> None:
     finally:
         os.close(reader)
         assert handoff.retire_writer_after_reaped_cleanup() is False
+        os.close(writer)
+
+
+def test_malformed_started_reaper_can_only_join_and_never_release_gate() -> None:
+    reader, writer = _writer()
+    process = _Process()
+    handoff = runtime_module._ChildHandoff(process, writer)
+    reaper = _Reaper(start_result=object())
+    try:
+        with pytest.raises(RuntimeError):
+            handoff.transfer_wait_ownership(reaper)
+        assert handoff.transferred is True
+        assert handoff.release_gate() is False
+        assert handoff.cleanup_before_commit() is True
+        assert process.wait_calls == 0
+        assert reaper.join_calls == 1
+        assert os.fstat(writer)
+    finally:
+        os.close(reader)
+        assert handoff.retire_writer_after_reaped_cleanup() is True
+
+
+def test_completed_reaper_without_a_successful_wait_cannot_retire_gate() -> None:
+    reader, writer = _writer()
+    process = _Process()
+    handoff = runtime_module._ChildHandoff(process, writer)
+    reaper = _Reaper(alive_after_join=False, child_reaped_after_join=False)
+    try:
+        handoff.transfer_wait_ownership(reaper)
+        assert handoff.cleanup_before_commit() is False
+        assert reaper.join_calls == 1
+        assert handoff.retire_writer_after_reaped_cleanup() is False
+        assert os.fstat(writer)
+    finally:
+        os.close(reader)
         os.close(writer)
 
 
