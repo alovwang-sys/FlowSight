@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -41,6 +42,9 @@ _OWNER_FILENO: Final = OwnerLock.fileno
 _WRITER_FILENO: Final = StartupWriter.fileno
 _CHILD_EXECUTABLE: Final = sys.executable
 _CHILD_ENTRY_MODULE: Final = "flowsight.sidecar.child_entry"
+_POPEN: Final = subprocess.Popen
+_PROCESS_TYPE: Final = subprocess.Popen
+_DEVNULL: Final = subprocess.DEVNULL
 _ISFINITE: Final = math.isfinite
 _FSPATH: Final = os.fspath
 _PREPARE_RUNTIME_CONFIG: Final = prepare_sidecar_runtime_config
@@ -411,6 +415,38 @@ def _owner_child_command(
         (_CHILD_EXECUTABLE, "-I", "-m", _CHILD_ENTRY_MODULE, *suffix),
         (owner_fd, writer_fd, handoff_reader_fd),
     )
+
+
+def _spawn_isolated_child(command: _ChildCommand) -> _Process | None:
+    argv, pass_fds = command
+    if (
+        type(argv) is not tuple
+        or len(argv) < 5
+        or any(type(argument) is not str for argument in argv)
+        or type(pass_fds) is not tuple
+        or len(pass_fds) != 3
+        or any(
+            type(descriptor) is not int or descriptor < _MIN_DESCRIPTOR for descriptor in pass_fds
+        )
+        or len(set(pass_fds)) != 3
+    ):
+        return None
+    try:
+        process = _POPEN(
+            argv,
+            stdin=_DEVNULL,
+            stdout=_DEVNULL,
+            stderr=_DEVNULL,
+            close_fds=True,
+            pass_fds=pass_fds,
+            start_new_session=True,
+            shell=False,
+        )
+    except Exception:
+        return None
+    if type(process) is not _PROCESS_TYPE:
+        return None
+    return cast(_Process, process)
 
 
 class _ChildHandoff:

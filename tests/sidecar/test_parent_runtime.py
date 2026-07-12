@@ -498,6 +498,66 @@ def test_owner_child_command_rejects_an_invalid_handoff_descriptor(
         reader.close()
 
 
+def test_spawn_isolated_child_uses_only_the_reviewed_subprocess_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _SpawnedProcess:
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> None:
+            del timeout
+
+    process = _SpawnedProcess()
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def popen(*args: object, **kwargs: object) -> _SpawnedProcess:
+        calls.append((args, kwargs))
+        return process
+
+    monkeypatch.setattr(runtime_module, "_POPEN", popen)
+    monkeypatch.setattr(runtime_module, "_PROCESS_TYPE", _SpawnedProcess)
+    command = (
+        ("/current/python", "-I", "-m", "flowsight.sidecar.child_entry", "bootstrap"),
+        (3, 4, 5),
+    )
+
+    assert runtime_module._spawn_isolated_child(command) is process
+    assert calls == [
+        (
+            (command[0],),
+            {
+                "stdin": runtime_module._DEVNULL,
+                "stdout": runtime_module._DEVNULL,
+                "stderr": runtime_module._DEVNULL,
+                "close_fds": True,
+                "pass_fds": command[1],
+                "start_new_session": True,
+                "shell": False,
+            },
+        )
+    ]
+
+
+def test_spawn_isolated_child_rejects_a_malformed_process_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    def popen(*_args: object, **_kwargs: object) -> object:
+        calls.append(1)
+        return object()
+
+    monkeypatch.setattr(runtime_module, "_POPEN", popen)
+    command = (
+        ("/current/python", "-I", "-m", "flowsight.sidecar.child_entry", "bootstrap"),
+        (3, 4, 5),
+    )
+
+    assert runtime_module._spawn_isolated_child(command) is None
+    assert calls == [1]
+
+
 def test_preflight_rejects_forged_exact_config_before_constructing_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
