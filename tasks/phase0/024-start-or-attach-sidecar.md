@@ -95,10 +95,13 @@ alternate launch path.
   listener handoff, or parent SQLite/UI work. After a successful exec boundary
   is created, the parent retires its owner and writer handles exactly once;
   P0-023 inherits them and P0-017 adopts the matching pair. The parent retains
-  the startup reader and handoff writer. It transfers the one direct child to
-  the private wait-only reaper before closing that writer; EOF then releases
-  P0-025's child gate. The parent retains only the reader until P0-009 consumes
-  it.
+  the startup reader and handoff writer. Before it starts the reaper, it closes
+  its inherited handoff-reader raw descriptor exactly once; it has already
+  closed its owner and startup-writer handles exactly once. The startup reader
+  remains owned only by the later `with reader:` admission boundary. The
+  handoff writer is the sole move-before-close release capability: the parent
+  transfers the one direct child to the private wait-only reaper before
+  attempting to close that writer; EOF then releases P0-025's child gate.
 - A child READY is still only a hint. P0-009 must fresh-load/probe/reload the
   published state before this function returns it. Child FAILURE, malformed or
   absent outcome, exhausted outer budget, launch failure, or invalid local
@@ -219,10 +222,11 @@ control-plane records; they do not expand the product-code allowlist above.
   opens one reviewed channel and one close-only handoff pipe, obtains the three
   exact live child descriptors, creates the canonical P0-016 v2 suffix, and
   launches exactly one isolated direct P0-023 child with only those three
-  descriptors. Parent/child descriptor
-  ownership and close order are mechanically proved; all ordinary post-launch
-  paths retire parent owner/writer/reader resources exactly once without
-  closing child-owned descriptors.
+  descriptors. Parent/child descriptor ownership and close order are
+  mechanically proved: before reaper start the parent retires owner,
+  startup-writer, and handoff-reader exactly once; the startup reader is
+  consumed only by `with reader:`; the handoff writer is moved before its sole
+  irreversible close attempt. No path closes child-owned descriptors.
 - [ ] The child branch consumes one outcome through P0-009 under the remaining
   outer budget in exactly one `with reader:` ownership boundary and returns
   only the exact verified `SidecarState`. It never naked-closes or retries that
