@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Final, Protocol, cast
 
+from .child_bootstrap import encode_sidecar_child_bootstrap
 from .incumbent_port import admit_configured_incumbent_port
 from .owner_lock import OwnerLock
 from .runtime_config import SidecarRuntimeConfig, prepare_sidecar_runtime_config
+from .startup_channel import StartupWriter
 from .startup_wait import wait_for_owner_election
 from .state import SidecarState, StateStore
 
@@ -33,6 +36,11 @@ _THREAD: Final = threading.Thread
 _THREAD_START: Final = cast(Callable[[threading.Thread], object], threading.Thread.start)
 _EVENT: Final = threading.Event
 _EVENT_SET: Final = cast(Callable[[threading.Event], object], threading.Event.set)
+_ENCODE_CHILD_BOOTSTRAP: Final = encode_sidecar_child_bootstrap
+_OWNER_FILENO: Final = OwnerLock.fileno
+_WRITER_FILENO: Final = StartupWriter.fileno
+_CHILD_EXECUTABLE: Final = sys.executable
+_CHILD_ENTRY_MODULE: Final = "flowsight.sidecar.child_entry"
 _ISFINITE: Final = math.isfinite
 _FSPATH: Final = os.fspath
 _PREPARE_RUNTIME_CONFIG: Final = prepare_sidecar_runtime_config
@@ -42,6 +50,7 @@ _ADD_NOTE: Final = BaseException.add_note
 _PARENT_CLEANUP_NOTE: Final = "sidecar parent startup cleanup failed"
 
 type _ConfigSnapshot = tuple[str, str, str, int | None, float]
+type _ChildCommand = tuple[tuple[str, ...], tuple[int, int, int]]
 
 
 class _Process(Protocol):
@@ -350,6 +359,58 @@ def _admit_incumbent(
     if type(admitted) is not _STATE_TYPE or admitted is not incumbent:
         return None
     return admitted
+
+
+def _owner_child_command(
+    config: SidecarRuntimeConfig,
+    owner: OwnerLock,
+    writer: StartupWriter,
+    handoff_reader_fd: int,
+) -> _ChildCommand | None:
+    if (
+        type(config) is not _CONFIG_TYPE
+        or type(owner) is not _OWNER_TYPE
+        or type(writer) is not StartupWriter
+        or type(handoff_reader_fd) is not int
+        or handoff_reader_fd < _MIN_DESCRIPTOR
+    ):
+        return None
+    try:
+        owner_fd = _OWNER_FILENO(owner)
+        writer_fd = _WRITER_FILENO(writer)
+    except Exception:
+        return None
+    if (
+        type(owner_fd) is not int
+        or type(writer_fd) is not int
+        or owner_fd < _MIN_DESCRIPTOR
+        or writer_fd < _MIN_DESCRIPTOR
+        or owner_fd == writer_fd
+        or owner_fd == handoff_reader_fd
+        or writer_fd == handoff_reader_fd
+    ):
+        return None
+    try:
+        suffix = _ENCODE_CHILD_BOOTSTRAP(
+            config,
+            owner_lock_fd=owner_fd,
+            startup_writer_fd=writer_fd,
+            parent_handoff_fd=handoff_reader_fd,
+        )
+    except Exception:
+        return None
+    if (
+        type(suffix) is not tuple
+        or not suffix
+        or any(type(argument) is not str for argument in suffix)
+        or type(_CHILD_EXECUTABLE) is not str
+        or not _CHILD_EXECUTABLE
+    ):
+        return None
+    return (
+        (_CHILD_EXECUTABLE, "-I", "-m", _CHILD_ENTRY_MODULE, *suffix),
+        (owner_fd, writer_fd, handoff_reader_fd),
+    )
 
 
 class _ChildHandoff:

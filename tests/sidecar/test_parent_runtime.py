@@ -7,8 +7,8 @@ from typing import NoReturn
 
 import pytest
 
+from flowsight.sidecar import open_startup_channel, prepare_sidecar_runtime_config
 from flowsight.sidecar import parent_runtime as runtime_module
-from flowsight.sidecar import prepare_sidecar_runtime_config
 from flowsight.sidecar import runtime_config as config_module
 from flowsight.sidecar.owner_lock import OwnerLockError
 from flowsight.sidecar.state import SidecarState, StateStore
@@ -446,6 +446,56 @@ def test_incumbent_requires_fresh_deadline_before_port_admission(
 
     assert runtime_module._admit_incumbent(config, incumbent, 5.0, 5.0) is None
     assert calls == []
+
+
+def test_owner_child_command_is_exact_isolated_child_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    reader, writer = open_startup_channel()
+    handoff_reader, handoff_writer = os.pipe()
+    try:
+        command = runtime_module._owner_child_command(config, owner, writer, handoff_reader)
+        assert command is not None
+        argv, pass_fds = command
+        assert argv[:4] == (
+            runtime_module._CHILD_EXECUTABLE,
+            "-I",
+            "-m",
+            "flowsight.sidecar.child_entry",
+        )
+        assert pass_fds == (owner.fileno(), writer.fileno(), handoff_reader)
+        assert argv[4:] == runtime_module._ENCODE_CHILD_BOOTSTRAP(
+            config,
+            owner_lock_fd=owner.fileno(),
+            startup_writer_fd=writer.fileno(),
+            parent_handoff_fd=handoff_reader,
+        )
+    finally:
+        owner.close()
+        writer.close()
+        reader.close()
+        os.close(handoff_reader)
+        os.close(handoff_writer)
+
+
+def test_owner_child_command_rejects_an_invalid_handoff_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    reader, writer = open_startup_channel()
+    try:
+        assert runtime_module._owner_child_command(config, owner, writer, -1) is None
+    finally:
+        owner.close()
+        writer.close()
+        reader.close()
 
 
 def test_preflight_rejects_forged_exact_config_before_constructing_store(
