@@ -9,6 +9,7 @@ from .child_bootstrap import (
     encode_sidecar_child_bootstrap,
 )
 from .child_preparation import prepare_sidecar_child
+from .child_runtime import run_sidecar_child
 from .health import probe_sidecar_health
 from .incumbent_port import admit_configured_incumbent_port
 from .listener import (
@@ -114,6 +115,7 @@ __all__ = [
     "prepare_sidecar_runtime_config",
     "receive_startup_outcome",
     "resolve_owner_election",
+    "run_sidecar_child",
     "serve_owned_prebound_sidecar_app",
     "serve_prebound_sidecar_app",
     "verify_ready_startup",

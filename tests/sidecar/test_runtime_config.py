@@ -22,7 +22,10 @@ import platformdirs
 import pytest
 
 import flowsight.sidecar as sidecar_package
-from flowsight.sidecar import SidecarRuntimeConfig, prepare_sidecar_runtime_config
+from flowsight.sidecar import (
+    SidecarRuntimeConfig,
+    prepare_sidecar_runtime_config,
+)
 from flowsight.sidecar import runtime_config as config_module
 
 PROJECT_TYPE_ERROR = "project_root must be an exact built-in str or platform Path"
@@ -116,6 +119,7 @@ EXPECTED_SIDECAR_EXPORTS = (
     "prepare_sidecar_runtime_config",
     "receive_startup_outcome",
     "resolve_owner_election",
+    "run_sidecar_child",
     "serve_owned_prebound_sidecar_app",
     "serve_prebound_sidecar_app",
     "verify_ready_startup",
@@ -126,6 +130,7 @@ EXPECTED_SIDECAR_SUBMODULES = {
     "child_adoption",
     "child_bootstrap",
     "child_preparation",
+    "child_runtime",
     "health",
     "incumbent_port",
     "listener",
