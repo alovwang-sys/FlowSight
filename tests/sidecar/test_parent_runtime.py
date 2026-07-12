@@ -461,8 +461,8 @@ def test_owner_child_command_is_exact_isolated_child_shape(
     try:
         plan = runtime_module._owner_child_command(config, owner, writer, handoff)
         assert plan is not None
-        command = plan.command()
-        assert command is not None
+        assert runtime_module._owner_child_command(config, owner, writer, handoff) is None
+        command = (plan._argv, plan._pass_fds)
         argv, pass_fds = command
         assert argv[:4] == (
             runtime_module._CHILD_EXECUTABLE,
@@ -470,7 +470,7 @@ def test_owner_child_command_is_exact_isolated_child_shape(
             "-m",
             "flowsight.sidecar.child_entry",
         )
-        handoff_reader = handoff.child_reader_fd()
+        handoff_reader = handoff.plan_reader_fd()
         assert handoff_reader is not None
         assert pass_fds == (owner.fileno(), writer.fileno(), handoff_reader)
         assert argv[4:] == runtime_module._ENCODE_CHILD_BOOTSTRAP(
@@ -535,10 +535,10 @@ def test_spawn_isolated_child_uses_only_the_reviewed_subprocess_shape(
     try:
         plan = runtime_module._owner_child_command(config, owner, writer, handoff)
         assert plan is not None
-        command = plan.command()
-        assert command is not None
+        command = (plan._argv, plan._pass_fds)
         monkeypatch.setattr(runtime_module, "_POPEN", popen)
         assert runtime_module._spawn_isolated_child(plan) is process
+        assert runtime_module._spawn_isolated_child(plan) is None
         assert calls == [
             (
                 (command[0],),
@@ -553,6 +553,37 @@ def test_spawn_isolated_child_uses_only_the_reviewed_subprocess_shape(
                 },
             )
         ]
+    finally:
+        owner.close()
+        writer.close()
+        reader.close()
+        assert handoff.close_uncommitted() is True
+
+
+def test_failed_spawn_attempt_cannot_retry_the_same_launch_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    reader, writer = open_startup_channel()
+    handoff = runtime_module._open_parent_handoff()
+    assert handoff is not None
+    calls: list[object] = []
+    try:
+        plan = runtime_module._owner_child_command(config, owner, writer, handoff)
+        assert plan is not None
+
+        def fail_once(*_args: object, **_kwargs: object) -> NoReturn:
+            calls.append(1)
+            raise RuntimeError("spawn")
+
+        monkeypatch.setattr(runtime_module, "_POPEN", fail_once)
+        assert runtime_module._spawn_isolated_child(plan) is None
+        monkeypatch.setattr(runtime_module, "_POPEN", lambda *_args, **_kwargs: calls.append(2))
+        assert runtime_module._spawn_isolated_child(plan) is None
+        assert calls == [1]
     finally:
         owner.close()
         writer.close()
@@ -624,7 +655,7 @@ def test_parent_handoff_promotes_low_descriptors_before_exposing_them(
 
     handoff = runtime_module._open_parent_handoff()
     assert handoff is not None
-    assert handoff.child_reader_fd() == 3
+    assert handoff.claim_child_reader_fd() == 3
     assert handoff.take_writer() == 4
     assert handoff.close_uncommitted() is True
     assert closed == [0, 1, 3]

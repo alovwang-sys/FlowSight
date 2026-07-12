@@ -94,14 +94,29 @@ class _OwnerCleanupFailure(Exception):
 class _ParentHandoffPipe:
     """Private provenance for one child gate and its retained parent writer."""
 
-    __slots__ = ("_reader_fd", "_writer_fd")
+    __slots__ = ("_plan_claimed", "_reader_fd", "_writer_fd")
 
     def __init__(self, reader_fd: int, writer_fd: int) -> None:
         self._reader_fd = reader_fd
         self._writer_fd = writer_fd
+        self._plan_claimed = False
 
-    def child_reader_fd(self) -> int | None:
-        if self._reader_fd < _MIN_DESCRIPTOR or self._writer_fd < _MIN_DESCRIPTOR:
+    def claim_child_reader_fd(self) -> int | None:
+        if (
+            self._plan_claimed
+            or self._reader_fd < _MIN_DESCRIPTOR
+            or self._writer_fd < _MIN_DESCRIPTOR
+        ):
+            return None
+        self._plan_claimed = True
+        return self._reader_fd
+
+    def plan_reader_fd(self) -> int | None:
+        if (
+            not self._plan_claimed
+            or self._reader_fd < _MIN_DESCRIPTOR
+            or self._writer_fd < _MIN_DESCRIPTOR
+        ):
             return None
         return self._reader_fd
 
@@ -142,7 +157,7 @@ class _ParentHandoffPipe:
 class _ChildLaunchPlan:
     """One private command that remains bound to its live parent gate."""
 
-    __slots__ = ("_argv", "_handoff", "_pass_fds")
+    __slots__ = ("_argv", "_handoff", "_pass_fds", "_spawn_attempted")
 
     def __init__(
         self,
@@ -153,9 +168,13 @@ class _ChildLaunchPlan:
         self._argv = argv
         self._pass_fds = pass_fds
         self._handoff = handoff
+        self._spawn_attempted = False
 
-    def command(self) -> tuple[tuple[str, ...], tuple[int, int, int]] | None:
-        handoff_reader_fd = self._handoff.child_reader_fd()
+    def take_command(self) -> tuple[tuple[str, ...], tuple[int, int, int]] | None:
+        if self._spawn_attempted:
+            return None
+        self._spawn_attempted = True
+        handoff_reader_fd = self._handoff.plan_reader_fd()
         if handoff_reader_fd is None or handoff_reader_fd != self._pass_fds[2]:
             return None
         return self._argv, self._pass_fds
@@ -528,7 +547,7 @@ def _owner_child_command(
         or type(handoff) is not _ParentHandoffPipe
     ):
         return None
-    handoff_reader_fd = handoff.child_reader_fd()
+    handoff_reader_fd = handoff.claim_child_reader_fd()
     if handoff_reader_fd is None:
         return None
     try:
@@ -573,7 +592,7 @@ def _owner_child_command(
 def _spawn_isolated_child(plan: _ChildLaunchPlan) -> _Process | None:
     if type(plan) is not _ChildLaunchPlan:
         return None
-    command = plan.command()
+    command = plan.take_command()
     if command is None:
         return None
     argv, pass_fds = command
