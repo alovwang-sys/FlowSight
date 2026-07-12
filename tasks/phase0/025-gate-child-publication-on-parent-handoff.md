@@ -106,7 +106,9 @@ control-plane records; they do not expand the product-code allowlist above.
 `flowsight/sidecar/__init__.py` may change only for the revised exact
 bootstrap exports and the private `parent_handoff` submodule expectation.
 `tests/sidecar/test_runtime_config.py` may change only for those exact
-sidecar-export and private-submodule expectations.
+sidecar-export and private-submodule expectations, including its already
+expected `child_entry` private-submodule import so the standalone audit has no
+test-order dependency.
 
 ## Expected Changed Files
 
