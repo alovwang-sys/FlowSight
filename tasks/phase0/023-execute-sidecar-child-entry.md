@@ -6,7 +6,7 @@
 task_id: P0-023
 release: v1
 task_type: implementation
-status: in_progress
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-016, P0-022, TRIAL-004]
@@ -108,26 +108,26 @@ package; this test-only amendment neither adds nor exports a public API.
 
 ## Acceptance Criteria
 
-- [ ] `flowsight.sidecar.child_entry` is importable as a private module but
+- [x] `flowsight.sidecar.child_entry` is importable as a private module but
   introduces no `flowsight.sidecar` export, class, public callable, parser,
   constant, option, or result surface.
-- [ ] Executing the module calls the import-time-captured P0-022
+- [x] Executing the module calls the import-time-captured P0-022
   `run_sidecar_child` exactly once with `tuple(sys.argv[1:])`; it does not read
   any environment value or inspect an individual suffix element.
-- [ ] The entry does not catch or alter ordinary errors or process-control
+- [x] The entry does not catch or alter ordinary errors or process-control
   identity, payload, notes, context, traceback, or exit behavior from P0-022.
-- [ ] Empty, malformed, and valid P0-016 tuple suffixes are forwarded unchanged;
+- [x] Empty, malformed, and valid P0-016 tuple suffixes are forwarded unchanged;
   no field parsing, defaults, coercion, copy, output, or retained side state is
   introduced.
-- [ ] Isolated no-shell subprocess evidence executes the installed source path
+- [x] Isolated no-shell subprocess evidence executes the installed source path
   with inherited descriptors only where P0-022 already requires them, proving
   the module neither adds a second listener/channel nor leaks token, path,
   descriptor, or raw exception output.
-- [ ] A positive AST allowlist freezes the exact imports, one tuple operation,
+- [x] A positive AST allowlist freezes the exact imports, one tuple operation,
   one captured call, no handlers or nested functions, and the absence of
   argv-field parsing, environment, subprocess, launcher, signal, storage,
   OTel, UI, tracepoint, logging, print, or mutable module state.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase 0
   gate pass locally and on macOS/Linux x CPython 3.12/3.13 CI. The
   partial-scaffold disclaimer remains explicit.
 
@@ -174,28 +174,55 @@ creating any new child, parent, resource, telemetry, or public-API behavior
 ## Role Outputs
 
 Implementer:
-- Planning only; implementation has not started.
+- Added one private executable module with exactly one suffix-tuple operation
+  and one import-time-captured P0-022 call. It has no public package export,
+  parser, environment read, handler, output, parent launch, or runtime policy.
+- Added forwarding, native ordinary/control propagation, isolated execution,
+  capture, and AST tests; updated only the exact private-submodule expectation
+  required by Python's parent-package import semantics.
 
 Adversarial Reviewer:
-- Reviewer 1: planning isolates executable argv forwarding from P0-022 child
-  ownership and from the later parent-launch transaction.
-- Reviewer 2: planning requires opaque suffix forwarding and native error/control
-  propagation so the entry cannot become a hidden CLI policy surface.
+- Reviewer 1: rechecked that the entry contains one `tuple(sys.argv[1:])`, one
+  captured P0-022 call, no exception handler, and no imported/created resource
+  behavior. P0/P1/P2 = 0/0/0.
+- Reviewer 2: rechecked isolated malformed execution, ordinary/control identity,
+  non-exported package surface, and source AST rejection of parser, environment,
+  launcher, signal, storage, OTel, UI, tracepoint, logging, and mutable state.
+  P0/P1/P2 = 0/0/0.
 
 Fixer:
-- The task contains no implementation yet; its scope excludes every P0-022
-  child resource and all parent orchestration behavior.
+- After the first Phase 0 regression exposed the normal Python parent-package
+  submodule registration, amended the task allowlist in its own control-plane
+  commit and added only `child_entry` to the existing private-submodule audit.
+  No production API or scope expanded.
 
 Quality Governor:
-- One Phase 0 private execution-boundary task with two product/test files,
-  `scope_override: none`, and no gate claim.
+- One Phase 0 private execution-boundary task with exactly its entry module,
+  focused test, and exact private-submodule audit expectation;
+  `scope_override: none`, no new gate claim, and no parent/Phase 1 drift.
 
 ## Verifier Evidence
 
-- Command: `.venv/bin/python scripts/validate_agent_system.py`; `git diff --check`
+- Command: `.venv/bin/ruff format --check flowsight/sidecar/child_entry.py tests/sidecar/test_child_entry.py tests/sidecar/test_runtime_config.py`
 - Result: passed
-- Notes: planned task-record validation and whitespace checks passed;
-  implementation has not started and acceptance criteria remain unchecked.
+- Command: `.venv/bin/ruff check flowsight/sidecar/child_entry.py tests/sidecar/test_child_entry.py tests/sidecar/test_runtime_config.py`; `.venv/bin/mypy flowsight/sidecar/child_entry.py`
+- Result: passed; no lint or type errors
+- Command: `.venv/bin/python -m pytest tests/sidecar/test_child_entry.py tests/sidecar/test_runtime_config.py -q`
+- Result: passed; 306 tests
+- Command: `make test-phase0`
+- Result: passed; 2522 tests
+- Command: `make gate-phase0`
+- Result: passed; agent-system checks, formatting, lint, type checks, 2647 tests,
+  and the `phase0-sustained` gate all passed; the partial-scaffold disclaimer
+  remained explicit
+- Command: `.venv/bin/python scripts/validate_agent_system.py`; `git diff --check`
+- Result: passed; implementation scope is exactly the task allowlist
+- Candidate commit: `d030b8b87d4be430d914b0caef6b0d35fefd8e8d`
+- CI: [agent-checks run 29182154972](https://github.com/alovwang-sys/FlowSight/actions/runs/29182154972)
+  passed on macOS 3.13 (86621732631), Ubuntu 3.12 (86621732639), macOS 3.12
+  (86621732648), and Ubuntu 3.13 (86621732699).
+- Notes: candidate CI covers every required operating-system and CPython matrix.
+  This completion-only update changes no product or test behavior.
 
 ## Failure Queue Items
 
