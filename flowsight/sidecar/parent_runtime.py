@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import math
 import os
 import subprocess
@@ -51,6 +52,8 @@ _CHILD_ENTRY_MODULE: Final = "flowsight.sidecar.child_entry"
 _POPEN: Final = subprocess.Popen
 _DEVNULL: Final = subprocess.DEVNULL
 _PIPE: Final = os.pipe
+_FCNTL: Final = fcntl.fcntl
+_F_DUPFD_CLOEXEC: Final = fcntl.F_DUPFD_CLOEXEC
 _ISFINITE: Final = math.isfinite
 _FSPATH: Final = os.fspath
 _PREPARE_RUNTIME_CONFIG: Final = prepare_sidecar_runtime_config
@@ -60,7 +63,6 @@ _ADD_NOTE: Final = BaseException.add_note
 _PARENT_CLEANUP_NOTE: Final = "sidecar parent startup cleanup failed"
 
 type _ConfigSnapshot = tuple[str, str, str, int | None, float]
-type _ChildCommand = tuple[tuple[str, ...], tuple[int, int, int]]
 
 
 class _Process(Protocol):
@@ -137,22 +139,98 @@ class _ParentHandoffPipe:
         return closed
 
 
+class _ChildLaunchPlan:
+    """One private command that remains bound to its live parent gate."""
+
+    __slots__ = ("_argv", "_handoff", "_pass_fds")
+
+    def __init__(
+        self,
+        argv: tuple[str, ...],
+        pass_fds: tuple[int, int, int],
+        handoff: _ParentHandoffPipe,
+    ) -> None:
+        self._argv = argv
+        self._pass_fds = pass_fds
+        self._handoff = handoff
+
+    def command(self) -> tuple[tuple[str, ...], tuple[int, int, int]] | None:
+        handoff_reader_fd = self._handoff.child_reader_fd()
+        if handoff_reader_fd is None or handoff_reader_fd != self._pass_fds[2]:
+            return None
+        return self._argv, self._pass_fds
+
+
 def _open_parent_handoff() -> _ParentHandoffPipe | None:
     try:
         endpoints = _PIPE()
     except Exception:
         return None
+    if type(endpoints) is not tuple or len(endpoints) != 2:
+        return None
     if (
-        type(endpoints) is not tuple
-        or len(endpoints) != 2
-        or type(endpoints[0]) is not int
+        type(endpoints[0]) is not int
         or type(endpoints[1]) is not int
-        or endpoints[0] < _MIN_DESCRIPTOR
-        or endpoints[1] < _MIN_DESCRIPTOR
+        or endpoints[0] < 0
+        or endpoints[1] < 0
         or endpoints[0] == endpoints[1]
     ):
+        seen: set[int] = set()
+        for descriptor in endpoints:
+            if type(descriptor) is not int or descriptor < 0 or descriptor in seen:
+                continue
+            seen.add(descriptor)
+            try:
+                _CLOSE(descriptor)
+            except Exception:
+                pass
         return None
-    return _ParentHandoffPipe(endpoints[0], endpoints[1])
+    promoted = [endpoints[0], endpoints[1]]
+    for index, descriptor in enumerate(endpoints):
+        if descriptor >= _MIN_DESCRIPTOR:
+            continue
+        seen = set()
+        try:
+            replacement = _FCNTL(descriptor, _F_DUPFD_CLOEXEC, _MIN_DESCRIPTOR)
+        except Exception:
+            replacement = -1
+        if type(replacement) is not int or replacement < _MIN_DESCRIPTOR:
+            for active_descriptor in promoted:
+                if active_descriptor < 0 or active_descriptor in seen:
+                    continue
+                seen.add(active_descriptor)
+                try:
+                    _CLOSE(active_descriptor)
+                except Exception:
+                    pass
+            return None
+        promoted[index] = replacement
+        try:
+            result = _CLOSE(descriptor)
+        except Exception:
+            result = False
+        if result is not None:
+            for active_descriptor in promoted:
+                if active_descriptor < 0 or active_descriptor in seen:
+                    continue
+                seen.add(active_descriptor)
+                try:
+                    _CLOSE(active_descriptor)
+                except Exception:
+                    pass
+            return None
+    if promoted[0] == promoted[1]:
+        seen = set()
+        for descriptor in promoted:
+            if descriptor in seen:
+                continue
+            seen.add(descriptor)
+            try:
+                _CLOSE(descriptor)
+            except Exception:
+                pass
+        return None
+    return _ParentHandoffPipe(promoted[0], promoted[1])
 
 
 class _WaitOnlyReaper:
@@ -442,7 +520,7 @@ def _owner_child_command(
     owner: OwnerLock,
     writer: StartupWriter,
     handoff: _ParentHandoffPipe,
-) -> _ChildCommand | None:
+) -> _ChildLaunchPlan | None:
     if (
         type(config) is not _CONFIG_TYPE
         or type(owner) is not _OWNER_TYPE
@@ -485,22 +563,20 @@ def _owner_child_command(
         or not _CHILD_EXECUTABLE
     ):
         return None
-    return (
+    return _ChildLaunchPlan(
         (_CHILD_EXECUTABLE, "-I", "-m", _CHILD_ENTRY_MODULE, *suffix),
         (owner_fd, writer_fd, handoff_reader_fd),
+        handoff,
     )
 
 
-def _spawn_isolated_child(command: _ChildCommand) -> _Process | None:
-    if (
-        type(command) is not tuple
-        or len(command) != 2
-        or type(command[0]) is not tuple
-        or type(command[1]) is not tuple
-    ):
+def _spawn_isolated_child(plan: _ChildLaunchPlan) -> _Process | None:
+    if type(plan) is not _ChildLaunchPlan:
         return None
-    argv = command[0]
-    pass_fds = command[1]
+    command = plan.command()
+    if command is None:
+        return None
+    argv, pass_fds = command
     if (
         type(argv) is not tuple
         or len(argv) != 13

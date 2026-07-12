@@ -459,7 +459,9 @@ def test_owner_child_command_is_exact_isolated_child_shape(
     handoff = runtime_module._open_parent_handoff()
     assert handoff is not None
     try:
-        command = runtime_module._owner_child_command(config, owner, writer, handoff)
+        plan = runtime_module._owner_child_command(config, owner, writer, handoff)
+        assert plan is not None
+        command = plan.command()
         assert command is not None
         argv, pass_fds = command
         assert argv[:4] == (
@@ -531,10 +533,12 @@ def test_spawn_isolated_child_uses_only_the_reviewed_subprocess_shape(
     handoff = runtime_module._open_parent_handoff()
     assert handoff is not None
     try:
-        command = runtime_module._owner_child_command(config, owner, writer, handoff)
+        plan = runtime_module._owner_child_command(config, owner, writer, handoff)
+        assert plan is not None
+        command = plan.command()
         assert command is not None
         monkeypatch.setattr(runtime_module, "_POPEN", popen)
-        assert runtime_module._spawn_isolated_child(command) is process
+        assert runtime_module._spawn_isolated_child(plan) is process
         assert calls == [
             (
                 (command[0],),
@@ -566,13 +570,64 @@ def test_spawn_isolated_child_rejects_an_unreviewed_command_without_execution(
         return object()
 
     monkeypatch.setattr(runtime_module, "_POPEN", popen)
-    command = (
-        ("/bin/sh", "-c", "unexpected", "command", "suffix"),
-        (3, 4, 5),
-    )
-
-    assert runtime_module._spawn_isolated_child(command) is None
+    assert runtime_module._spawn_isolated_child(object()) is None  # type: ignore[arg-type]
     assert calls == []
+
+
+def test_spawn_rechecks_that_the_parent_still_holds_the_handoff_writer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    owner = runtime_module.OwnerLock.acquire(store)
+    reader, writer = open_startup_channel()
+    handoff = runtime_module._open_parent_handoff()
+    assert handoff is not None
+    calls: list[object] = []
+    try:
+        plan = runtime_module._owner_child_command(config, owner, writer, handoff)
+        assert plan is not None
+        handoff_writer = handoff.take_writer()
+        assert handoff_writer is not None
+        os.close(handoff_writer)
+        monkeypatch.setattr(runtime_module, "_POPEN", lambda *_args, **_kwargs: calls.append(1))
+        assert runtime_module._spawn_isolated_child(plan) is None
+        assert calls == []
+    finally:
+        owner.close()
+        writer.close()
+        reader.close()
+        assert handoff.close_uncommitted() is True
+
+
+def test_malformed_parent_handoff_result_closes_the_known_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader, writer = os.pipe()
+    monkeypatch.setattr(runtime_module, "_PIPE", lambda: (reader, object()))
+    try:
+        assert runtime_module._open_parent_handoff() is None
+        with pytest.raises(OSError):
+            os.fstat(reader)
+    finally:
+        os.close(writer)
+
+
+def test_parent_handoff_promotes_low_descriptors_before_exposing_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[int] = []
+    monkeypatch.setattr(runtime_module, "_PIPE", lambda: (0, 1))
+    monkeypatch.setattr(runtime_module, "_FCNTL", lambda descriptor, *_args: descriptor + 3)
+    monkeypatch.setattr(runtime_module, "_CLOSE", lambda descriptor: closed.append(descriptor))
+
+    handoff = runtime_module._open_parent_handoff()
+    assert handoff is not None
+    assert handoff.child_reader_fd() == 3
+    assert handoff.take_writer() == 4
+    assert handoff.close_uncommitted() is True
+    assert closed == [0, 1, 3]
 
 
 def test_preflight_rejects_forged_exact_config_before_constructing_store(
