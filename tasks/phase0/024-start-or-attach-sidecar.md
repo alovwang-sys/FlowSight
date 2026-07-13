@@ -351,6 +351,12 @@ Implementer:
 
 Adversarial Reviewer:
 
+- The closeout review found two pre-commit cleanup gaps before push: a raised
+  `_NEW_CHILD_HANDOFF`/`_NEW_WAIT_ONLY_REAPER` factory could bypass child and
+  gate retirement, and a malformed startup-channel result containing exact
+  known endpoints could leave their descriptors outside the ordinary cleanup
+  path. Both findings were accepted as P0-024 lifecycle defects and fixed in
+  the allowed parent-runtime/test files before final verification.
 - Verified every incumbent exit passes through `_admit_incumbent` →
   `admit_configured_incumbent_port` exactly once and returns the exact state;
   explicit-port incompatibility raises the fixed error with no channel or
@@ -381,6 +387,15 @@ Adversarial Reviewer:
 
 Fixer:
 
+- Added a raw pre-commit containment path for child-handoff construction
+  failure, routed reaper-construction failure through the existing
+  `_ChildHandoff` cleanup boundary, and made a failed handoff-writer move close
+  the still-owned gate only after the child is synchronously reaped. Added
+  focused regression tests for both factories, the writer-move seam, fixed
+  error/context shape, and descriptor retirement.
+- Added fail-closed retirement of exact `StartupReader`/`StartupWriter`
+  endpoints found inside a malformed tuple/list channel result, without
+  admitting that malformed result or starting handoff/child work.
 - Only review-driven adjustment applied during implementation: the handoff
   writer is moved into `_ChildHandoff` even when handle retirement raised a
   control exception, so a reaped pre-commit cleanup can still retire the gate
@@ -403,6 +418,24 @@ Quality Governor:
 
 ## Verifier Evidence
 
+- Closeout environment: macOS x86_64, CPython 3.13.5. The repository `.venv`
+  passed the focused suite but its isolated `flowsight.sidecar` import exceeded
+  the unchanged 2-second P0-025 real-child fixture threshold, so final long
+  targets used a temporary CPython 3.13.5 conda-based editable venv with the
+  same pinned project/dev dependencies. No repository dependency or test
+  timeout was changed.
+- `.venv/bin/python -m pytest tests/sidecar/test_parent_runtime.py
+  tests/sidecar/test_runtime_config.py`: 370 passed (23.99 s).
+- New closeout regressions selected from `test_parent_runtime.py`: 4 passed;
+  targeted Ruff and mypy checks passed.
+- `make test-phase0 PYTHON=<temporary-venv>/bin/python`: 2 641 passed
+  (118.53 s).
+- `make check PYTHON=<temporary-venv>/bin/python`: agent-system validation,
+  guard/formatter/staged-file/product-detection tests, Ruff format/lint, strict
+  mypy (42 source files), and 2 766 Python tests passed (pytest 119.91 s).
+- `make gate-phase0 PYTHON=<temporary-venv>/bin/python`: repeated the complete
+  repository check with 2 766 tests passing (118.97 s), then reported
+  `gate phase0-sustained passed`.
 - Environment: sandboxed Linux (x86_64, glibc 2.35 host), CPython 3.12.3
   virtualenv with the repository's pinned dev dependencies; the repository's
   own macOS `.venv` is not executable here. Commands used

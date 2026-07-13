@@ -1577,6 +1577,76 @@ def test_failed_spawn_closes_owner_channel_and_handoff_without_a_child(
     successor.close()
 
 
+def test_malformed_channel_result_closes_exact_known_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, store, _election_calls = _owner_election_harness(monkeypatch, tmp_path)
+    reader, writer = open_startup_channel()
+    reader_fd = reader.fileno()
+    writer_fd = writer.fileno()
+    launch_guards: list[object] = []
+    monkeypatch.setattr(runtime_module, "_OPEN_STARTUP_CHANNEL", lambda: [reader, writer])
+    monkeypatch.setattr(runtime_module, "_open_parent_handoff", lambda: launch_guards.append(1))
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: launch_guards.append(1))
+
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    assert launch_guards == []
+    _assert_fd_closed(reader_fd)
+    _assert_fd_closed(writer_fd)
+    successor = OwnerLock.acquire(store)
+    successor.close()
+
+
+@pytest.mark.parametrize("factory_name", ("_NEW_CHILD_HANDOFF", "_NEW_WAIT_ONLY_REAPER"))
+def test_pre_commit_factory_failure_contains_child_and_retires_descriptors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    factory_name: str,
+) -> None:
+    config, store, _election_calls = _owner_election_harness(monkeypatch, tmp_path)
+    tracked = _track_owner_resources(monkeypatch)
+    process = _Process()
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: process)
+
+    def fail_factory(*_args: object) -> NoReturn:
+        raise RuntimeError("factory")
+
+    monkeypatch.setattr(runtime_module, factory_name, fail_factory)
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    assert process.terminate_calls == 1
+    assert process.wait_calls == 1
+    for key in ("reader_fd", "writer_fd", "handoff_reader_fd", "handoff_writer_fd"):
+        _assert_fd_closed(tracked[key])
+    successor = OwnerLock.acquire(store)
+    successor.close()
+
+
+def test_failed_handoff_writer_move_contains_child_and_retires_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, store, _election_calls = _owner_election_harness(monkeypatch, tmp_path)
+    tracked = _track_owner_resources(monkeypatch)
+    process = _Process()
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: process)
+    monkeypatch.setattr(runtime_module._ParentHandoffPipe, "take_writer", lambda _self: None)
+
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    assert process.terminate_calls == 1
+    assert process.wait_calls == 1
+    for key in ("reader_fd", "writer_fd", "handoff_reader_fd", "handoff_writer_fd"):
+        _assert_fd_closed(tracked[key])
+    successor = OwnerLock.acquire(store)
+    successor.close()
+
+
 def test_pre_commit_reaper_failure_terminates_the_unpublished_child(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

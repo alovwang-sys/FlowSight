@@ -967,6 +967,128 @@ def _fail_unpublished(
     _raise_parent_failure(cleanup_failed=cleanup_failed)
 
 
+def _cleanup_unwrapped_child(
+    process: _Process,
+    writer_fd: int,
+    handoff: _ParentHandoffPipe,
+) -> bool:
+    """Contain a pre-commit child when its handoff wrapper could not be built."""
+
+    active_control: BaseException | None = None
+    ordinary_failure = False
+    try:
+        process.terminate()
+    except Exception:
+        terminated = False
+        ordinary_failure = True
+    except BaseException as error:
+        terminated = False
+        active_control = error
+    else:
+        terminated = True
+    try:
+        process.wait(timeout=_CLEANUP_GRACE_SECONDS)
+    except Exception:
+        reaped = False
+        ordinary_failure = True
+    except BaseException as error:
+        reaped = False
+        if active_control is None:
+            active_control = error
+    else:
+        reaped = True
+    writer_retired = False
+    if reaped and writer_fd >= _MIN_DESCRIPTOR:
+        try:
+            writer_retired = _CLOSE(writer_fd) is None
+        except Exception:
+            ordinary_failure = True
+        except BaseException as error:
+            if active_control is None:
+                active_control = error
+    elif reaped:
+        try:
+            writer_retired = handoff.close_uncommitted() is True
+        except Exception:
+            ordinary_failure = True
+        except BaseException as error:
+            if active_control is None:
+                active_control = error
+    if active_control is not None:
+        _note_cleanup_failure(active_control)
+        raise active_control
+    return terminated and reaped and writer_retired and not ordinary_failure
+
+
+def _fail_unwrapped_child(
+    store: StateStore,
+    reader: StartupReader,
+    process: _Process,
+    writer_fd: int,
+    handoff: _ParentHandoffPipe,
+    active: BaseException | None,
+) -> NoReturn:
+    cleaned = False
+    cleanup_control: BaseException | None = None
+    try:
+        cleaned = _cleanup_unwrapped_child(process, writer_fd, handoff)
+    except BaseException as error:
+        cleanup_control = error
+    _unused_state, reader_ok = _consume_startup_outcome(store, reader, None)
+    cleanup_failed = not cleaned or reader_ok is not True
+    if active is not None:
+        if cleanup_failed or cleanup_control is not None:
+            _note_cleanup_failure(active)
+        raise active
+    if cleanup_control is not None:
+        raise cleanup_control
+    _raise_parent_failure(cleanup_failed=cleanup_failed)
+
+
+def _close_rejected_startup_channel(
+    store: StateStore,
+    endpoints: tuple[object, ...] | list[object],
+) -> bool:
+    """Retire exact known endpoints returned inside one malformed channel result."""
+
+    closed = True
+    active_control: BaseException | None = None
+    seen: list[object] = []
+    for endpoint in endpoints:
+        if type(endpoint) not in (_READER_TYPE, _WRITER_TYPE) or any(
+            endpoint is previous for previous in seen
+        ):
+            continue
+        seen.append(endpoint)
+        if type(endpoint) is _READER_TYPE:
+            try:
+                _unused_state, endpoint_ok = _consume_startup_outcome(
+                    store,
+                    endpoint,
+                    None,
+                )
+                if endpoint_ok is not True:
+                    closed = False
+            except BaseException as error:
+                if active_control is None:
+                    active_control = error
+                closed = False
+        else:
+            try:
+                if _WRITER_CLOSE(cast(StartupWriter, endpoint)) is not None:
+                    closed = False
+            except Exception:
+                closed = False
+            except BaseException as error:
+                if active_control is None:
+                    active_control = error
+                closed = False
+    if active_control is not None:
+        _note_cleanup_failure(active_control)
+        raise active_control
+    return closed
+
+
 def _close_unlaunched_owner_resources(
     store: StateStore,
     owner: OwnerLock,
@@ -1044,10 +1166,38 @@ def _admit_launched_child(
             active = error
     if type(taken) is int and taken >= _MIN_DESCRIPTOR:
         writer_fd = taken
-    child = _NEW_CHILD_HANDOFF(process, writer_fd if writer_fd is not None else -1)
+    child: _ChildHandoff | None = None
+    child_factory_failed = writer_fd is None
+    if writer_fd is not None:
+        try:
+            child = _NEW_CHILD_HANDOFF(process, writer_fd)
+        except Exception:
+            child_factory_failed = True
+        except BaseException as error:
+            child_factory_failed = True
+            if active is None:
+                active = error
+    if child_factory_failed or child is None:
+        _fail_unwrapped_child(
+            store,
+            reader,
+            process,
+            writer_fd if writer_fd is not None else -1,
+            handoff,
+            active,
+        )
     transferred = False
     if active is None and retired and writer_fd is not None:
-        reaper = _NEW_WAIT_ONLY_REAPER(process)
+        reaper: _Reaper | None = None
+        reaper_control: BaseException | None = None
+        try:
+            reaper = _NEW_WAIT_ONLY_REAPER(process)
+        except Exception:
+            reaper = None
+        except BaseException as error:
+            reaper_control = error
+        if reaper is None:
+            _fail_unpublished(store, reader, child, reaper_control)
         try:
             child.transfer_wait_ownership(reaper)
             transferred = True
@@ -1108,6 +1258,7 @@ def _launch_owned_child(
     reader: StartupReader | None = None
     writer: StartupWriter | None = None
     handoff: _ParentHandoffPipe | None = None
+    rejected_channel: tuple[object, ...] | list[object] | None = None
     process: _Process | None = None
     active: BaseException | None = None
     try:
@@ -1123,6 +1274,8 @@ def _launch_owned_child(
             ):
                 reader, writer = channel
                 handoff = _open_parent_handoff()
+            elif type(channel) in (tuple, list):
+                rejected_channel = channel
         if reader is not None and writer is not None and handoff is not None:
             window = _remaining(reserved_deadline, observed)
             if window is not None:
@@ -1145,6 +1298,14 @@ def _launch_owned_child(
             closed = _close_unlaunched_owner_resources(store, owner, reader, writer, handoff)
         except BaseException as error:
             close_control = error
+        if rejected_channel is not None:
+            try:
+                if _close_rejected_startup_channel(store, rejected_channel) is not True:
+                    closed = False
+            except BaseException as error:
+                if close_control is None:
+                    close_control = error
+                closed = False
         if active is not None:
             if not closed:
                 _note_cleanup_failure(active)
