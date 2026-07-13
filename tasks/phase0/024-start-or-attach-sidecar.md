@@ -6,7 +6,7 @@
 task_id: P0-024
 release: v1
 task_type: implementation
-status: in_progress
+status: review
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-013, P0-014, P0-016, P0-019, P0-023, P0-025, TRIAL-004]
@@ -197,16 +197,16 @@ control-plane records; they do not expand the product-code allowlist above.
 
 ## Acceptance Criteria
 
-- [ ] `start_or_attach_sidecar` is an identical `flowsight.sidecar` export,
+- [x] `start_or_attach_sidecar` is an identical `flowsight.sidecar` export,
   appears once in `__all__`, has exact signature
   `(config: SidecarRuntimeConfig) -> SidecarState`, and adds no root public API
   or public result/error/configuration type.
-- [ ] Exact-config preflight safely admits only the scalar fields required by
+- [x] Exact-config preflight safely admits only the scalar fields required by
   the reviewed primitives. A malformed exact object, ordinary dependency
   failure, invalid monotonic observation, or exhausted/rolled-back/non-finite
   deadline fails closed with one fixed parent error before any unauthorized
   later work; non-`Exception` control preserves identity.
-- [ ] One finite, non-regressing outer deadline begins before store/election/
+- [x] One finite, non-regressing outer deadline begins before store/election/
   launch work. It calls canonical P0-013 once with a positive current remainder
   and every following channel, launch, cleanup, and P0-009 call receives only a
   recomputed positive remainder. Deterministic clock/call-order tests prove no
@@ -214,11 +214,11 @@ control-plane records; they do not expand the product-code allowlist above.
   child. An exact P0-013 state or owner result still requires a fresh positive
   outer remainder before incumbent admission or owner-path work; insufficient
   time to reserve the fixed cleanup grace prevents launch.
-- [ ] An exact P0-013 `SidecarState` takes the no-launch branch, reaches
+- [x] An exact P0-013 `SidecarState` takes the no-launch branch, reaches
   `admit_configured_incumbent_port` exactly once, and returns its exact state
   directly with no channel, command, process, or later work. Its explicit-port
   incompatibility is terminal and starts no child.
-- [ ] An exact P0-013 `OwnerLock` is the only launch authority. The owner branch
+- [x] An exact P0-013 `OwnerLock` is the only launch authority. The owner branch
   opens one reviewed channel and one close-only handoff pipe, obtains the three
   exact live child descriptors, creates the canonical P0-016 v2 suffix, and
   launches exactly one isolated direct P0-023 child with only those three
@@ -227,7 +227,7 @@ control-plane records; they do not expand the product-code allowlist above.
   startup-writer, and handoff-reader exactly once; the startup reader is
   consumed only by `with reader:`; the handoff writer is moved before its sole
   irreversible close attempt. No path closes child-owned descriptors.
-- [ ] The child branch consumes one outcome through P0-009 under the remaining
+- [x] The child branch consumes one outcome through P0-009 under the remaining
   outer budget in exactly one `with reader:` ownership boundary and returns
   only the exact verified `SidecarState`. It never naked-closes or retries that
   reader. READY/state mismatch, generic child FAILURE, malformed/absent channel
@@ -236,7 +236,7 @@ control-plane records; they do not expand the product-code allowlist above.
   scalar or subprocess information. A failure before the handoff-writer close
   attempt terminates the unpublished child; a local or close failure after that
   attempt must not terminate the now-attachable child.
-- [ ] Before the parent releases the handoff writer, it transfers the newly
+- [x] Before the parent releases the handoff writer, it transfers the newly
   launched child to exactly one private wait-only reaper. The child cannot
   publish state, bind, or send READY before that EOF release. If a newly
   unpublished child cannot reach the handoff-writer close attempt, the parent
@@ -251,7 +251,7 @@ control-plane records; they do not expand the product-code allowlist above.
   retirement, the already-started private daemon reaper remains the canonical
   blocking wait owner; it neither polls nor terminates the healthy long-lived
   sidecar.
-- [ ] Real isolated-process evidence, using a temporary project and an isolated
+- [x] Real isolated-process evidence, using a temporary project and an isolated
   per-test runtime root, proves initial launch reaches authenticated health,
   the child remains gated until reaper ownership is established, then is held
   by that wait-only reaper without a `ResourceWarning`,
@@ -262,7 +262,7 @@ control-plane records; they do not expand the product-code allowlist above.
   and deterministic pre-EOF cleanup leaves no child or descriptor behind.
   Tests use observable bounded conditions rather than sleeps and clean up their
   child process/state.
-- [ ] Static and behavioral tests freeze captured canonical dispatch, exact
+- [x] Static and behavioral tests freeze captured canonical dispatch, exact
   command shape, `-I`, `pass_fds`, detached stdio/session, one election/channel/
   child/admission, deadline propagation, error privacy, no shell or listener
   inheritance, no SDK/OTel/store-write/UI code, no unreviewed mutable state,
@@ -329,29 +329,111 @@ without adding SDK, telemetry, storage, or UI behavior
 
 Implementer:
 
-- Pending.
+- Commit `d9e0053` adds `start_or_attach_sidecar` to
+  `flowsight/sidecar/parent_runtime.py` as a pure composition of the reviewed
+  primitives: one preflight/deadline via `_prepare_election`, exactly one
+  P0-013 call via `_elect_once`, incumbent exits only through
+  `admit_configured_incumbent_port`, and an owner branch that opens one
+  channel plus one handoff pipe, launches one canonical P0-023 child, retires
+  owner/startup-writer/handoff-reader before reaper start, transfers the child
+  to the single wait-only reaper before the sole irreversible handoff-writer
+  close, and consumes one P0-009 outcome inside one `with reader:` boundary.
+  The owner path reserves the fixed 250 ms terminal cleanup grace
+  (`deadline - _CLEANUP_GRACE_SECONDS`) for every pre-commit stage budget so
+  the unpublished failure path can always terminate and boundedly reap.
+  `flowsight/sidecar/__init__.py` gained only the exact import and one
+  `__all__` entry.
+- Commit `effff6b` adds composition unit tests (deterministic clocks,
+  call-order events, fixed-error shape, descriptor-closure tracking) and six
+  real isolated-process acceptance tests driven through inherited
+  `XDG_RUNTIME_DIR`/`HOME` isolation so the canonical `-I` child re-derives
+  the same per-test runtime root.
 
 Adversarial Reviewer:
 
-- Pending.
+- Verified every incumbent exit passes through `_admit_incumbent` →
+  `admit_configured_incumbent_port` exactly once and returns the exact state;
+  explicit-port incompatibility raises the fixed error with no channel or
+  spawn work (frozen by launch-guard fakes).
+- Verified single election, no full-timeout reuse (election gets 4.8 s and
+  admission 3.95 s of a 5 s budget under the scripted clock), no stage after
+  expiry, no retry loop, and no second child on any failure path.
+- Walked every failure seam for commit-boundary correctness: before the
+  handoff-writer close attempt the child is terminated and boundedly reaped
+  (direct wait before transfer, reaper join after); after the close attempt
+  (`_ChildHandoff.committed`) no path terminates the child, including
+  admission faults, reader-exit faults, and close faults; process-control
+  exceptions preserve identity and receive the single cleanup note only when
+  cleanup actually failed.
+- Checked descriptor lifecycles: each of startup reader/writer and handoff
+  reader/writer is closed exactly once per flow (fstat-based unit assertions);
+  the handoff writer is deliberately retained only when an unconfirmed child
+  cleanup means the gate must stay held.
+- Confirmed no SDK/OTel/store-write/UI code, no new public error/result type,
+  and the module import surface is frozen by an AST test.
+- Environmental notes (not diff findings): `tests/sidecar/test_state.py::
+  test_load_rejects_equal_length_rewrite_and_atomic_path_replacement` fails
+  deterministically on this sandbox's mounted filesystem (lstat-signature
+  semantics) at baseline `2804db5` too, and `tests/sidecar/
+  test_runtime_config.py::test_platformdirs_and_state_store_are_called_once_
+  without_creating_runtime_paths` is intermittently flaky there for the same
+  reason; both are untouched by this diff.
 
 Fixer:
 
-- Pending.
+- Only review-driven adjustment applied during implementation: the handoff
+  writer is moved into `_ChildHandoff` even when handle retirement raised a
+  control exception, so a reaped pre-commit cleanup can still retire the gate
+  descriptor instead of leaking it; post-commit unit tests switched to the
+  fake reaper so `wait_calls` counts only parent-side waits.
 
 Verifier:
 
-- Pending.
+- See Verifier Evidence below; commands were run exactly as recorded, from an
+  equivalent CPython 3.12.3 Linux virtualenv because this session's sandbox
+  cannot execute the repository's macOS `.venv`.
 
 Quality Governor:
 
-- Pending.
+- Task stayed inside its four allowed product files plus this card; commits
+  keep `in_progress`/`review` discipline with the evidence recorded as a
+  control-plane-only change; no rule drift observed that requires doc updates.
+  Completion is gated only on the macOS/Linux × CPython 3.12/3.13 CI matrix
+  run, which cannot be produced from this environment.
 
 ## Verifier Evidence
 
-- Planned: record the focused parent-runtime/runtime-config result, Phase 0
-  suite, repository check, sustained gate, candidate commit, and supported CI
-  matrix before this task can become complete.
+- Environment: sandboxed Linux (x86_64, glibc 2.35 host), CPython 3.12.3
+  virtualenv with the repository's pinned dev dependencies; the repository's
+  own macOS `.venv` is not executable here. Commands used
+  `PYTHON=/tmp/fsvenv/bin/python` (the venv interpreter) where the Makefile
+  default expects `.venv/bin/python`, and long targets were executed as their
+  exact constituent commands because this environment kills any process after
+  45 seconds.
+- `python -m pytest tests/sidecar/test_parent_runtime.py
+  tests/sidecar/test_runtime_config.py`: 366 passed (14.28 s).
+- `make test-phase0` scope, run as its exact pytest constituents:
+  `tests/test_sdk_skeleton.py tests/security/test_safe_summary.py
+  tests/store/test_wal_writer.py` 97 passed;
+  `tests/packaging/test_wheel_runtime_dependency.py` 13 passed;
+  `tests/sidecar` 2 526 passed across chunks (637 + 522 + 754 + 26 + 222 +
+  366 with one skip-free rerun), with the two pre-existing
+  environment-dependent failures noted in the review recorded against
+  baseline `2804db5` as well.
+- `make check` scope: `ruff format --check` (71 files clean), `ruff check`
+  (clean), `mypy` strict (42 source files, no issues), `make check-agent`
+  constituents (`validate-agent-system` passed; `test-hooks` 158 deny/80
+  allow passed; `test-formatter`, `test-allowlist`, `test-product-detection`,
+  `test-validator` all OK), full pytest additionally covering
+  `tests/spikes/test_tracepoint_backend.py` 36 passed and
+  `tests/spikes/test_sidecar_otel_lifecycle.py` 89 passed (chunked).
+- `make gate-phase0` validator: `scripts/validate_agent_system.py --gate
+  phase0-sustained` → `gate phase0-sustained passed` (after the `make check`
+  scope above).
+- Pre-commit hook (staged-path boundary + snapshot `make check-fast`) passed
+  for both product commits `d9e0053` and `effff6b`.
+- Pending before `complete`: the macOS/Linux × CPython 3.12/3.13 CI matrix on
+  push (this environment can only produce Linux/CPython 3.12 evidence).
 
 ## Failure Queue Items
 
