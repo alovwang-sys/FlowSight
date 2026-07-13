@@ -1,23 +1,39 @@
 from __future__ import annotations
 
+import ast
+import gc
+import inspect
 import os
 import pickle
+import signal
+import socket
 import threading
+import time
+import warnings
 from copy import copy, deepcopy
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, get_type_hints
 
 import pytest
 
+import flowsight.sidecar as sidecar_package
 from flowsight.sidecar import (
     StartupChannelError,
+    StartupFailure,
+    StartupFailureCode,
     open_startup_channel,
     prepare_sidecar_runtime_config,
+    start_or_attach_sidecar,
 )
 from flowsight.sidecar import parent_runtime as runtime_module
 from flowsight.sidecar import runtime_config as config_module
-from flowsight.sidecar.owner_lock import OwnerLockError
+from flowsight.sidecar.health import probe_sidecar_health
+from flowsight.sidecar.owner_lock import OwnerLock, OwnerLockError
+from flowsight.sidecar.startup_channel import StartupReader
 from flowsight.sidecar.state import SidecarState, StateStore
+
+PARENT_ERROR = "sidecar parent startup failed"
+CLEANUP_NOTE = "sidecar parent startup cleanup failed"
 
 
 class _Control(BaseException):
@@ -1189,6 +1205,543 @@ def test_control_during_reaper_start_conservatively_forbids_parent_wait(
         os.close(writer)
 
 
+class _Clock:
+    def __init__(self, start: float, step: float = 0.1) -> None:
+        self._next = start
+        self._step = step
+
+    def __call__(self) -> float:
+        value = self._next
+        self._next += self._step
+        return value
+
+
+def _incumbent_state(config, tmp_path: Path) -> SidecarState:
+    return SidecarState(
+        project_id=config.project_id,
+        startup_id="a" * 32,
+        pid=4321,
+        port=8123,
+        token="x" * 32,
+        database_path=str(tmp_path / "events.sqlite3"),
+        started_at_ns=1,
+    )
+
+
+def _assert_fixed_parent_error(error, *, notes=()) -> None:
+    assert type(error) is RuntimeError
+    assert error.args == (PARENT_ERROR,)
+    assert str(error) == PARENT_ERROR
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert error.__suppress_context__ is True
+    assert tuple(getattr(error, "__notes__", ())) == tuple(notes)
+
+
+def _owner_election_harness(monkeypatch, tmp_path):
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    election_calls: list[float] = []
+
+    def election(actual_store, timeout):
+        assert actual_store is store
+        election_calls.append(timeout)
+        return OwnerLock.acquire(store)
+
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", _Clock(100.0))
+    monkeypatch.setattr(runtime_module, "_CONSTRUCT_STORE", lambda *_a, **_k: store)
+    monkeypatch.setattr(runtime_module, "_WAIT_FOR_OWNER_ELECTION", election)
+    return config, store, election_calls
+
+
+def _track_owner_resources(monkeypatch):
+    tracked: dict[str, int] = {}
+    real_open_channel = runtime_module._OPEN_STARTUP_CHANNEL
+    real_open_handoff = runtime_module._open_parent_handoff
+
+    def open_channel():
+        reader, writer = real_open_channel()
+        tracked["reader_fd"] = reader.fileno()
+        tracked["writer_fd"] = writer.fileno()
+        return reader, writer
+
+    def open_handoff():
+        handoff = real_open_handoff()
+        if handoff is not None:
+            tracked["handoff_reader_fd"] = handoff._reader_fd
+            tracked["handoff_writer_fd"] = handoff._writer_fd
+        return handoff
+
+    monkeypatch.setattr(runtime_module, "_OPEN_STARTUP_CHANNEL", open_channel)
+    monkeypatch.setattr(runtime_module, "_open_parent_handoff", open_handoff)
+    return tracked
+
+
+def _assert_fd_closed(descriptor: int) -> None:
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+
+
+def test_start_or_attach_public_shape_is_exact() -> None:
+    assert sidecar_package.start_or_attach_sidecar is runtime_module.start_or_attach_sidecar
+    assert start_or_attach_sidecar is runtime_module.start_or_attach_sidecar
+    assert sidecar_package.__all__.count("start_or_attach_sidecar") == 1
+    signature = inspect.signature(start_or_attach_sidecar)
+    assert tuple(signature.parameters) == ("config",)
+    parameter = signature.parameters["config"]
+    assert parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    assert parameter.default is inspect.Parameter.empty
+    hints = get_type_hints(start_or_attach_sidecar)
+    assert hints == {
+        "config": config_module.SidecarRuntimeConfig,
+        "return": SidecarState,
+    }
+
+
+def test_parent_runtime_composition_stays_inside_reviewed_imports() -> None:
+    source_file = inspect.getsourcefile(runtime_module)
+    assert source_file is not None
+    tree = ast.parse(Path(source_file).read_text())
+    relative: set[str] = set()
+    absolute: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            assert node.module is not None
+            if node.level:
+                relative.add(node.module)
+            else:
+                absolute.add(node.module)
+        elif isinstance(node, ast.Import):
+            absolute.update(alias.name for alias in node.names)
+    assert relative == {
+        "child_bootstrap",
+        "incumbent_port",
+        "owner_lock",
+        "runtime_config",
+        "startup_admission",
+        "startup_channel",
+        "startup_wait",
+        "state",
+    }
+    assert absolute == {
+        "__future__",
+        "collections.abc",
+        "fcntl",
+        "math",
+        "os",
+        "pathlib",
+        "subprocess",
+        "sys",
+        "threading",
+        "time",
+        "typing",
+    }
+
+
+def test_wrong_config_type_is_rejected_before_any_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+    monkeypatch.setattr(runtime_module, "_CONSTRUCT_STORE", lambda *_a, **_k: calls.append(1))
+    monkeypatch.setattr(runtime_module, "_WAIT_FOR_OWNER_ELECTION", lambda *_a: calls.append(1))
+    for wrong in (None, object(), "project", 4040):
+        with pytest.raises(TypeError):
+            start_or_attach_sidecar(wrong)
+    assert calls == []
+
+
+def test_malformed_exact_config_fails_closed_before_election(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forged = object.__new__(config_module.SidecarRuntimeConfig)
+    object.__setattr__(forged, "project_root", "")
+    object.__setattr__(forged, "runtime_root", "relative-runtime")
+    object.__setattr__(forged, "project_id", "wrong-project")
+    object.__setattr__(forged, "requested_port", None)
+    object.__setattr__(forged, "startup_timeout", 5.0)
+    calls: list[object] = []
+    monkeypatch.setattr(runtime_module, "_CONSTRUCT_STORE", lambda *_a, **_k: calls.append(1))
+    monkeypatch.setattr(runtime_module, "_WAIT_FOR_OWNER_ELECTION", lambda *_a: calls.append(1))
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(forged)
+    _assert_fixed_parent_error(captured.value)
+    assert calls == []
+
+
+def test_incumbent_branch_admits_exactly_once_and_returns_exact_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    incumbent = _incumbent_state(config, tmp_path)
+    election_calls: list[float] = []
+    admit_calls: list[tuple[object, object]] = []
+    launch_guards: list[object] = []
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", _Clock(100.0))
+    monkeypatch.setattr(runtime_module, "_CONSTRUCT_STORE", lambda *_a, **_k: store)
+
+    def election(actual_store, timeout):
+        assert actual_store is store
+        election_calls.append(timeout)
+        return incumbent
+
+    def admit(actual_config, actual_incumbent):
+        admit_calls.append((actual_config, actual_incumbent))
+        return actual_incumbent
+
+    monkeypatch.setattr(runtime_module, "_WAIT_FOR_OWNER_ELECTION", election)
+    monkeypatch.setattr(runtime_module, "_ADMIT_INCUMBENT_PORT", admit)
+    monkeypatch.setattr(runtime_module, "_OPEN_STARTUP_CHANNEL", lambda: launch_guards.append(1))
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: launch_guards.append(1))
+
+    result = start_or_attach_sidecar(config)
+    assert result is incumbent
+    assert admit_calls == [(config, incumbent)]
+    assert election_calls == [pytest.approx(4.8)]
+    assert launch_guards == []
+
+
+def test_incumbent_port_incompatibility_is_terminal_without_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    incumbent = _incumbent_state(config, tmp_path)
+    admit_calls: list[object] = []
+    launch_guards: list[object] = []
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", _Clock(100.0))
+    monkeypatch.setattr(runtime_module, "_CONSTRUCT_STORE", lambda *_a, **_k: store)
+    monkeypatch.setattr(runtime_module, "_WAIT_FOR_OWNER_ELECTION", lambda *_a: incumbent)
+
+    def admit(*_args: object) -> NoReturn:
+        admit_calls.append(1)
+        raise RuntimeError("configured incumbent port is incompatible")
+
+    monkeypatch.setattr(runtime_module, "_ADMIT_INCUMBENT_PORT", admit)
+    monkeypatch.setattr(runtime_module, "_OPEN_STARTUP_CHANNEL", lambda: launch_guards.append(1))
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: launch_guards.append(1))
+
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    assert admit_calls == [1]
+    assert launch_guards == []
+
+
+def test_exhausted_budget_after_election_prevents_incumbent_admission(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    incumbent = _incumbent_state(config, tmp_path)
+    admit_calls: list[object] = []
+    clocks = iter((100.0, 100.1, 100.2, 100.3, 106.0))
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", lambda: next(clocks))
+    monkeypatch.setattr(runtime_module, "_CONSTRUCT_STORE", lambda *_a, **_k: store)
+    monkeypatch.setattr(runtime_module, "_WAIT_FOR_OWNER_ELECTION", lambda *_a: incumbent)
+    monkeypatch.setattr(runtime_module, "_ADMIT_INCUMBENT_PORT", lambda *_a: admit_calls.append(1))
+
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    assert admit_calls == []
+
+
+def test_owner_branch_launches_one_gated_child_and_returns_verified_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, store, election_calls = _owner_election_harness(monkeypatch, tmp_path)
+    tracked = _track_owner_resources(monkeypatch)
+    verified = _incumbent_state(config, tmp_path)
+    events: list[str] = []
+    process = _Process()
+    popen_calls: list[tuple[object, dict[str, object]]] = []
+    receive_calls: list[tuple[object, object, float]] = []
+    reapers: list[_Reaper] = []
+
+    def popen(argv, **kwargs):
+        popen_calls.append((argv, kwargs))
+        return process
+
+    real_retire = runtime_module._retire_parent_child_handles
+
+    def retire(owner, writer, handoff):
+        events.append("retire")
+        return real_retire(owner, writer, handoff)
+
+    class _RecordingReaper(_Reaper):
+        def start(self):
+            events.append("reaper_start")
+            return super().start()
+
+        def begin_wait(self):
+            events.append("begin_wait")
+            return super().begin_wait()
+
+    def new_reaper(actual_process):
+        assert actual_process is process
+        reaper = _RecordingReaper()
+        reapers.append(reaper)
+        return reaper
+
+    def receive(actual_store, reader, timeout):
+        events.append("receive")
+        assert type(reader) is StartupReader
+        receive_calls.append((actual_store, reader, timeout))
+        return verified
+
+    monkeypatch.setattr(runtime_module, "_POPEN", popen)
+    monkeypatch.setattr(runtime_module, "_retire_parent_child_handles", retire)
+    monkeypatch.setattr(runtime_module, "_NEW_WAIT_ONLY_REAPER", new_reaper)
+    monkeypatch.setattr(runtime_module, "_RECEIVE_STARTUP_OUTCOME", receive)
+
+    result = start_or_attach_sidecar(config)
+    assert result is verified
+    assert events == ["retire", "reaper_start", "begin_wait", "receive"]
+    assert election_calls == [pytest.approx(4.8)]
+    assert len(popen_calls) == 1
+    argv, kwargs = popen_calls[0]
+    assert argv[:4] == (
+        runtime_module._CHILD_EXECUTABLE,
+        "-I",
+        "-m",
+        "flowsight.sidecar.child_entry",
+    )
+    assert kwargs["close_fds"] is True
+    assert kwargs["start_new_session"] is True
+    assert kwargs["shell"] is False
+    assert kwargs["stdin"] is runtime_module._DEVNULL
+    assert kwargs["stdout"] is runtime_module._DEVNULL
+    assert kwargs["stderr"] is runtime_module._DEVNULL
+    assert len(kwargs["pass_fds"]) == 3
+    assert receive_calls[0][0] is store
+    assert receive_calls[0][2] == pytest.approx(3.95)
+    assert process.terminate_calls == 0
+    assert process.wait_calls == 0
+    assert len(reapers) == 1
+    assert reapers[0].wait_ownership is True
+    assert reapers[0].join_calls == 0
+    for key in ("reader_fd", "writer_fd", "handoff_reader_fd", "handoff_writer_fd"):
+        _assert_fd_closed(tracked[key])
+    successor = OwnerLock.acquire(store)
+    successor.close()
+
+
+def test_expired_reserved_budget_after_owner_election_prevents_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    launch_guards: list[object] = []
+    clocks = iter((100.0, 100.1, 100.2, 100.3, 104.8))
+    monkeypatch.setattr(runtime_module, "_READ_MONOTONIC", lambda: next(clocks))
+    monkeypatch.setattr(runtime_module, "_CONSTRUCT_STORE", lambda *_a, **_k: store)
+    monkeypatch.setattr(
+        runtime_module, "_WAIT_FOR_OWNER_ELECTION", lambda *_a: OwnerLock.acquire(store)
+    )
+    monkeypatch.setattr(runtime_module, "_OPEN_STARTUP_CHANNEL", lambda: launch_guards.append(1))
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: launch_guards.append(1))
+
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    assert launch_guards == []
+    successor = OwnerLock.acquire(store)
+    successor.close()
+
+
+def test_failed_spawn_closes_owner_channel_and_handoff_without_a_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, store, election_calls = _owner_election_harness(monkeypatch, tmp_path)
+    tracked = _track_owner_resources(monkeypatch)
+    popen_calls: list[object] = []
+
+    def popen(*_args: object, **_kwargs: object) -> NoReturn:
+        popen_calls.append(1)
+        raise RuntimeError("spawn")
+
+    monkeypatch.setattr(runtime_module, "_POPEN", popen)
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    assert popen_calls == [1]
+    assert election_calls == [pytest.approx(4.8)]
+    for key in ("reader_fd", "writer_fd", "handoff_reader_fd", "handoff_writer_fd"):
+        _assert_fd_closed(tracked[key])
+    successor = OwnerLock.acquire(store)
+    successor.close()
+
+
+def test_pre_commit_reaper_failure_terminates_the_unpublished_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, store, _election_calls = _owner_election_harness(monkeypatch, tmp_path)
+    tracked = _track_owner_resources(monkeypatch)
+    process = _Process()
+    receive_guards: list[object] = []
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: process)
+    monkeypatch.setattr(
+        runtime_module,
+        "_NEW_WAIT_ONLY_REAPER",
+        lambda _process: _Reaper(start=RuntimeError("start"), alive_after_start=False),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "_RECEIVE_STARTUP_OUTCOME",
+        lambda *_a: receive_guards.append(1),
+    )
+
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    assert process.terminate_calls == 1
+    assert process.wait_calls == 1
+    assert receive_guards == []
+    for key in ("reader_fd", "writer_fd", "handoff_reader_fd", "handoff_writer_fd"):
+        _assert_fd_closed(tracked[key])
+    successor = OwnerLock.acquire(store)
+    successor.close()
+
+
+def test_pre_commit_cleanup_failure_is_visible_as_the_fixed_note(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, _store, _election_calls = _owner_election_harness(monkeypatch, tmp_path)
+    tracked = _track_owner_resources(monkeypatch)
+    process = _Process(wait=RuntimeError("still alive"))
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: process)
+    monkeypatch.setattr(
+        runtime_module,
+        "_NEW_WAIT_ONLY_REAPER",
+        lambda _process: _Reaper(start=RuntimeError("start"), alive_after_start=False),
+    )
+    try:
+        with pytest.raises(RuntimeError) as captured:
+            start_or_attach_sidecar(config)
+        _assert_fixed_parent_error(captured.value, notes=(CLEANUP_NOTE,))
+        assert process.terminate_calls == 1
+        assert process.wait_calls == 1
+        assert os.fstat(tracked["handoff_writer_fd"])
+    finally:
+        os.close(tracked["handoff_writer_fd"])
+
+
+def test_child_failure_message_is_fixed_error_without_post_commit_termination(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, _store, _election_calls = _owner_election_harness(monkeypatch, tmp_path)
+    tracked = _track_owner_resources(monkeypatch)
+    process = _Process()
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: process)
+    monkeypatch.setattr(runtime_module, "_NEW_WAIT_ONLY_REAPER", lambda _process: _Reaper())
+    monkeypatch.setattr(
+        runtime_module,
+        "_RECEIVE_STARTUP_OUTCOME",
+        lambda *_a: StartupFailure(code=StartupFailureCode.SIDECAR_STARTUP_FAILED),
+    )
+
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    assert process.terminate_calls == 0
+    assert process.wait_calls == 0
+    for key in ("reader_fd", "writer_fd", "handoff_reader_fd", "handoff_writer_fd"):
+        _assert_fd_closed(tracked[key])
+
+
+def test_post_commit_admission_fault_never_terminates_the_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, _store, _election_calls = _owner_election_harness(monkeypatch, tmp_path)
+    tracked = _track_owner_resources(monkeypatch)
+    process = _Process()
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: process)
+    monkeypatch.setattr(runtime_module, "_NEW_WAIT_ONLY_REAPER", lambda _process: _Reaper())
+
+    def receive(*_args: object) -> NoReturn:
+        raise StartupChannelError.__new__(StartupChannelError)
+
+    monkeypatch.setattr(runtime_module, "_RECEIVE_STARTUP_OUTCOME", receive)
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    assert process.terminate_calls == 0
+    assert process.wait_calls == 0
+    for key in ("reader_fd", "writer_fd", "handoff_reader_fd", "handoff_writer_fd"):
+        _assert_fd_closed(tracked[key])
+
+
+def test_post_commit_control_preserves_identity_without_termination(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, _store, _election_calls = _owner_election_harness(monkeypatch, tmp_path)
+    process = _Process()
+    control = _Control()
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: process)
+    monkeypatch.setattr(runtime_module, "_NEW_WAIT_ONLY_REAPER", lambda _process: _Reaper())
+
+    def receive(*_args: object) -> NoReturn:
+        raise control
+
+    monkeypatch.setattr(runtime_module, "_RECEIVE_STARTUP_OUTCOME", receive)
+    with pytest.raises(_Control) as captured:
+        start_or_attach_sidecar(config)
+    assert captured.value is control
+    assert process.terminate_calls == 0
+    assert process.wait_calls == 0
+
+
+def test_pre_commit_control_preserves_identity_after_contained_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, _store, _election_calls = _owner_election_harness(monkeypatch, tmp_path)
+    process = _Process()
+    control = _Control()
+    monkeypatch.setattr(runtime_module, "_POPEN", lambda *_a, **_k: process)
+    monkeypatch.setattr(
+        runtime_module,
+        "_NEW_WAIT_ONLY_REAPER",
+        lambda _process: _Reaper(start=control, alive_after_start=False),
+    )
+    with pytest.raises(_Control) as captured:
+        start_or_attach_sidecar(config)
+    assert captured.value is control
+    assert tuple(getattr(captured.value, "__notes__", ())) == ()
+    assert process.terminate_calls == 1
+    assert process.wait_calls == 1
+
+
+def test_ordinary_failures_never_leak_configuration_scalars(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, _store, _election_calls = _owner_election_harness(monkeypatch, tmp_path)
+
+    def popen(*_args: object, **_kwargs: object) -> NoReturn:
+        raise RuntimeError(f"raw failure {tmp_path} token=super-secret port=8123")
+
+    monkeypatch.setattr(runtime_module, "_POPEN", popen)
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    text = repr(captured.value) + repr(captured.value.args) + str(captured.value)
+    assert str(tmp_path) not in text
+    assert "token" not in text
+    assert "8123" not in text
+    assert "super-secret" not in text
+
+
 def test_ordinary_reaper_start_failure_leaves_parent_as_wait_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1216,3 +1769,253 @@ def test_ordinary_reaper_start_failure_leaves_parent_as_wait_owner(
     finally:
         os.close(reader)
         assert handoff.retire_writer_after_reaped_cleanup() is True
+
+
+def _isolated_real_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    requested_port: int | None = None,
+    startup_timeout: float = 20.0,
+):
+    (tmp_path / "xdg-runtime").mkdir()
+    (tmp_path / "home").mkdir()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "xdg-runtime"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    project = tmp_path / "project"
+    if not project.exists():
+        project.mkdir()
+    return prepare_sidecar_runtime_config(
+        project,
+        requested_port=requested_port,
+        startup_timeout=startup_timeout,
+    )
+
+
+def _track_spawned(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    spawned: list[object] = []
+    real_popen = runtime_module._POPEN
+
+    def popen(*args: object, **kwargs: object) -> object:
+        process = real_popen(*args, **kwargs)  # type: ignore[arg-type]
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(runtime_module, "_POPEN", popen)
+    return spawned
+
+
+def _wait_for(condition, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.02)
+    return condition()
+
+
+def _terminate_and_reap(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    def exited() -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        return False
+
+    if _wait_for(exited, 10.0):
+        return
+    os.kill(pid, signal.SIGKILL)
+    assert _wait_for(exited, 10.0)
+
+
+def test_real_start_or_attach_launches_gated_child_to_authenticated_health(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _isolated_real_config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    spawned = _track_spawned(monkeypatch)
+    gate_observations: list[tuple[str, bool]] = []
+
+    class _ObservedHandoff(runtime_module._ChildHandoff):
+        def transfer_wait_ownership(self, reaper) -> None:
+            gate_observations.append(("transfer", store.load() is None))
+            super().transfer_wait_ownership(reaper)
+
+        def release_gate(self) -> bool:
+            gate_observations.append(("release", store.load() is None))
+            return super().release_gate()
+
+    monkeypatch.setattr(runtime_module, "_NEW_CHILD_HANDOFF", _ObservedHandoff)
+    threads_before = set(threading.enumerate())
+    state: SidecarState | None = None
+    try:
+        state = start_or_attach_sidecar(config)
+        assert type(state) is SidecarState
+        assert gate_observations == [("transfer", True), ("release", True)]
+        assert len(spawned) == 1
+        assert spawned[0].pid == state.pid
+        assert probe_sidecar_health(state, 5.0) is True
+        assert store.load() == state
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ResourceWarning)
+            gc.collect()
+        reaper_threads = [
+            thread for thread in set(threading.enumerate()) - threads_before if thread.daemon
+        ]
+        assert len(reaper_threads) == 1
+        again = start_or_attach_sidecar(config)
+        assert again == state
+        assert len(spawned) == 1
+    finally:
+        if state is not None:
+            _terminate_and_reap(state.pid)
+    assert _wait_for(lambda: spawned[0].returncode is not None, 10.0)
+    reaper_threads[0].join(10.0)
+    assert reaper_threads[0].is_alive() is False
+
+
+def test_real_concurrent_callers_share_one_incumbent_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _isolated_real_config(monkeypatch, tmp_path, startup_timeout=25.0)
+    spawned = _track_spawned(monkeypatch)
+    results: list[object] = [None, None]
+
+    def call(index: int) -> None:
+        try:
+            results[index] = start_or_attach_sidecar(config)
+        except BaseException as error:  # noqa: BLE001 - recorded for assertions
+            results[index] = error
+
+    callers = [threading.Thread(target=call, args=(index,)) for index in range(2)]
+    try:
+        for caller in callers:
+            caller.start()
+        for caller in callers:
+            caller.join(30.0)
+        assert all(not caller.is_alive() for caller in callers)
+        assert all(type(result) is SidecarState for result in results)
+        first, second = results
+        assert first == second
+        assert len(spawned) == 1
+        assert spawned[0].pid == first.pid
+    finally:
+        launched = spawned[0].pid if spawned else None
+        if launched is not None:
+            _terminate_and_reap(launched)
+
+
+def test_real_explicit_port_mismatch_is_terminal_without_second_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _isolated_real_config(monkeypatch, tmp_path)
+    spawned = _track_spawned(monkeypatch)
+    state: SidecarState | None = None
+    try:
+        state = start_or_attach_sidecar(config)
+        mismatched_port = state.port - 1 if state.port > 1 else state.port + 1
+        mismatched = prepare_sidecar_runtime_config(
+            tmp_path / "project",
+            requested_port=mismatched_port,
+            startup_timeout=20.0,
+        )
+        with pytest.raises(RuntimeError) as captured:
+            start_or_attach_sidecar(mismatched)
+        _assert_fixed_parent_error(captured.value)
+        assert len(spawned) == 1
+        assert probe_sidecar_health(state, 5.0) is True
+    finally:
+        if state is not None:
+            _terminate_and_reap(state.pid)
+
+
+def test_real_pre_ready_child_failure_is_synchronously_contained(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    blocker.bind(("127.0.0.1", 0))
+    blocker.listen(1)
+    occupied_port = blocker.getsockname()[1]
+    try:
+        config = _isolated_real_config(
+            monkeypatch,
+            tmp_path,
+            requested_port=occupied_port,
+        )
+        store = StateStore(config.runtime_root, project_id=config.project_id)
+        spawned = _track_spawned(monkeypatch)
+        with pytest.raises(RuntimeError) as captured:
+            start_or_attach_sidecar(config)
+        _assert_fixed_parent_error(captured.value)
+        assert len(spawned) == 1
+        assert _wait_for(lambda: spawned[0].returncode is not None, 10.0)
+        assert store.load() is None
+        successor = OwnerLock.acquire(store)
+        successor.close()
+    finally:
+        blocker.close()
+
+
+def test_real_post_commit_admission_failure_leaves_attachable_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _isolated_real_config(monkeypatch, tmp_path)
+    spawned = _track_spawned(monkeypatch)
+    real_receive = runtime_module._RECEIVE_STARTUP_OUTCOME
+
+    def discarding_receive(actual_store, reader, timeout):
+        real_receive(actual_store, reader, timeout)
+        return None
+
+    monkeypatch.setattr(runtime_module, "_RECEIVE_STARTUP_OUTCOME", discarding_receive)
+    try:
+        with pytest.raises(RuntimeError) as captured:
+            start_or_attach_sidecar(config)
+        _assert_fixed_parent_error(captured.value)
+        assert len(spawned) == 1
+        assert spawned[0].returncode is None
+        monkeypatch.setattr(runtime_module, "_RECEIVE_STARTUP_OUTCOME", real_receive)
+        state = start_or_attach_sidecar(config)
+        assert type(state) is SidecarState
+        assert state.pid == spawned[0].pid
+        assert len(spawned) == 1
+        assert probe_sidecar_health(state, 5.0) is True
+    finally:
+        launched = spawned[0].pid if spawned else None
+        if launched is not None:
+            _terminate_and_reap(launched)
+
+
+def test_real_pre_commit_cleanup_leaves_no_child_or_descriptor_behind(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _isolated_real_config(monkeypatch, tmp_path)
+    store = StateStore(config.runtime_root, project_id=config.project_id)
+    tracked = _track_owner_resources(monkeypatch)
+    spawned = _track_spawned(monkeypatch)
+    monkeypatch.setattr(
+        runtime_module,
+        "_NEW_WAIT_ONLY_REAPER",
+        lambda _process: _Reaper(start=RuntimeError("start"), alive_after_start=False),
+    )
+    with pytest.raises(RuntimeError) as captured:
+        start_or_attach_sidecar(config)
+    _assert_fixed_parent_error(captured.value)
+    assert len(spawned) == 1
+    assert spawned[0].returncode is not None
+    for key in ("reader_fd", "writer_fd", "handoff_reader_fd", "handoff_writer_fd"):
+        _assert_fd_closed(tracked[key])
+    assert store.load() is None
+    successor = OwnerLock.acquire(store)
+    successor.close()
