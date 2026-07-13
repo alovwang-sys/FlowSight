@@ -6,7 +6,7 @@
 task_id: P0-024
 release: v1
 task_type: implementation
-status: review
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-013, P0-014, P0-016, P0-019, P0-023, P0-025, TRIAL-004]
@@ -267,7 +267,7 @@ control-plane records; they do not expand the product-code allowlist above.
   child/admission, deadline propagation, error privacy, no shell or listener
   inheritance, no SDK/OTel/store-write/UI code, no unreviewed mutable state,
   and no background work other than the exact one-child wait-only reaper.
-- [ ] Focused tests, `make test-phase0`, `make check`, and the sustained Phase
+- [x] Focused tests, `make test-phase0`, `make check`, and the sustained Phase
   0 gate pass locally and on the macOS/Linux × CPython 3.12/3.13 CI matrix.
 
 ## No-Test Reason
@@ -351,6 +351,12 @@ Implementer:
 
 Adversarial Reviewer:
 
+- Reviewer 1: reviewed single-election/deadline, incumbent admission, child
+  handoff, descriptor ownership, fixed-error privacy, and scope boundaries;
+  all accepted findings were closed before the candidate push.
+- Reviewer 2: the independent closeout review found the factory-construction
+  and malformed-channel cleanup gaps, then re-reviewed the final fix diff and
+  reported no remaining blocker, resource leak, API expansion, or phase creep.
 - The closeout review found two pre-commit cleanup gaps before push: a raised
   `_NEW_CHILD_HANDOFF`/`_NEW_WAIT_ONLY_REAPER` factory could bypass child and
   gate retirement, and a malformed startup-channel result containing exact
@@ -413,11 +419,18 @@ Quality Governor:
 - Task stayed inside its four allowed product files plus this card; commits
   keep `in_progress`/`review` discipline with the evidence recorded as a
   control-plane-only change; no rule drift observed that requires doc updates.
-  Completion is gated only on the macOS/Linux × CPython 3.12/3.13 CI matrix
-  run, which cannot be produced from this environment.
+  Final completion is supported by GitHub Actions run `29292851749`, which
+  passed the macOS/Linux × CPython 3.12/3.13 matrix for candidate `853dc08`.
 
 ## Verifier Evidence
 
+- Command: focused parent-runtime/runtime-config pytest; `make test-phase0`,
+  `make check`, and `make gate-phase0` with the recorded CPython 3.13 editable
+  venv; GitHub Actions `agent-checks` run `29292851749`.
+- Result: passed
+- Notes: focused tests passed 370 cases, Phase 0 passed 2 641 cases, repository
+  checks passed 2 766 cases, the sustained gate passed, and Ubuntu/macOS ×
+  CPython 3.12/3.13 all passed for candidate `853dc08`.
 - Closeout environment: macOS x86_64, CPython 3.13.5. The repository `.venv`
   passed the focused suite but its isolated `flowsight.sidecar` import exceeded
   the unchanged 2-second P0-025 real-child fixture threshold, so final long
@@ -464,9 +477,10 @@ Quality Governor:
   phase0-sustained` → `gate phase0-sustained passed` (after the `make check`
   scope above).
 - Pre-commit hook (staged-path boundary + snapshot `make check-fast`) passed
-  for both product commits `d9e0053` and `effff6b`.
-- Pending before `complete`: the macOS/Linux × CPython 3.12/3.13 CI matrix on
-  push (this environment can only produce Linux/CPython 3.12 evidence).
+  for product commits `d9e0053`, `effff6b`, and closeout fix `853dc08`.
+- GitHub Actions run `29292851749` passed for candidate `853dc08`: Ubuntu
+  CPython 3.12/3.13 and macOS CPython 3.12/3.13 all completed the shared
+  `make check` job successfully.
 
 ## Failure Queue Items
 
