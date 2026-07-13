@@ -124,6 +124,7 @@ EXPECTED_SIDECAR_EXPORTS = (
     "run_sidecar_child",
     "serve_owned_prebound_sidecar_app",
     "serve_prebound_sidecar_app",
+    "start_or_attach_sidecar",
     "verify_ready_startup",
     "wait_for_owner_election",
 )

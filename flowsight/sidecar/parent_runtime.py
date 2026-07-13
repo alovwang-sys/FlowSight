@@ -21,7 +21,8 @@ from .child_bootstrap import (
 from .incumbent_port import admit_configured_incumbent_port
 from .owner_lock import OwnerLock
 from .runtime_config import SidecarRuntimeConfig, prepare_sidecar_runtime_config
-from .startup_channel import StartupWriter
+from .startup_admission import receive_startup_outcome
+from .startup_channel import StartupReader, StartupWriter, open_startup_channel
 from .startup_wait import wait_for_owner_election
 from .state import SidecarState, StateStore
 
@@ -62,6 +63,11 @@ _OWNER_CLOSE: Final = OwnerLock.close
 _PLATFORM_PATH_TYPE: Final = type(Path())
 _ADD_NOTE: Final = BaseException.add_note
 _PARENT_CLEANUP_NOTE: Final = "sidecar parent startup cleanup failed"
+_PARENT_STARTUP_ERROR: Final = "sidecar parent startup failed"
+_OPEN_STARTUP_CHANNEL: Final = open_startup_channel
+_RECEIVE_STARTUP_OUTCOME: Final = receive_startup_outcome
+_READER_TYPE: Final = StartupReader
+_WRITER_TYPE: Final = StartupWriter
 
 type _ConfigSnapshot = tuple[str, str, str, int | None, float]
 
@@ -878,3 +884,306 @@ class _ChildHandoff:
     @property
     def transferred(self) -> bool:
         return self._transferred
+
+
+_NEW_WAIT_ONLY_REAPER: Final = _WaitOnlyReaper
+_NEW_CHILD_HANDOFF: Final = _ChildHandoff
+
+
+def _new_parent_failure(*, cleanup_failed: bool) -> RuntimeError:
+    failure = RuntimeError(_PARENT_STARTUP_ERROR)
+    if cleanup_failed:
+        _note_cleanup_failure(failure)
+    return failure
+
+
+def _raise_parent_failure(*, cleanup_failed: bool = False) -> NoReturn:
+    raise _new_parent_failure(cleanup_failed=cleanup_failed) from None
+
+
+def _consume_startup_outcome(
+    store: StateStore,
+    reader: StartupReader,
+    timeout: float | None,
+) -> tuple[SidecarState | None, bool]:
+    """Finish the one reader ownership boundary, admitting one verified state."""
+
+    outcome: object = None
+    try:
+        with reader:
+            if timeout is not None:
+                outcome = _RECEIVE_STARTUP_OUTCOME(store, reader, timeout)
+    except Exception:
+        return None, False
+    if timeout is None or type(outcome) is not _STATE_TYPE:
+        return None, True
+    return outcome, True
+
+
+def _cleanup_unpublished_child(child: _ChildHandoff) -> bool:
+    cleaned = False
+    control: BaseException | None = None
+    try:
+        cleaned = child.cleanup_before_commit() is True
+    except Exception:
+        cleaned = False
+    except BaseException as error:
+        control = error
+    retired = False
+    if cleaned:
+        try:
+            retired = child.retire_writer_after_reaped_cleanup() is True
+        except Exception:
+            retired = False
+        except BaseException as error:
+            if control is None:
+                control = error
+    if control is not None:
+        _note_cleanup_failure(control)
+        raise control
+    return cleaned and retired
+
+
+def _fail_unpublished(
+    store: StateStore,
+    reader: StartupReader,
+    child: _ChildHandoff,
+    active: BaseException | None,
+) -> NoReturn:
+    cleaned = False
+    cleanup_control: BaseException | None = None
+    try:
+        cleaned = _cleanup_unpublished_child(child)
+    except BaseException as error:
+        cleanup_control = error
+    _unused_state, reader_ok = _consume_startup_outcome(store, reader, None)
+    cleanup_failed = not cleaned or reader_ok is not True
+    if active is not None:
+        if cleanup_failed or cleanup_control is not None:
+            _note_cleanup_failure(active)
+        raise active
+    if cleanup_control is not None:
+        raise cleanup_control
+    _raise_parent_failure(cleanup_failed=cleanup_failed)
+
+
+def _close_unlaunched_owner_resources(
+    store: StateStore,
+    owner: OwnerLock,
+    reader: StartupReader | None,
+    writer: StartupWriter | None,
+    handoff: _ParentHandoffPipe | None,
+) -> bool:
+    closed = True
+    control: BaseException | None = None
+    try:
+        _retire_owner(owner)
+    except Exception:
+        closed = False
+    except BaseException as error:
+        control = error
+        closed = False
+    if writer is not None:
+        try:
+            if _WRITER_CLOSE(writer) is not None:
+                closed = False
+        except Exception:
+            closed = False
+        except BaseException as error:
+            if control is None:
+                control = error
+            closed = False
+    if reader is not None:
+        _unused_state, reader_ok = _consume_startup_outcome(store, reader, None)
+        if reader_ok is not True:
+            closed = False
+    if handoff is not None:
+        try:
+            if handoff.close_uncommitted() is not True:
+                closed = False
+        except Exception:
+            closed = False
+        except BaseException as error:
+            if control is None:
+                control = error
+            closed = False
+    if control is not None:
+        if not closed:
+            _note_cleanup_failure(control)
+        raise control
+    return closed
+
+
+def _admit_launched_child(
+    store: StateStore,
+    owner: OwnerLock,
+    writer: StartupWriter,
+    reader: StartupReader,
+    handoff: _ParentHandoffPipe,
+    process: _Process,
+    deadline: float,
+    observed: float,
+) -> SidecarState:
+    reserved_deadline = deadline - _CLEANUP_GRACE_SECONDS
+    active: BaseException | None = None
+    retired = False
+    try:
+        retired = _retire_parent_child_handles(owner, writer, handoff) is True
+    except Exception:
+        retired = False
+    except BaseException as error:
+        active = error
+    writer_fd: int | None = None
+    taken: object = None
+    try:
+        taken = handoff.take_writer()
+    except Exception:
+        taken = None
+    except BaseException as error:
+        if active is None:
+            active = error
+    if type(taken) is int and taken >= _MIN_DESCRIPTOR:
+        writer_fd = taken
+    child = _NEW_CHILD_HANDOFF(process, writer_fd if writer_fd is not None else -1)
+    transferred = False
+    if active is None and retired and writer_fd is not None:
+        reaper = _NEW_WAIT_ONLY_REAPER(process)
+        try:
+            child.transfer_wait_ownership(reaper)
+            transferred = True
+        except Exception:
+            transferred = False
+        except BaseException as error:
+            active = error
+    fresh: tuple[float, float] | None = None
+    if active is None and transferred:
+        try:
+            fresh = _remaining(reserved_deadline, observed)
+        except Exception:
+            fresh = None
+        except BaseException as error:
+            active = error
+    if active is not None or fresh is None:
+        _fail_unpublished(store, reader, child, active)
+    observed = fresh[0]
+    released = False
+    release_control: BaseException | None = None
+    try:
+        released = child.release_gate() is True
+    except Exception:
+        released = False
+    except BaseException as error:
+        release_control = error
+    if release_control is not None:
+        _consume_startup_outcome(store, reader, None)
+        raise release_control
+    if not released:
+        if child.committed is not True:
+            _fail_unpublished(store, reader, child, None)
+        _consume_startup_outcome(store, reader, None)
+        _raise_parent_failure()
+    admission: tuple[float, float] | None = None
+    try:
+        admission = _remaining(reserved_deadline, observed)
+    except BaseException:
+        _consume_startup_outcome(store, reader, None)
+        raise
+    if admission is None:
+        _consume_startup_outcome(store, reader, None)
+        _raise_parent_failure()
+    state, reader_ok = _consume_startup_outcome(store, reader, admission[1])
+    if state is None or reader_ok is not True:
+        _raise_parent_failure()
+    return state
+
+
+def _launch_owned_child(
+    config: SidecarRuntimeConfig,
+    store: StateStore,
+    owner: OwnerLock,
+    deadline: float,
+    observed: float,
+) -> SidecarState:
+    reserved_deadline = deadline - _CLEANUP_GRACE_SECONDS
+    reader: StartupReader | None = None
+    writer: StartupWriter | None = None
+    handoff: _ParentHandoffPipe | None = None
+    process: _Process | None = None
+    active: BaseException | None = None
+    try:
+        window = _remaining(reserved_deadline, observed)
+        if window is not None:
+            observed = window[0]
+            channel = _OPEN_STARTUP_CHANNEL()
+            if (
+                type(channel) is tuple
+                and len(channel) == 2
+                and type(channel[0]) is _READER_TYPE
+                and type(channel[1]) is _WRITER_TYPE
+            ):
+                reader, writer = channel
+                handoff = _open_parent_handoff()
+        if reader is not None and writer is not None and handoff is not None:
+            window = _remaining(reserved_deadline, observed)
+            if window is not None:
+                observed = window[0]
+                plan = _owner_child_command(config, owner, writer, handoff)
+                if plan is not None:
+                    window = _remaining(reserved_deadline, observed)
+                    if window is not None:
+                        observed = window[0]
+                        process = _spawn_isolated_child(plan)
+    except Exception:
+        process = None
+    except BaseException as error:
+        active = error
+        process = None
+    if process is None or reader is None or writer is None or handoff is None:
+        closed = False
+        close_control: BaseException | None = None
+        try:
+            closed = _close_unlaunched_owner_resources(store, owner, reader, writer, handoff)
+        except BaseException as error:
+            close_control = error
+        if active is not None:
+            if not closed:
+                _note_cleanup_failure(active)
+            raise active
+        if close_control is not None:
+            raise close_control
+        _raise_parent_failure(cleanup_failed=not closed)
+    return _admit_launched_child(
+        store,
+        owner,
+        writer,
+        reader,
+        handoff,
+        process,
+        deadline,
+        observed,
+    )
+
+
+def start_or_attach_sidecar(config: SidecarRuntimeConfig) -> SidecarState:
+    """Attach one healthy compatible sidecar or start and admit exactly one child."""
+
+    if type(config) is not _CONFIG_TYPE:
+        raise TypeError("config must be an exact SidecarRuntimeConfig")
+    prepared = _prepare_election(config)
+    if prepared is None:
+        _raise_parent_failure()
+    exact_config, store, deadline, observed = prepared
+    elected: tuple[SidecarState | OwnerLock, float] | None = None
+    try:
+        elected = _elect_once(store, deadline, observed)
+    except Exception:
+        elected = None
+    if elected is None:
+        _raise_parent_failure()
+    outcome, observed = elected
+    if type(outcome) is _STATE_TYPE:
+        admitted = _admit_incumbent(exact_config, outcome, deadline, observed)
+        if admitted is None:
+            _raise_parent_failure()
+        return admitted
+    return _launch_owned_child(exact_config, store, cast(OwnerLock, outcome), deadline, observed)

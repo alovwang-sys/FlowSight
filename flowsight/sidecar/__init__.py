@@ -19,6 +19,7 @@ from .listener import (
     bind_loopback_listener,
 )
 from .owner_lock import OwnerLock, OwnerLockError, OwnerLockErrorCode
+from .parent_runtime import start_or_attach_sidecar
 from .runtime_config import SidecarRuntimeConfig, prepare_sidecar_runtime_config
 from .server_runtime import (
     serve_owned_prebound_sidecar_app,
@@ -118,6 +119,7 @@ __all__ = [
     "run_sidecar_child",
     "serve_owned_prebound_sidecar_app",
     "serve_prebound_sidecar_app",
+    "start_or_attach_sidecar",
     "verify_ready_startup",
     "wait_for_owner_election",
 ]
