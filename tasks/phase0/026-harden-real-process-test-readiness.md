@@ -6,7 +6,7 @@
 task_id: P0-026
 release: v1
 task_type: tooling
-status: review
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-025, TRIAL-004]
@@ -85,7 +85,7 @@ The current task card and its verifier evidence are always writable control-plan
       without changing the behavior-specific lease/shutdown/request deadlines.
 - [x] Focused P0-025 and TRIAL-004 regressions pass with no leaked child,
       Uvicorn, pytest, or sidecar process.
-- [ ] `make test-phase0`, `make check`, and `make gate-phase0` pass in supported
+- [x] `make test-phase0`, `make check`, and `make gate-phase0` pass in supported
       verification environments.
 
 ## No-Test Reason
@@ -153,9 +153,12 @@ Quality Governor:
 
 - Command: six original failing nodes; full three-module focused suite; Ruff
   format/lint; agent-system validator; process-leak inspection.
-- Result: focused verification passed; repository gates pending.
-- Notes: The six original nodes passed in 6.11 seconds and the full 134-test
-  focused suite passed in 40.37 seconds on the still-throttled host. No pytest,
+- Result: passed
+- Notes: The six original nodes passed in 6.11 seconds; after the review fix,
+  the full 134-test focused suite passed in 42.13 seconds. `make test-phase0`
+  passed 2,641 tests, `make check` passed 2,766 tests, and `make gate-phase0`
+  passed the same suite plus `phase0-sustained`. Push run `29296141027` and PR
+  run `29296143012` both passed Ubuntu/macOS x CPython 3.12/3.13. No pytest,
   Uvicorn, spike sidecar, or production sidecar process remained.
 
 ## Failure Queue Items
