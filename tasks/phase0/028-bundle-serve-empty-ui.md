@@ -6,7 +6,7 @@
 task_id: P0-028
 release: v1
 task_type: implementation
-status: review
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-015, P0-027]
@@ -322,10 +322,9 @@ Quality Governor:
 
 - Confirmed one Phase 0 slice, complete prerequisites and gate, allowlisted
   changes, no Phase 1+ UI behavior, and no modification of the unrelated
-  `agent-system-starter/` directory. Final P0/P1/P2 = 0 and GO. Because no Git
-  action was authorized, the card remains `review`; before any product staging,
-  land this card alone, then stage the product diff, and complete the card in a
-  later control-plane-only evidence commit.
+  `agent-system-starter/` directory. Final P0/P1/P2 = 0 and GO. The task card
+  landed alone before the implementation commit; implementation staging then
+  passed the indexed active-task allowlist for exactly 19 path records.
 
 ## Verifier Evidence
 
@@ -345,8 +344,13 @@ Quality Governor:
   targeted retry passed without any threshold or test change. The final
   `make gate-phase0` reran the complete check successfully with 2,777/2,777
   Python tests plus 4/4 UI packaging tests, then passed `phase0-sustained`.
-  This is local macOS CPython 3.13.5 evidence and does not claim complete Phase 0
-  product acceptance or a CI platform matrix.
+  The clean-wheel probe proved exact newly-built-wheel provenance, installed
+  package/resource origins, Node-free runtime, real Uvicorn loopback serving on
+  port 0, referenced-asset fetches, write rejection, byte equality, and bounded
+  shutdown. FS-031 now records `command:make test-wheel-ui` with
+  `tests/packaging/test_wheel_ui.py`. The reviewed implementation is commit
+  `957bfad`. This is local macOS CPython 3.13.5 evidence and does not claim
+  complete Phase 0 product acceptance or a CI platform matrix.
 
 ## Failure Queue Items
 
