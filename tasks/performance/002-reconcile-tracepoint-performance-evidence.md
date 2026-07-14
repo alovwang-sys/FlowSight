@@ -6,7 +6,7 @@
 task_id: PERF-002
 release: v1
 task_type: docs
-status: review
+status: complete
 primary_phase: phase4
 impacted_phases: []
 depends_on: [PERF-001]
@@ -159,9 +159,9 @@ Quality Governor:
   thresholds are byte-identical from `41d0c3b` through the P0-026 candidate.
   `make test-trial005` passed 36 tests in 11.20 seconds; `make check` passed
   2766 tests in 116.31 seconds; `make gate-phase4` passed 2766 tests in 118.55
-  seconds plus the `phase4-tracepoint` gate. Runs `29296141027` and
-  `29296143012` passed all eight matrix jobs; PERF-002 candidate CI remains
-  pending.
+  seconds plus the `phase4-tracepoint` gate. P0-026 runs `29296141027` and
+  `29296143012` passed all eight matrix jobs. PERF-002 candidate `8ad8154`
+  passed all eight push/PR matrix jobs in runs `29296912434` and `29296914242`.
 
 ## Failure Queue Items
 
