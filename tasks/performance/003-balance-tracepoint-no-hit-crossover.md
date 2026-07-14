@@ -95,7 +95,7 @@ The current task card and its verifier evidence are always writable control-plan
       still fails after order balancing.
 - [x] All six numeric maxima remain unchanged and the new digest/evidence are
       consistent in the benchmark, RESULT, and MVP design.
-- [ ] FSQ-0001 is marked fixed only after the patch and verified only after the
+- [x] FSQ-0001 is marked fixed only after the patch and verified only after the
       focused, repository, Phase 4, push, and PR gates pass.
 - [x] CPython 3.12/3.13 focused tests, `make check`, and `make gate-phase4` pass.
 
@@ -148,7 +148,8 @@ Adversarial Reviewer:
   checksums, plus three P2 evidence/status issues. Four-checksum equality,
   mismatch/orchestration tests, calibration wording, queue evidence, and
   pre-CI decision state were corrected. A second P1 correctly rejected stale
-  pre-fix verification; the entire fixed-digest sequence was rerun.
+  pre-fix verification; the entire fixed-digest sequence was rerun. Final
+  re-review found no P0/P1/P2.
 - Reviewer 2: waived unless the first review finds a distinct statistics or
   false-green risk.
 
@@ -167,8 +168,8 @@ Quality Governor:
   `/tmp/flowsight-trial004-py312/bin/python -m pytest tests/spikes/test_tracepoint_backend.py`;
   `make test-trial005`; `make check`; `make gate-phase4`;
   `git diff --check`; `python3 scripts/validate_agent_system.py`; digest/component
-  comparison; candidate CI pending.
-- Result: local gates passed; candidate CI pending
+  comparison; candidate push/PR CI inspection.
+- Result: passed
 - Notes: CPython 3.13.5 and 3.12.11 passed 41 focused tests in 14.05 and 15.51
   seconds. `make test-trial005` passed 41 tests in 14.66 seconds; `make check`
   passed 2771 tests in 120.22 seconds; `make gate-phase4` passed 2771 tests in
@@ -176,8 +177,9 @@ Quality Governor:
   Digest is
   `sha256:3bcbcc7d7f6ae1b14ef0672994e00f45ad42b2c73827e451a98fd4414380ec9d`;
   backend and safe-summary component digests are unchanged. `git diff --check`
-  and agent-system validation passed. FSQ-0001 remains `fixed` until candidate
-  push and PR matrices pass.
+  and agent-system validation passed. Candidate
+  `587964c958a44749629e60ab64b77689d4764540` passed all eight jobs across push
+  run `29298619075` and PR run `29298620645`; FSQ-0001 is verified.
 
 ## Failure Queue Items
 

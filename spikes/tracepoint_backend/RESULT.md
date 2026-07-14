@@ -254,7 +254,7 @@ Ubuntu/macOS × CPython 3.12/3.13 on
   `86498180800` all passed. The historical run above does not satisfy or
   substitute for this v3 evidence.
 
-## PERF-003 Schema v4 Candidate Evidence
+## PERF-003 Schema v4 Final Evidence
 
 - Digest:
   `sha256:3bcbcc7d7f6ae1b14ef0672994e00f45ad42b2c73827e451a98fd4414380ec9d`.
@@ -276,5 +276,6 @@ Ubuntu/macOS × CPython 3.12/3.13 on
   in 14.66 seconds; `make check` passed 2771 tests in 120.22 seconds;
   `make gate-phase4` passed 2771 tests in 119.10
   seconds plus the `phase4-tracepoint` gate.
-- Candidate push/PR matrix evidence is pending. FSQ-0001 remains `fixed`, not
-  `verified`, until that matrix passes.
+- Candidate commit `587964c958a44749629e60ab64b77689d4764540` passed all four
+  Ubuntu/macOS x CPython 3.12/3.13 jobs in push run `29298619075` and all four
+  jobs in PR run `29298620645`. FSQ-0001 is verified.
