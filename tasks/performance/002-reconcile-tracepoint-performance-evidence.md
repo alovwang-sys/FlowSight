@@ -163,6 +163,16 @@ Quality Governor:
   `29296143012` passed all eight matrix jobs. PERF-002 candidate `8ad8154`
   passed all eight push/PR matrix jobs in runs `29296912434` and `29296914242`.
 
+## Post-Completion Addendum
+
+- The docs-only completion SHA later reproduced FSQ-0001 in PR run
+  `29297091756`: Ubuntu CPython 3.13 observed `1.2023160302028435` against the
+  `1.15` no-hit median maximum. The same SHA's push run `29297089621` passed all
+  four jobs.
+- This recurrence invalidated PERF-002's `wontfix` disposition without
+  invalidating its recorded commands. PERF-003 reopened FSQ-0001 and supersedes
+  schema v3's majority-order no-hit sample construction.
+
 ## Failure Queue Items
 
 - FSQ-0001

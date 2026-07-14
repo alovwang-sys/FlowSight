@@ -171,6 +171,8 @@ Quality Governor:
 
 - FSQ-0001 was opened after PERF-001 completed when an unchanged docs-only
   commit produced one `active_no_hit` ratio failure. PERF-002 classified it as
-  `wontfix`: the immutable guard, digest, and thresholds remain unchanged, no
-  product regression was found, and final push/PR matrices did not reproduce
-  the shared-runner variance signature.
+  `wontfix` after an unchanged matrix did not reproduce it. PR run
+  `29297091756` later reproduced the same signature at `1.2023160302028435`,
+  invalidating that disposition. PERF-003 supersedes only schema v3's 11 AB/10
+  BA no-hit sample construction; PERF-001's dual-clock decision, six numeric
+  maxima, architecture go decision, and supported runtime matrix remain.

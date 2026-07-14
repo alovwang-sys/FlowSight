@@ -60,17 +60,29 @@ slot. Consequently, v1 must not silently fall back to `sys.settrace`.
 
 ## Frozen Benchmark
 
-PERF-001 supersedes only the timing decision contract. Schema v3 harness
-identity is
-`sha256:e3273869041f3b9bc8d4d65977a04e64f87e0c23268aa88586c7562d8e18e12e`.
+PERF-003 supersedes only the schema-v3 no-hit aggregation. The current schema-v4
+harness identity is
+`sha256:3bcbcc7d7f6ae1b14ef0672994e00f45ad42b2c73827e451a98fd4414380ec9d`.
 The digest covers the complete benchmark module, backend module, and shared
-safe-summary module, including both clocks, orchestration, aggregation,
-constants, and budgets. The harness uses five warmups, 21 alternating
-baseline/active pairs, nearest-rank p95, at least 50 ms current-thread CPU
-calibration for the no-hit workload, 32,768 calls per
-configured-but-unscoped sample, and 1,024 calls per captured-hit sample. GC is
-disabled uniformly during measurement and restored afterward. Backend startup
-and cleanup remain outside each timed sample.
+safe-summary module. Its component digests are benchmark
+`sha256:94197663c071dde43b877e0815fb4d579977ec8328ef8e1a56009b7afa1347b1`,
+backend `sha256:ee95f9263fe94984af8efcb193b66a5c08ed3b3d22995ba7d576fb3cf2075446`,
+and safe-summary
+`sha256:d62bca6b3c1eaa8f7b22d7734c8ac3b656078517ded12e0315ded45b693a869a`.
+Only the benchmark component changed from schema v3.
+
+The harness uses five warmups and 21 effective samples. Each no-hit sample is a
+same-seed symmetric four-leg ABBA or BAAB block built from one AB and one BA
+pair. Its decision ratio is `(active_1 + active_2) / (baseline_1 + baseline_2)`;
+all four raw legs remain in the report. This cancels reciprocal position or CPU
+frequency bias inside each sample without cancelling a common active-side CPU
+factor. Configured-but-unscoped and captured-hit cases retain their 21
+alternating two-leg pairs. Nearest-rank p95, at least 50 ms current-thread CPU
+calibration selects the shared iteration count used by every no-hit leg,
+32,768 calls per configured-but-unscoped sample,
+and 1,024 calls per captured-hit sample remain unchanged. GC is disabled
+uniformly during measurement and restored afterward. Backend startup and
+cleanup remain outside each timed leg.
 
 Every pair records two explicitly named clocks. `thread_time_ns` measures CPU
 consumed by the current benchmark thread and is the only calibration and budget
@@ -78,7 +90,7 @@ input. `perf_counter_ns` remains a monotonic wall diagnostic that includes
 scheduler wait and is never read by a budget check. Clock implementation,
 resolution, monotonicity, and adjustability are emitted in report metadata.
 
-One serial local macOS run per runtime produced:
+Historical schema-v3 serial local macOS runs produced:
 
 | Runtime and case | Median thread-CPU | p95 thread-CPU | Median wall diagnostic | p95 wall diagnostic |
 | --- | ---: | ---: | ---: | ---: |
@@ -98,29 +110,35 @@ thread CPU:
 | Configured code outside a request | 15,000 thread-CPU ns/call | 25,000 thread-CPU ns/call |
 | Captured hit | 200,000 thread-CPU ns/call | 300,000 thread-CPU ns/call |
 
-Both local runtimes pass all six checks. The exact sink invariant remains:
+Both historical schema-v3 local runtimes passed all six checks. The schema-v4
+exact sink invariant remains:
 all 26,624 expected scoped hits are observed, while calibration,
 unconfigured-code, and configured-but-unscoped cases emit zero snapshots.
 These limits are synchronous callback/hit CPU regression guards, not the Phase
 5 10 ms wall-clock request SLA, not a production queue/transport budget, and
 not permission to multiply the 300 µs ceiling by an arbitrary hit count.
 
-The schema v2 digest
+The schema-v2 digest
 `sha256:3993fd75a45b1e14be3e04d56534928cadc928a92dce5af6473398e5c14c30e9`
 and GitHub Actions run `29114712575` remain historical TRIAL-005 evidence, but
-they prove the old absolute-wall timing predicate and cannot prove schema v3.
+they prove the old absolute-wall timing predicate and cannot prove schema v3 or
+v4.
 Three fresh-process serial v2 reproductions at host load 26--36/12 logical CPUs
 kept both paired no-hit ratios within budget while configured-unscoped median
 rose to 19.4--21.8 µs and captured-hit median to 271--385 µs. That isolated
 scheduler-sensitive wall time as the false-failure source without changing the
 tracepoint backend or thresholds. At candidate submission the schema v3
 four-job immutable matrix was pending. It subsequently passed in run
-`29135246585`; see PERF-001 Schema v3 Final Evidence below.
+`29135246585`; see PERF-001 Schema v3 Final Evidence below. Schema-v3 digest
+`sha256:e3273869041f3b9bc8d4d65977a04e64f87e0c23268aa88586c7562d8e18e12e`
+and its successful matrix remain historical evidence, but the later repeated
+FSQ-0001 majority-order failures mean they cannot prove schema v4.
 
 Benchmark suites and evidence runs must still execute sequentially. Any budget,
-decision-clock, workload, backend, or serializer change produces a new digest
-and requires separate review. Thread CPU excludes descheduling but still
-includes real execution cost; it does not expand support to other threads,
+decision clock, sample construction, workload, backend, or serializer change
+produces a new digest and requires separate review. Thread CPU excludes
+descheduling but still includes real execution cost; symmetric blocks address
+only reciprocal leg-order bias. They do not expand support to other threads,
 Windows, free-threaded builds, or additional Python versions.
 
 ## Lifecycle and Isolation Contract
@@ -235,3 +253,28 @@ Ubuntu/macOS × CPython 3.12/3.13 on
   `86498180788`, Ubuntu 3.13 job `86498180825`, and macOS 3.13 job
   `86498180800` all passed. The historical run above does not satisfy or
   substitute for this v3 evidence.
+
+## PERF-003 Schema v4 Candidate Evidence
+
+- Digest:
+  `sha256:3bcbcc7d7f6ae1b14ef0672994e00f45ad42b2c73827e451a98fd4414380ec9d`.
+- Component digests: benchmark
+  `sha256:94197663c071dde43b877e0815fb4d579977ec8328ef8e1a56009b7afa1347b1`,
+  backend `sha256:ee95f9263fe94984af8efcb193b66a5c08ed3b3d22995ba7d576fb3cf2075446`,
+  and safe-summary
+  `sha256:d62bca6b3c1eaa8f7b22d7734c8ac3b656078517ded12e0315ded45b693a869a`.
+- The same schema-v3 FSQ-0001 signature occurred at `1.3710400499700648`
+  in run `29166073709` and `1.2023160302028435` in PR run `29297091756`.
+  The latter SHA simultaneously passed the full push matrix in run
+  `29297089621`, isolating the 11 AB/10 BA majority-order statistic.
+- Deterministic tests prove reciprocal AB/BA bias makes the old 21-pair median
+  report `1.2` with no real overhead, while each schema-v4 four-leg block
+  reports `1.0`. A common active-side factor of `1.16` survives the same
+  transformation and fails the unchanged `1.15` median maximum.
+- CPython 3.13.5 and isolated CPython 3.12.11 each passed all 41 focused tests
+  in 14.05 and 15.51 seconds respectively. `make test-trial005` passed 41 tests
+  in 14.66 seconds; `make check` passed 2771 tests in 120.22 seconds;
+  `make gate-phase4` passed 2771 tests in 119.10
+  seconds plus the `phase4-tracepoint` gate.
+- Candidate push/PR matrix evidence is pending. FSQ-0001 remains `fixed`, not
+  `verified`, until that matrix passes.

@@ -30,7 +30,7 @@ from .backend import (
     TracepointSpec,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 WARMUP_REPEATS = 5
 PAIRED_REPEATS = 21
 CALIBRATION_MIN_THREAD_CPU_NS = 50_000_000
@@ -97,6 +97,7 @@ class _PairResult:
     iterations: int
     baseline: _TimedResult
     active: _TimedResult
+    legs: tuple[_PairResult, ...] = ()
 
     def as_json(self) -> dict[str, object]:
         baseline_thread_cpu_ns_per_call = self.baseline.thread_cpu_elapsed_ns / self.iterations
@@ -105,7 +106,7 @@ class _PairResult:
             self.baseline.monotonic_wall_elapsed_ns / self.iterations
         )
         active_monotonic_wall_ns_per_call = self.active.monotonic_wall_elapsed_ns / self.iterations
-        return {
+        result: dict[str, object] = {
             "repeat": self.repeat,
             "order": self.order,
             "iterations": self.iterations,
@@ -130,6 +131,9 @@ class _PairResult:
                 active_monotonic_wall_ns_per_call - baseline_monotonic_wall_ns_per_call
             ),
         }
+        if self.legs:
+            result["legs"] = [leg.as_json() for leg in self.legs]
+        return result
 
 
 class _SinkCounter:
@@ -240,12 +244,13 @@ def _measure_pair(
     iterations: int,
     repeat: int,
     request_prefix: str | None,
+    order: str | None = None,
 ) -> _PairResult:
     seed = (repeat + 1) * _PAIR_SEED_MULTIPLIER
     backend = _new_backend(spec, sink)
     request_trace_id = None if request_prefix is None else f"{request_prefix}-{repeat}"
-    if repeat % 2 == 0:
-        order = "AB"
+    selected_order = ("AB" if repeat % 2 == 0 else "BA") if order is None else order
+    if selected_order == "AB":
         baseline = _time_batch(workload, iterations, seed)
         active = _active_sample(
             backend,
@@ -254,26 +259,108 @@ def _measure_pair(
             seed,
             request_trace_id,
         )
+    elif selected_order == "BA":
+        active = _active_sample(
+            backend,
+            workload,
+            iterations,
+            seed,
+            request_trace_id,
+        )
+        baseline = _time_batch(workload, iterations, seed)
     else:
-        order = "BA"
-        active = _active_sample(
-            backend,
-            workload,
-            iterations,
-            seed,
-            request_trace_id,
-        )
-        baseline = _time_batch(workload, iterations, seed)
+        raise ValueError("benchmark pair order must be AB or BA")
 
     if baseline.checksum != active.checksum:
         raise RuntimeError("baseline and active benchmark workloads diverged")
     return _PairResult(
         repeat=repeat,
-        order=order,
+        order=selected_order,
         iterations=iterations,
         baseline=baseline,
         active=active,
     )
+
+
+def _combine_crossover_pairs(first: _PairResult, second: _PairResult) -> _PairResult:
+    if first.repeat != second.repeat:
+        raise ValueError("crossover pair repeats must match")
+    if first.iterations != second.iterations:
+        raise ValueError("crossover pair iterations must match")
+    if (first.order, second.order) not in {("AB", "BA"), ("BA", "AB")}:
+        raise ValueError("crossover block must contain one AB and one BA pair")
+    for pair in (first, second):
+        if pair.baseline.checksum != pair.active.checksum:
+            raise ValueError("crossover pair workloads must match")
+    checksums = {
+        first.baseline.checksum,
+        first.active.checksum,
+        second.baseline.checksum,
+        second.active.checksum,
+    }
+    if len(checksums) != 1:
+        raise ValueError("crossover block legs must use the same workload seed")
+    checksum = first.baseline.checksum
+
+    baseline = _TimedResult(
+        thread_cpu_elapsed_ns=(
+            first.baseline.thread_cpu_elapsed_ns + second.baseline.thread_cpu_elapsed_ns
+        ),
+        monotonic_wall_elapsed_ns=(
+            first.baseline.monotonic_wall_elapsed_ns + second.baseline.monotonic_wall_elapsed_ns
+        ),
+        checksum=checksum,
+    )
+    active = _TimedResult(
+        thread_cpu_elapsed_ns=(
+            first.active.thread_cpu_elapsed_ns + second.active.thread_cpu_elapsed_ns
+        ),
+        monotonic_wall_elapsed_ns=(
+            first.active.monotonic_wall_elapsed_ns + second.active.monotonic_wall_elapsed_ns
+        ),
+        checksum=checksum,
+    )
+    if baseline.checksum != active.checksum:
+        raise ValueError("crossover block workloads must match")
+    return _PairResult(
+        repeat=first.repeat,
+        order=first.order + second.order,
+        iterations=first.iterations + second.iterations,
+        baseline=baseline,
+        active=active,
+        legs=(first, second),
+    )
+
+
+def _measure_crossover_block(
+    *,
+    spec: TracepointSpec,
+    sink: _SinkCounter,
+    workload: Workload,
+    iterations: int,
+    repeat: int,
+    request_prefix: str | None,
+) -> _PairResult:
+    first_order, second_order = ("AB", "BA") if repeat % 2 == 0 else ("BA", "AB")
+    first = _measure_pair(
+        spec=spec,
+        sink=sink,
+        workload=workload,
+        iterations=iterations,
+        repeat=repeat,
+        request_prefix=request_prefix,
+        order=first_order,
+    )
+    second = _measure_pair(
+        spec=spec,
+        sink=sink,
+        workload=workload,
+        iterations=iterations,
+        repeat=repeat,
+        request_prefix=request_prefix,
+        order=second_order,
+    )
+    return _combine_crossover_pairs(first, second)
 
 
 def _calibrate_no_hit(
@@ -639,7 +726,7 @@ def run_benchmark() -> dict[str, object]:
             )
 
         no_hit_pairs = [
-            _measure_pair(
+            _measure_crossover_block(
                 spec=spec,
                 sink=sink,
                 workload=_no_hit_workload,
@@ -706,6 +793,8 @@ def run_benchmark() -> dict[str, object]:
             "warmup_repeats": WARMUP_REPEATS,
             "paired_repeats": PAIRED_REPEATS,
             "pair_order": "alternating AB/BA; A=baseline, B=active",
+            "no_hit_sample_order": "alternating ABBA/BAAB four-leg crossover blocks",
+            "no_hit_legs_per_sample": 4,
             "calibration_min_thread_cpu_ns": CALIBRATION_MIN_THREAD_CPU_NS,
             "calibration_initial_iterations": CALIBRATION_INITIAL_ITERATIONS,
             "hit_iterations": HIT_ITERATIONS,

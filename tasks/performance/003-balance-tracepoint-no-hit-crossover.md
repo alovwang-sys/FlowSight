@@ -6,7 +6,7 @@
 task_id: PERF-003
 release: v1
 task_type: spike
-status: in_progress
+status: review
 primary_phase: phase4
 impacted_phases: []
 depends_on: [PERF-002]
@@ -87,17 +87,17 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] Schema v4 reports 21 ABBA/BAAB no-hit blocks, their four raw legs, and the
+- [x] Schema v4 reports 21 ABBA/BAAB no-hit blocks, their four raw legs, and the
       block ratios used by the existing median and nearest-rank p95 checks.
-- [ ] A deterministic reciprocal-drift test proves the old raw median can fail
+- [x] A deterministic reciprocal-drift test proves the old raw median can fail
       while the order-balanced estimator passes at no real overhead.
-- [ ] A deterministic test proves a real common active-side factor above `1.15`
+- [x] A deterministic test proves a real common active-side factor above `1.15`
       still fails after order balancing.
-- [ ] All six numeric maxima remain unchanged and the new digest/evidence are
+- [x] All six numeric maxima remain unchanged and the new digest/evidence are
       consistent in the benchmark, RESULT, and MVP design.
 - [ ] FSQ-0001 is marked fixed only after the patch and verified only after the
       focused, repository, Phase 4, push, and PR gates pass.
-- [ ] CPython 3.12/3.13 focused tests, `make check`, and `make gate-phase4` pass.
+- [x] CPython 3.12/3.13 focused tests, `make check`, and `make gate-phase4` pass.
 
 ## No-Test Reason
 
@@ -139,24 +139,45 @@ schema-v4 order balancing rejects real CPU regressions without majority-order fa
 ## Role Outputs
 
 Implementer:
-- Pending.
+- Added same-seed alternating ABBA/BAAB no-hit blocks, preserved raw leg
+  evidence, advanced the digest to schema v4, and synchronized design/result
+  evidence without changing backend or product code.
 
 Adversarial Reviewer:
-- Reviewer 1: Pending.
+- Reviewer 1: Found one P1 because XOR could accept different cross-pair
+  checksums, plus three P2 evidence/status issues. Four-checksum equality,
+  mismatch/orchestration tests, calibration wording, queue evidence, and
+  pre-CI decision state were corrected. A second P1 correctly rejected stale
+  pre-fix verification; the entire fixed-digest sequence was rerun.
 - Reviewer 2: waived unless the first review finds a distinct statistics or
   false-green risk.
 
 Fixer:
-- Pending.
+- Reopened FSQ-0001 after the repeated signature and replaced the
+  majority-order sample construction without changing any numeric maximum.
 
 Quality Governor:
-- Pending.
+- The diff is Phase 4 benchmark/test/evidence only. It does not change the
+  supported runtime matrix, Phase 1 telemetry, public API, frontend, backend,
+  safe-summary behavior, product code, or CI matrix.
 
 ## Verifier Evidence
 
-- Command: Pending.
-- Result: Pending.
-- Notes: Pending.
+- Command: `.venv/bin/python -m pytest tests/spikes/test_tracepoint_backend.py`;
+  `/tmp/flowsight-trial004-py312/bin/python -m pytest tests/spikes/test_tracepoint_backend.py`;
+  `make test-trial005`; `make check`; `make gate-phase4`;
+  `git diff --check`; `python3 scripts/validate_agent_system.py`; digest/component
+  comparison; candidate CI pending.
+- Result: local gates passed; candidate CI pending
+- Notes: CPython 3.13.5 and 3.12.11 passed 41 focused tests in 14.05 and 15.51
+  seconds. `make test-trial005` passed 41 tests in 14.66 seconds; `make check`
+  passed 2771 tests in 120.22 seconds; `make gate-phase4` passed 2771 tests in
+  119.10 seconds plus the Phase 4 gate.
+  Digest is
+  `sha256:3bcbcc7d7f6ae1b14ef0672994e00f45ad42b2c73827e451a98fd4414380ec9d`;
+  backend and safe-summary component digests are unchanged. `git diff --check`
+  and agent-system validation passed. FSQ-0001 remains `fixed` until candidate
+  push and PR matrices pass.
 
 ## Failure Queue Items
 

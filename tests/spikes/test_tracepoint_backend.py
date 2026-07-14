@@ -40,7 +40,7 @@ from spikes.tracepoint_backend.benchmark import (
 from spikes.tracepoint_backend.settrace_probe import run_naive_settrace_overlap_probe
 
 _EXPECTED_WORKLOAD_DIGEST = (
-    "sha256:e3273869041f3b9bc8d4d65977a04e64f87e0c23268aa88586c7562d8e18e12e"
+    "sha256:3bcbcc7d7f6ae1b14ef0672994e00f45ad42b2c73827e451a98fd4414380ec9d"
 )
 
 
@@ -1255,6 +1255,222 @@ def _all_failing_performance_budget() -> dict[str, object]:
     )
 
 
+def _synthetic_crossover_pair(
+    *,
+    repeat: int,
+    order: str,
+    baseline_thread_cpu_ns: int,
+    active_thread_cpu_ns: int,
+    iterations: int = 1,
+    checksum: int | None = None,
+) -> benchmark_module._PairResult:
+    selected_checksum = repeat + 1 if checksum is None else checksum
+    return benchmark_module._PairResult(
+        repeat=repeat,
+        order=order,
+        iterations=iterations,
+        baseline=benchmark_module._TimedResult(
+            thread_cpu_elapsed_ns=baseline_thread_cpu_ns,
+            monotonic_wall_elapsed_ns=baseline_thread_cpu_ns,
+            checksum=selected_checksum,
+        ),
+        active=benchmark_module._TimedResult(
+            thread_cpu_elapsed_ns=active_thread_cpu_ns,
+            monotonic_wall_elapsed_ns=active_thread_cpu_ns,
+            checksum=selected_checksum,
+        ),
+    )
+
+
+def _synthetic_crossover_block(
+    *,
+    repeat: int,
+    active_factor_numerator: int,
+    active_factor_denominator: int,
+) -> benchmark_module._PairResult:
+    scale = 1_000_000
+    order_bias_numerator = 6
+    order_bias_denominator = 5
+    ab = _synthetic_crossover_pair(
+        repeat=repeat,
+        order="AB",
+        baseline_thread_cpu_ns=scale,
+        active_thread_cpu_ns=(
+            scale
+            * active_factor_numerator
+            * order_bias_numerator
+            // active_factor_denominator
+            // order_bias_denominator
+        ),
+    )
+    ba = _synthetic_crossover_pair(
+        repeat=repeat,
+        order="BA",
+        baseline_thread_cpu_ns=scale * order_bias_numerator // order_bias_denominator,
+        active_thread_cpu_ns=(scale * active_factor_numerator // active_factor_denominator),
+    )
+    first, second = (ab, ba) if repeat % 2 == 0 else (ba, ab)
+    return benchmark_module._combine_crossover_pairs(first, second)
+
+
+def test_symmetric_no_hit_blocks_cancel_reciprocal_order_bias() -> None:
+    legacy_pairs = tuple(
+        _synthetic_crossover_pair(
+            repeat=repeat,
+            order="AB" if repeat % 2 == 0 else "BA",
+            baseline_thread_cpu_ns=1_000_000 if repeat % 2 == 0 else 1_200_000,
+            active_thread_cpu_ns=1_200_000 if repeat % 2 == 0 else 1_000_000,
+        )
+        for repeat in range(PAIRED_REPEATS)
+    )
+    legacy_case = benchmark_module._case_json(legacy_pairs)
+    assert legacy_case["median"]["paired_thread_cpu_ratio_active_over_baseline"] == 1.2
+    assert (
+        legacy_case["median"]["paired_thread_cpu_ratio_active_over_baseline"]
+        > benchmark_module.NO_HIT_MEDIAN_RATIO_MAX
+    )
+
+    blocks = tuple(
+        _synthetic_crossover_block(
+            repeat=repeat,
+            active_factor_numerator=1,
+            active_factor_denominator=1,
+        )
+        for repeat in range(PAIRED_REPEATS)
+    )
+    balanced_case = benchmark_module._case_json(blocks)
+    assert balanced_case["raw"]["order"] == [
+        "ABBA" if repeat % 2 == 0 else "BAAB" for repeat in range(PAIRED_REPEATS)
+    ]
+    assert balanced_case["median"]["paired_thread_cpu_ratio_active_over_baseline"] == 1.0
+    assert balanced_case["p95_nearest_rank"]["paired_thread_cpu_ratio_active_over_baseline"] == 1.0
+    serialized_blocks = balanced_case["pairs"]
+    assert isinstance(serialized_blocks, list)
+    assert all(
+        isinstance(block, dict) and isinstance(block.get("legs"), list) and len(block["legs"]) == 2
+        for block in serialized_blocks
+    )
+    budget = benchmark_module._performance_budget(
+        balanced_case,
+        _synthetic_budget_case(median_active_ns=1.0, p95_active_ns=1.0),
+        _synthetic_budget_case(median_active_ns=1.0, p95_active_ns=1.0),
+    )
+    assert budget["passed"] is True
+
+
+def test_symmetric_no_hit_blocks_preserve_real_active_overhead() -> None:
+    blocks = tuple(
+        _synthetic_crossover_block(
+            repeat=repeat,
+            active_factor_numerator=29,
+            active_factor_denominator=25,
+        )
+        for repeat in range(PAIRED_REPEATS)
+    )
+    no_hit_case = benchmark_module._case_json(blocks)
+    observed = no_hit_case["median"]["paired_thread_cpu_ratio_active_over_baseline"]
+    assert observed == pytest.approx(1.16)
+    budget = benchmark_module._performance_budget(
+        no_hit_case,
+        _synthetic_budget_case(median_active_ns=1.0, p95_active_ns=1.0),
+        _synthetic_budget_case(median_active_ns=1.0, p95_active_ns=1.0),
+    )
+    checks = budget["checks"]
+    median_check = checks["active_no_hit.median.paired_thread_cpu_ratio_active_over_baseline"]
+    assert budget["passed"] is False
+    assert median_check["observed"] == pytest.approx(1.16)
+    assert median_check["maximum"] == 1.15
+    assert median_check["passed"] is False
+
+
+def test_crossover_block_rejects_missing_or_mismatched_legs() -> None:
+    ab = _synthetic_crossover_pair(
+        repeat=0,
+        order="AB",
+        baseline_thread_cpu_ns=1_000,
+        active_thread_cpu_ns=1_000,
+    )
+    other_ab = _synthetic_crossover_pair(
+        repeat=0,
+        order="AB",
+        baseline_thread_cpu_ns=1_000,
+        active_thread_cpu_ns=1_000,
+    )
+    wrong_repeat_ba = _synthetic_crossover_pair(
+        repeat=1,
+        order="BA",
+        baseline_thread_cpu_ns=1_000,
+        active_thread_cpu_ns=1_000,
+    )
+    wrong_iterations_ba = _synthetic_crossover_pair(
+        repeat=0,
+        order="BA",
+        baseline_thread_cpu_ns=1_000,
+        active_thread_cpu_ns=1_000,
+        iterations=2,
+    )
+    wrong_seed_ba = _synthetic_crossover_pair(
+        repeat=0,
+        order="BA",
+        baseline_thread_cpu_ns=1_000,
+        active_thread_cpu_ns=1_000,
+        checksum=99,
+    )
+    with pytest.raises(ValueError, match="one AB and one BA"):
+        benchmark_module._combine_crossover_pairs(ab, other_ab)
+    with pytest.raises(ValueError, match="repeats must match"):
+        benchmark_module._combine_crossover_pairs(ab, wrong_repeat_ba)
+    with pytest.raises(ValueError, match="iterations must match"):
+        benchmark_module._combine_crossover_pairs(ab, wrong_iterations_ba)
+    with pytest.raises(ValueError, match="same workload seed"):
+        benchmark_module._combine_crossover_pairs(ab, wrong_seed_ba)
+
+
+@pytest.mark.parametrize(
+    ("repeat", "expected_orders", "expected_block_order"),
+    (
+        (0, ("AB", "BA"), "ABBA"),
+        (1, ("BA", "AB"), "BAAB"),
+    ),
+)
+def test_crossover_block_uses_same_seed_iterations_and_opposite_orders(
+    monkeypatch: pytest.MonkeyPatch,
+    repeat: int,
+    expected_orders: tuple[str, str],
+    expected_block_order: str,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_measure_pair(**kwargs: object) -> benchmark_module._PairResult:
+        calls.append(kwargs)
+        order = kwargs["order"]
+        assert isinstance(order, str)
+        return _synthetic_crossover_pair(
+            repeat=int(kwargs["repeat"]),
+            order=order,
+            baseline_thread_cpu_ns=1_000,
+            active_thread_cpu_ns=1_000,
+            iterations=int(kwargs["iterations"]),
+        )
+
+    monkeypatch.setattr(benchmark_module, "_measure_pair", fake_measure_pair)
+    block = benchmark_module._measure_crossover_block(
+        spec=object(),
+        sink=benchmark_module._SinkCounter(),
+        workload=lambda seed: seed,
+        iterations=17,
+        repeat=repeat,
+        request_prefix="same-seed",
+    )
+    assert [call["order"] for call in calls] == list(expected_orders)
+    assert [call["repeat"] for call in calls] == [repeat, repeat]
+    assert [call["iterations"] for call in calls] == [17, 17]
+    assert [call["request_prefix"] for call in calls] == ["same-seed", "same-seed"]
+    assert block.order == expected_block_order
+    assert block.iterations == 34
+    assert len(block.legs) == 2
+
+
 def test_scheduler_wait_changes_wall_diagnostics_without_changing_cpu_budget() -> None:
     def timed_result(
         thread_cpu_elapsed_ns: int,
@@ -1521,6 +1737,10 @@ def test_frozen_benchmark_schema_and_deterministic_counts() -> None:
     assert report["metadata"]["v1_runtime_in_scope"] is True
     assert report["config"]["warmup_repeats"] == WARMUP_REPEATS
     assert report["config"]["paired_repeats"] == PAIRED_REPEATS
+    assert report["config"]["no_hit_legs_per_sample"] == 4
+    assert report["config"]["no_hit_sample_order"] == (
+        "alternating ABBA/BAAB four-leg crossover blocks"
+    )
     assert report["cases"]["active_no_hit"]["sample_count"] == PAIRED_REPEATS
     assert report["cases"]["active_unscoped_target"]["sample_count"] == PAIRED_REPEATS
     assert report["cases"]["active_hit"]["sample_count"] == PAIRED_REPEATS
@@ -1540,4 +1760,12 @@ def test_frozen_benchmark_schema_and_deterministic_counts() -> None:
     assert report["calibration"]["minimum_thread_cpu_reached_by_both_cases"] is True
     assert report["metadata"]["thread_cpu_clock"]["used_for_performance_budget"] is True
     assert report["metadata"]["monotonic_wall_clock"]["diagnostic_only"] is True
+    no_hit_blocks = report["cases"]["active_no_hit"]["pairs"]
+    assert all(
+        isinstance(block, dict)
+        and block["order"] in {"ABBA", "BAAB"}
+        and isinstance(block.get("legs"), list)
+        and len(block["legs"]) == 2
+        for block in no_hit_blocks
+    )
     assert report["config"]["gc_restored_after"] is True
