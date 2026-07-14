@@ -34,6 +34,7 @@ class ProductDetectionTests(unittest.TestCase):
             "MAKEFLAGS",
             "MFLAGS",
             "MAKELEVEL",
+            "FAIL_MODULE",
         ):
             self.environment.pop(variable, None)
 
@@ -50,7 +51,17 @@ class ProductDetectionTests(unittest.TestCase):
         (self.repo / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
 
         self.python = self.repo / "fixture-python"
-        self.python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self.python.write_text(
+            """#!/bin/sh
+if [ -n "$FAIL_MODULE" ]; then
+    case "$*" in
+        *"-m $FAIL_MODULE"*) exit 23 ;;
+    esac
+fi
+exit 0
+""",
+            encoding="utf-8",
+        )
         self.python.chmod(0o755)
 
     def run_git(self, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -63,7 +74,15 @@ class ProductDetectionTests(unittest.TestCase):
             env=self.environment,
         )
 
-    def run_make(self, target: str) -> subprocess.CompletedProcess[str]:
+    def run_make(
+        self,
+        target: str,
+        *,
+        fail_module: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        environment = self.environment.copy()
+        if fail_module is not None:
+            environment["FAIL_MODULE"] = fail_module
         return subprocess.run(
             ["make", "--no-print-directory", target, f"PYTHON={self.python}"],
             cwd=self.repo,
@@ -71,7 +90,7 @@ class ProductDetectionTests(unittest.TestCase):
             capture_output=True,
             text=True,
             encoding="utf-8",
-            env=self.environment,
+            env=environment,
             timeout=10,
         )
 
@@ -130,6 +149,34 @@ class ProductDetectionTests(unittest.TestCase):
         (self.repo / "package.json").write_text("{}\n", encoding="utf-8")
 
         self.assert_frontend_scaffold_failure()
+
+    def test_internal_python_failures_propagate_from_every_product_target(self) -> None:
+        cases = (
+            ("check-product", "pytest"),
+            ("check-product-fast", "mypy"),
+            ("test-product", "pytest"),
+        )
+        for target, module in cases:
+            with self.subTest(target=target, module=module):
+                result = self.run_make(target, fail_module=module)
+                output = result.stdout + result.stderr
+                self.assertNotEqual(0, result.returncode, output)
+                self.assertIn("Error 23", output)
+
+    def test_failed_product_check_prevents_dependent_gate_recipe(self) -> None:
+        with MAKEFILE.open(encoding="utf-8") as source:
+            makefile = source.read()
+        (self.repo / "Makefile").write_text(
+            f"{makefile}\nfixture-gate: check-product\n\t@touch gate-ran\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_make("fixture-gate", fail_module="pytest")
+
+        output = result.stdout + result.stderr
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("Error 23", output)
+        self.assertFalse((self.repo / "gate-ran").exists())
 
 
 if __name__ == "__main__":

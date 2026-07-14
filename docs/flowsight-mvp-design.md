@@ -196,7 +196,7 @@ Business process                         Local sidecar process
 | 用户级状态目录 | `platformdirs`，project_id 隔离 runtime/data | 复用 |
 | 本地 ingest / storage | `FlowSightSpanProcessor` → SDK sender queue → loopback HTTP → SQLite | **自研核心** |
 | 函数 span | `@flowsight.trace` + `wrapt` | 用 wrapt，不手写脆弱 decorator |
-| 行级 tracepoint | `sys.monitoring` / 受限 `sys.settrace`，由前置 spike 决定支持矩阵 | 技术风险门通过后才实现 |
+| 行级 tracepoint | `sys.monitoring` per-code `LINE` event；无 `sys.settrace` fallback | 只实现 TRIAL-005 批准的支持矩阵 |
 | 静态代码地图 | LibCST 提取结构；grimp 仅提供模块 import edges | 用，函数静态 call edge 不进 v1 |
 | 图 UI | TypeScript + React + React Flow | 用，不从 D3 自搭 |
 | 时间线 | 自建 waterfall，体验参考 VizTracer / Perfetto UI | 自研，仅借鉴 |
@@ -223,13 +223,14 @@ SDK 与 sidecar 使用 loopback HTTP + UTF-8 JSON 的私有版本化协议。v1 
 
 ```http
 POST /internal/v1/hello
+POST /internal/v1/renew
 POST /internal/v1/events
 POST /internal/v1/flush
 POST /internal/v1/goodbye
 GET  /internal/v1/tracepoints?since_revision=N
 ```
 
-`hello` 建立单 producer lease，并携带 project/protocol/SDK/Python version 与能力；第二个同时存活的 producer 被明确拒绝为 `MULTI_WORKER_UNSUPPORTED`。reload 新 worker 可以在有界时间内等待旧 lease 通过 goodbye、连接失效或短 TTL 释放。
+`hello` 建立单 producer lease，并携带 project/protocol/SDK/Python version 与能力；第二个同时存活的 producer 被明确拒绝为 `MULTI_WORKER_UNSUPPORTED`。`renew` 仅在 `(producer_id, lease_id)` 与当前 lease 精确匹配时延长同一 lease 的 TTL；它不会创建、替换或重新获取 lease。`renew` 响应丢失后，使用同一对 ID 重试对 lease 身份和所有权是幂等且安全的：重试只会再次延长同一个 lease。过期或不匹配的 lease 返回 `INVALID_LEASE`，重新获取必须调用 `hello` 并继续服从单 producer 规则。reload 新 worker 可以在有界时间内等待旧 lease 通过 `goodbye` 或续租停止后的短 TTL 到期释放。
 
 事件 batch 至少包含 `protocol_version`、`project_id`、`producer_id`、`lease_id`、`batch_id`。每个事件包含唯一 `event_id`、单调 `producer_seq`、`type`、`schema_version`、时间戳和安全 payload；request-scoped 事件还携带 `request_trace_id`、`otel_trace_id`。v1 事件类型保持最少：`route_catalog.replaced`、`span.ended`、`span.enrichment`、`snapshot.captured` 和 `trace.drop_notice`。
 
@@ -408,7 +409,7 @@ updated_at
 - 只支持**指定变量名**，不支持任意 Python 表达式。
 - 绑定的 CodeNode 漂移（`location_hash` 变化）时置 `stale`，需用户重新确认后才继续命中（见 5.1）。
 
-后端实现的语义边界见 6.5。TRIAL-005 未给出 go 结论前，任何 backend 和 async 支持都不得标记为稳定；不受支持的函数形态必须在创建 tracepoint 时被明确拒绝。
+后端实现的语义边界见 6.5。TRIAL-005 完成且 `phase4-tracepoint` gate 打开前，任何 backend 和 async 支持都不得标记为稳定；不受支持的函数形态必须在创建 tracepoint 时被明确拒绝。
 
 ### 5.6 Snapshot
 
@@ -536,6 +537,8 @@ OpenTelemetry FastAPI instrumentation 是 OTel trace/span identity 的唯一来�
 
 请求边界读取当前 recording server span，按 5.3 派生 `request_trace_id`，并把 `request_trace_id/root_span_id` 放进请求级 `contextvars`。`FlowSightSpanProcessor.on_start` 只把该关联复制进有界的 span-association map，`on_end` 再生成事件；关联缺失的 span 只能在 SDK 的有界 TTL buffer 中按完整 parent chain 等待，绝不能只按 `otel_trace_id` 猜归属，也不能把 scope 外的 orphan 发送给 sidecar。TRIAL-004 必须验证 async、线程池、嵌套 server spans、scope 外 spans 和两个共享上游 trace 的并发请求不会串线；若所选 FastAPI/OTel 版本拿不到 recording server span，初始化必须明确失败或显示 unsupported，不能偷偷创建第二个 root。
 
+**TRIAL-004 最终结论（2026-07-11）：** `go`，无范围收缩。采用一个 project-scoped 本地 Python sidecar 独占 loopback UI/API/SQLite，SDK 通过有界 authenticated private sender 发送预先安全化事件；复用用户 `TracerProvider` 并只注册一个可停用/复用的 `FlowSightSpanProcessor`，不替换 provider、不创建第二个 root。普通启动、真实 Uvicorn reload、producer lease、失败/重试、OTel ownership、sync/async/thread-pool 归属和 bounded shutdown 已由 commit `d6abe973f7fc29da70345bb0713688520fd2a00e` 证明；GitHub Actions run `29114712575` 已通过 Ubuntu/macOS × CPython 3.12/3.13。生产 Phase 0/1 必须按 `spikes/sidecar_otel/RESULT.md` 的 promotion requirements 分阶段迁移，不能直接发布 spike package。
+
 需要记录：
 
 - method
@@ -628,6 +631,19 @@ def calculate_price(order):
 - 若 async 隔离无法证明，v1 明确拒绝 async tracepoint，但不影响 async 函数的普通 `@trace` span。
 - 若 `sys.monitoring` 无法安全取得目标 frame，只有在受限 `sys.settrace` 方案证明不会越出目标调用范围时才可启用；否则缩小功能，不允许启用全局 trace。
 - 创建 tracepoint 时就校验支持性，不能等请求运行后静默失败。
+
+**TRIAL-005 最终结论（2026-07-11）：** `go-with-scope-reductions`，选择 `sys.monitoring` 的 per-code `LINE` event，global event mask 必须始终为 0；不提供 `sys.settrace` fallback。用户已明确批准五项范围收缩，GitHub Actions run `29114712575` 已通过 Ubuntu/macOS × CPython 3.12/3.13：
+
+- 仅支持标准 GIL-enabled CPython 3.12/3.13，并要求 generic monitoring tool ID 3/4 至少一个可安全占用；不得抢占 debugger、coverage、profiler、optimizer 或其他 tool。
+- 每次启动必须用真实 local-line event 自检 `sys._getframe(1)` 能取得 callback 对应的精确 frame/code/line；由于 [`sys.monitoring` 的公开 callback 形状](https://docs.python.org/3.13/library/sys.monitoring.html)不提供 frame，自检失败、audit 拒绝、残留 LINE callback、非零 global mask 或 probe/已配置 code 的非零 local mask 时必须 fail closed 且保留外部状态。公开 API 无法枚举无关 code 的 stale local mask，因此支持声明不得扩展到该不可检测情形。
+- 支持通过完整创建校验的 exact Python sync/coroutine function、bound instance/class method 和 static function，包括已验证的 closure free/cell vars、嵌套、递归和并发 coroutine。lambda/comprehension、generator/async-generator、one-line/目标自身 definition-line、不能解析为 exact Python function 的对象和非法直接 spec 在创建时拒绝。code-object-only backend 无法可靠识别所有 nested pure `def`/`class` line；Phase 4 创建 API 仍必须按 5.5 用 source/AST validator 拒绝这些行，不能把 backend 接受误报成产品支持。
+- 线程池只在调用方显式传播 `contextvars` request context 时归属请求；raw/unpropagated executor work 不捕获。即使 context 已复制，request scope 结束后恢复的 task/thread 也必须因 active-token 失效而不捕获。
+- 合成 existing-`sys.settrace` callback 可共存，且 FlowSight 不读写其 slot；这不等于真实 debugpy/coverage 集成已验证，后两者在 v1 tracepoint 支持矩阵中保持 unverified/unsupported。TRIAL-005 的负向重叠实验在 3.12/3.13 都证明 per-coroutine install/restore 会串请求、丢事件并残留 tracer，因此禁止该退化路径。
+- 普通 callback/serializer/sink 错误 fail open 并进入有界 health/drop 计数；`KeyboardInterrupt`/`SystemExit` 等 process-control `BaseException` 不吞掉。完整 start/stop lifecycle 串行化；shutdown 依次关闭 callback admission、停 local events、bounded drain 已进入 callback、注销 callback、释放 tool ID，timeout 可重试，并发 stop 必须幂等。
+
+Phase 4 spike regression budget 的 PERF-003 schema v4 由 digest `sha256:3bcbcc7d7f6ae1b14ef0672994e00f45ad42b2c73827e451a98fd4414380ec9d` 固定。每个 sample 同时记录 current-thread `thread_time_ns` 和 diagnostic-only monotonic `perf_counter_ns`，50ms no-hit calibration 与全部六项预算只能读取 thread CPU；wall clock 只诊断 scheduler wait，不参与 pass/fail。no-hit 的 21 个有效 sample 各由同 seed 的 ABBA/BAAB 四腿 crossover block 组成，并以 `(active_1 + active_2) / (baseline_1 + baseline_2)` 计算 ratio；四条 raw leg 必须保留。这只消除 sample 内 reciprocal order/frequency bias，真实 common active-side CPU factor 仍须原样进入预算。configured-but-unscoped 与 captured-hit 仍使用 21 个交替两腿 pair。六个已接受数值不变：unconfigured-code median/p95 paired thread-CPU ratio 分别不得超过 1.15×/1.75×；configured-but-unscoped median/p95 分别不得超过 15µs/25µs thread CPU；captured-hit median/p95 分别不得超过 200µs/300µs thread CPU。该预算是当前同步 callback/hit 的 CPU regression guard，不是 Phase 5 的 10ms wall-clock request SLA，不覆盖 production queue/transport 或其他线程，也不得按 hit limit 相乘解释为 request 预算。schema v3 digest `sha256:e3273869041f3b9bc8d4d65977a04e64f87e0c23268aa88586c7562d8e18e12e` 保留为历史 dual-clock 证据，但其 11 AB/10 BA raw-ratio median 在 FSQ-0001 两次复发后已被 v4 sample construction 取代；schema v2 digest `sha256:3993fd75a45b1e14be3e04d56534928cadc928a92dce5af6473398e5c14c30e9` 及其四 job run 仅保留为历史 wall-contract 证据。任何预算、decision clock、sample construction、workload、backend 或 serializer 变化都必须产生新 digest 并单独 review。最终 digest、双时钟统计和矩阵证据同步记录在 `spikes/tracepoint_backend/RESULT.md`。
+
+最终支持矩阵、负向证据、benchmark digest、原始统计和 CI 记录在 `spikes/tracepoint_backend/RESULT.md`。Phase 4 生产实现不得扩展该矩阵；任何新增 backend 或函数形态必须重新经过独立证据与范围批准。
 
 ### 6.6 数据谱系采集（v1.1 experimental）
 
@@ -1111,7 +1127,7 @@ Authorization: Bearer <startup-token>
 
 ### 12.5 依赖选型与不依赖清单
 
-明确 v1 依赖（详见 4.1）：Python/FastAPI、OpenTelemetry、wrapt、LibCST、grimp（仅 import graph）、platformdirs、SQLite、TypeScript/React/React Flow，以及由 TRIAL-005 选定的 `sys.monitoring`/受限 `sys.settrace` backend。NetworkX 只有出现明确图算法需求时才加入，不作为骨架默认依赖。
+明确 v1 依赖（详见 4.1）：Python/FastAPI、OpenTelemetry、wrapt、LibCST、grimp（仅 import graph）、platformdirs、SQLite、TypeScript/React/React Flow，以及由 TRIAL-005 选定的 `sys.monitoring` backend。NetworkX 只有出现明确图算法需求时才加入，不作为骨架默认依赖。
 
 明确 v1 **不依赖**（只借鉴，不作为核心）：
 

@@ -12,7 +12,7 @@ FRONTEND_PRESENT = test -e package.json || test -e package-lock.json || { \
 	fi; \
 }
 
-.PHONY: check check-fast check-agent check-product check-product-fast check-staged-files test test-agent test-product validate-agent-system test-hooks test-hooks-fast test-formatter test-allowlist test-product-detection test-validator gate-phase0 gate-phase1 gate-phase4 init guard
+.PHONY: check check-fast check-agent check-product check-product-fast check-staged-files test test-agent test-product test-phase0 test-trial004 test-trial005 validate-agent-system test-hooks test-hooks-fast test-formatter test-allowlist test-product-detection test-validator gate-phase0 gate-phase1 gate-phase4 init guard
 
 check: check-agent check-product
 
@@ -24,7 +24,8 @@ check-fast: validate-agent-system test-hooks-fast test-formatter test-validator 
 check-agent: validate-agent-system test-agent
 
 check-product:
-	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
+	@set -e; \
+	if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
 		echo "[pre-scaffold] no product source exists; this is NOT phase or release evidence"; \
 	else \
 		has_python=0; has_frontend=0; \
@@ -33,9 +34,9 @@ check-product:
 		if [ "$$has_python" -eq 1 ]; then \
 			test -d flowsight && test -d tests && test -f pyproject.toml || { echo "partial Python scaffold: flowsight/, tests/, and pyproject.toml are all required" >&2; exit 1; }; \
 			test -d examples || { echo "Python scaffold requires examples/" >&2; exit 1; }; \
-			$(PYTHON) -m ruff format --check flowsight examples tests; \
-			$(PYTHON) -m ruff check flowsight examples tests; \
-			$(PYTHON) -m mypy flowsight; \
+			$(PYTHON) -m ruff format --check flowsight examples tests spikes/sidecar_otel spikes/tracepoint_backend; \
+			$(PYTHON) -m ruff check flowsight examples tests spikes/sidecar_otel spikes/tracepoint_backend; \
+			$(PYTHON) -m mypy flowsight spikes/sidecar_otel spikes/tracepoint_backend; \
 		fi; \
 		if [ "$$has_frontend" -eq 1 ]; then \
 			test -d ui && test -f package.json && test -f package-lock.json || { echo "frontend scaffold requires ui/, package.json, and package-lock.json" >&2; exit 1; }; \
@@ -57,15 +58,16 @@ check-product:
 	fi
 
 check-product-fast:
-	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
+	@set -e; \
+	if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
 		echo "[pre-scaffold] no product source exists; fast check is agent-system evidence only"; \
 	else \
 		if [ -e tests ] || [ -e pyproject.toml ] || find flowsight -type f -name '*.py' -print -quit 2>/dev/null | grep -q .; then \
 			test -d flowsight && test -d tests && test -f pyproject.toml || { echo "partial Python scaffold: flowsight/, tests/, and pyproject.toml are all required" >&2; exit 1; }; \
 			test -d examples || { echo "Python scaffold requires examples/" >&2; exit 1; }; \
-			$(PYTHON) -m ruff format --check flowsight examples tests; \
-			$(PYTHON) -m ruff check flowsight examples tests; \
-			$(PYTHON) -m mypy flowsight; \
+			$(PYTHON) -m ruff format --check flowsight examples tests spikes/sidecar_otel spikes/tracepoint_backend; \
+			$(PYTHON) -m ruff check flowsight examples tests spikes/sidecar_otel spikes/tracepoint_backend; \
+			$(PYTHON) -m mypy flowsight spikes/sidecar_otel spikes/tracepoint_backend; \
 		fi; \
 		if { $(FRONTEND_PRESENT); }; then \
 			test -d ui && test -f package.json && test -f package-lock.json || { echo "frontend scaffold requires ui/, package.json, and package-lock.json" >&2; exit 1; }; \
@@ -78,7 +80,8 @@ test: test-agent test-product
 test-agent: test-hooks test-formatter test-allowlist test-product-detection test-validator
 
 test-product:
-	@if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
+	@set -e; \
+	if [ ! -e flowsight ] && [ ! -e tests ] && [ ! -e pyproject.toml ] && ! { $(FRONTEND_PRESENT); }; then \
 		echo "[pre-scaffold] product tests unavailable"; \
 	else \
 		has_python=0; has_frontend=0; \
@@ -93,6 +96,15 @@ test-product:
 			npm test; \
 		fi; \
 	fi
+
+test-phase0:
+	$(PYTHON) -m pytest tests/test_sdk_skeleton.py tests/security/test_safe_summary.py tests/store/test_wal_writer.py tests/sidecar tests/packaging/test_wheel_runtime_dependency.py
+
+test-trial004:
+	$(PYTHON) -m pytest tests/spikes/test_sidecar_otel_lifecycle.py
+
+test-trial005:
+	$(PYTHON) -m pytest tests/spikes/test_tracepoint_backend.py
 
 validate-agent-system:
 	$(PYTHON) scripts/validate_agent_system.py
