@@ -24,6 +24,7 @@ from flowsight.sidecar import parent_handoff as handoff_module
 from flowsight.sidecar import runtime_config as config_module
 
 HANDOFF_ERROR = "sidecar child parent handoff failed"
+_ISOLATED_CHILD_TIMEOUT = 30.0
 
 _CHILD_SOURCE = r"""
 import os
@@ -220,15 +221,23 @@ def test_real_isolated_child_cannot_pass_the_gate_before_parent_eof_release(
         os.close(ready_writer)
         ready_writer = -1
 
-        assert select.select((ready_reader,), (), (), 2.0) == ([ready_reader], [], [])
+        assert select.select((ready_reader,), (), (), _ISOLATED_CHILD_TIMEOUT) == (
+            [ready_reader],
+            [],
+            [],
+        )
         assert os.read(ready_reader, 1) == b"E"
         assert select.select((ready_reader,), (), (), 0.2) == ([], [], [])
 
         os.close(handoff_writer)
         handoff_writer = -1
-        assert select.select((ready_reader,), (), (), 2.0) == ([ready_reader], [], [])
+        assert select.select((ready_reader,), (), (), _ISOLATED_CHILD_TIMEOUT) == (
+            [ready_reader],
+            [],
+            [],
+        )
         assert os.read(ready_reader, 1) == b"R"
-        assert process.wait(timeout=2.0) == 0
+        assert process.wait(timeout=_ISOLATED_CHILD_TIMEOUT) == 0
     finally:
         for descriptor in (ready_writer, ready_reader, handoff_writer, handoff_reader):
             if descriptor >= 0:

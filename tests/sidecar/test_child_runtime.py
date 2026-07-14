@@ -39,6 +39,7 @@ from flowsight.sidecar import runtime_config as config_module
 from flowsight.sidecar.state import SidecarState
 
 TRANSACTION_ERROR = "sidecar child transaction failed"
+_ISOLATED_CHILD_TIMEOUT = 30.0
 
 
 class _Control(BaseException):
@@ -720,7 +721,11 @@ def test_real_child_handoff_gate_blocks_state_and_ready_until_eof_release(
         handoff_reader = -1
         gate_writer = -1
 
-        assert select.select((gate_reader,), (), (), 10.0) == ([gate_reader], [], [])
+        assert select.select((gate_reader,), (), (), _ISOLATED_CHILD_TIMEOUT) == (
+            [gate_reader],
+            [],
+            [],
+        )
         assert os.read(gate_reader, 1) == b"G"
         assert select.select((reader.fileno(),), (), (), 0.2) == ([], [], [])
         assert process.poll() is None
@@ -735,7 +740,7 @@ def test_real_child_handoff_gate_blocks_state_and_ready_until_eof_release(
 
         os.close(handoff_writer)
         handoff_writer = -1
-        ready = reader.receive(timeout=10.0)
+        ready = reader.receive(timeout=_ISOLATED_CHILD_TIMEOUT)
         assert type(ready) is StartupReady
         state = store.load()
         assert type(state) is SidecarState
@@ -759,7 +764,7 @@ def test_real_child_handoff_gate_blocks_state_and_ready_until_eof_release(
             health.close()
 
         os.kill(process.pid, signal.SIGTERM)
-        process.wait(timeout=10.0)
+        process.wait(timeout=_ISOLATED_CHILD_TIMEOUT)
         stdout, stderr = process.communicate(timeout=5.0)
         assert process.returncode == 0
         assert stdout == b""
@@ -880,7 +885,7 @@ def test_real_child_handoff_faults_never_publish_state_listener_or_ready(
             os.close(regular_fd)
             regular_fd = -1
 
-        process.wait(timeout=10.0)
+        process.wait(timeout=_ISOLATED_CHILD_TIMEOUT)
         stdout, stderr = process.communicate(timeout=5.0)
         assert process.returncode != 0
         assert stdout == b""
@@ -938,7 +943,7 @@ def test_real_child_publishes_ready_serves_health_and_cleans_up_after_sigterm(
         writer_fd = -1
         handoff_fd = -1
 
-        ready = reader.receive(timeout=10.0)
+        ready = reader.receive(timeout=_ISOLATED_CHILD_TIMEOUT)
         assert type(ready) is StartupReady
         state = store.load()
         assert type(state) is SidecarState
@@ -999,7 +1004,7 @@ def test_real_child_publishes_ready_serves_health_and_cleans_up_after_sigterm(
                 rejected.close()
 
         os.kill(process.pid, signal.SIGTERM)
-        process.wait(timeout=10.0)
+        process.wait(timeout=_ISOLATED_CHILD_TIMEOUT)
         stdout, stderr = process.communicate(timeout=5.0)
         assert process.returncode == 0
         assert stdout == b""
@@ -1062,7 +1067,7 @@ def test_real_child_default_sigterm_releases_os_resources_without_claiming_outer
         writer_fd = -1
         handoff_fd = -1
 
-        ready = reader.receive(timeout=10.0)
+        ready = reader.receive(timeout=_ISOLATED_CHILD_TIMEOUT)
         assert type(ready) is StartupReady
         state = store.load()
         assert type(state) is SidecarState
@@ -1070,7 +1075,7 @@ def test_real_child_default_sigterm_releases_os_resources_without_claiming_outer
         assert ready.sidecar_pid == process.pid == state.pid
 
         os.kill(process.pid, signal.SIGTERM)
-        process.wait(timeout=10.0)
+        process.wait(timeout=_ISOLATED_CHILD_TIMEOUT)
         stdout, stderr = process.communicate(timeout=5.0)
         assert process.returncode == -signal.SIGTERM
         assert stdout == b""
@@ -1139,10 +1144,10 @@ def test_real_child_pre_ready_bind_failure_emits_only_fixed_failure_and_releases
         writer_fd = -1
         handoff_fd = -1
 
-        assert reader.receive(timeout=10.0) == StartupFailure(
+        assert reader.receive(timeout=_ISOLATED_CHILD_TIMEOUT) == StartupFailure(
             code=StartupFailureCode.SIDECAR_STARTUP_FAILED
         )
-        process.wait(timeout=10.0)
+        process.wait(timeout=_ISOLATED_CHILD_TIMEOUT)
         stdout, stderr = process.communicate(timeout=5.0)
         assert process.returncode != 0
         assert stdout == b""

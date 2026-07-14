@@ -91,6 +91,8 @@ from spikes.sidecar_otel.telemetry import (
     private_function_span,
 )
 
+_REAL_PROCESS_STARTUP_TIMEOUT = 20.0
+
 
 def _mode(path: Path) -> int:
     return path.stat().st_mode & 0o777
@@ -1171,7 +1173,7 @@ def test_waiting_launcher_re_elects_when_lock_owner_exits_before_publish(
         runtime_dir=runtime_dir,
         project_id="abandoned-election-project",
         default_port=0,
-        startup_timeout=3.0,
+        startup_timeout=_REAL_PROCESS_STARTUP_TIMEOUT,
         idle_timeout=10.0,
     )
 
@@ -1181,7 +1183,7 @@ def test_waiting_launcher_re_elects_when_lock_owner_exits_before_publish(
         fcntl.flock(held_lock, fcntl.LOCK_UN)
         os.close(held_lock)
         held_lock = -1
-        handle = future.result(timeout=8.0)
+        handle = future.result(timeout=_REAL_PROCESS_STARTUP_TIMEOUT + 5.0)
 
     try:
         assert handle.started_by_caller is True
@@ -1858,7 +1860,7 @@ def test_coordinated_shutdown_timeout_retries_before_release_and_reinit(
         runtime_dir=tmp_path / "retryable-shutdown-runtime",
         project_id="retryable-shutdown-project",
         default_port=0,
-        startup_timeout=5.0,
+        startup_timeout=_REAL_PROCESS_STARTUP_TIMEOUT,
         idle_timeout=10.0,
         lease_ttl=1.0,
     )
@@ -2680,7 +2682,7 @@ def test_provider_terminal_during_instrumentation_rolls_back_without_lease_leak(
         runtime_dir=tmp_path / "provider-terminal-during-init-runtime",
         project_id="provider-terminal-during-init-project",
         default_port=0,
-        startup_timeout=5.0,
+        startup_timeout=_REAL_PROCESS_STARTUP_TIMEOUT,
         idle_timeout=5.0,
         lease_ttl=1.0,
     )
@@ -2723,7 +2725,7 @@ def test_expired_lease_finishes_local_cleanup_with_visible_loss(
         runtime_dir=tmp_path / "expired-lease-runtime",
         project_id="expired-lease-project",
         default_port=0,
-        startup_timeout=5.0,
+        startup_timeout=_REAL_PROCESS_STARTUP_TIMEOUT,
         idle_timeout=5.0,
         lease_ttl=1.0,
     )

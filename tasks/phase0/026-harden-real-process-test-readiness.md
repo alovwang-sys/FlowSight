@@ -6,7 +6,7 @@
 task_id: P0-026
 release: v1
 task_type: tooling
-status: in_progress
+status: review
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-025, TRIAL-004]
@@ -77,13 +77,13 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] Real isolated-child positive readiness and exit observations use one
+- [x] Real isolated-child positive readiness and exit observations use one
       bounded test-harness budget large enough for a cold isolated import.
-- [ ] The pre-release handoff assertion remains 0.2 seconds and still proves no
+- [x] The pre-release handoff assertion remains 0.2 seconds and still proves no
       publication before parent EOF.
-- [ ] Non-startup TRIAL-004 lifecycle cases use a bounded process-start budget
+- [x] Non-startup TRIAL-004 lifecycle cases use a bounded process-start budget
       without changing the behavior-specific lease/shutdown/request deadlines.
-- [ ] Focused P0-025 and TRIAL-004 regressions pass with no leaked child,
+- [x] Focused P0-025 and TRIAL-004 regressions pass with no leaked child,
       Uvicorn, pytest, or sidecar process.
 - [ ] `make test-phase0`, `make check`, and `make gate-phase0` pass in supported
       verification environments.
@@ -127,7 +127,9 @@ real-process tests pass without changing product timeout semantics
 ## Role Outputs
 
 Implementer:
-- Pending.
+- Added test-only bounded constants for cold isolated-child observations and
+  the four affected non-startup TRIAL-004 lifecycle setups. Production and
+  spike runtime code is unchanged.
 
 Adversarial Reviewer:
 - Reviewer 1: Pending.
@@ -135,16 +137,21 @@ Adversarial Reviewer:
   Phase 0 diagnostic reviewer will cover this test-only repair.
 
 Fixer:
-- Pending.
+- Applied the two diagnosed failure signatures without changing negative
+  assertions, product timeouts, thresholds, or runtime behavior.
 
 Quality Governor:
-- Pending.
+- The candidate changes only P0-026 allowlisted tests and failure records; no
+  Phase 1 product code, API, UI, dependency, or runtime behavior changed.
 
 ## Verifier Evidence
 
-- Command: Pending.
-- Result: Pending.
-- Notes: Pending.
+- Command: six original failing nodes; full three-module focused suite; Ruff
+  format/lint; agent-system validator; process-leak inspection.
+- Result: focused verification passed; repository gates pending.
+- Notes: The six original nodes passed in 6.11 seconds and the full 134-test
+  focused suite passed in 40.37 seconds on the still-throttled host. No pytest,
+  Uvicorn, spike sidecar, or production sidecar process remained.
 
 ## Failure Queue Items
 
