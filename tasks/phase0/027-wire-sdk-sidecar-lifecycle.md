@@ -6,7 +6,7 @@
 task_id: P0-027
 release: v1
 task_type: implementation
-status: in_progress
+status: review
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-024, P0-026, TRIAL-004]
@@ -71,12 +71,12 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] Constructing `FlowSight` remains side-effect free.
-- [ ] `init_app()` prepares runtime configuration from the configured project root and UI port, then uses the existing bounded start-or-attach transaction.
-- [ ] Sequential and concurrent duplicate initialization of the same SDK/app pair performs one startup transaction and returns `None` each time.
-- [ ] A failed startup does not mark the app initialized, so a later call can retry.
-- [ ] Initialization does not mutate FastAPI routes, middleware, or app state and does not open a browser or disclose the startup token.
-- [ ] Targeted SDK tests, Phase 0 tests, the full repository check, and the Phase 0 gate pass.
+- [x] Constructing `FlowSight` remains side-effect free.
+- [x] `init_app()` prepares runtime configuration from the configured project root and UI port, then uses the existing bounded start-or-attach transaction.
+- [x] Sequential and concurrent duplicate initialization of the same SDK/app pair performs one startup transaction and returns `None` each time.
+- [x] A failed startup does not mark the app initialized, so a later call can retry.
+- [x] Initialization does not mutate FastAPI routes, middleware, or app state and does not open a browser or disclose the startup token.
+- [x] Targeted SDK tests, Phase 0 tests, the full repository check, and the Phase 0 gate pass.
 
 ## No-Test Reason
 
@@ -115,23 +115,34 @@ SDK initialization starts or attaches exactly one project sidecar and all Phase 
 ## Role Outputs
 
 Implementer:
-- pending
+- Wired the public SDK lifecycle to the reviewed runtime-config and
+  start-or-attach primitives, committing app initialization only after exact
+  sidecar admission and serializing duplicate calls.
 
 Adversarial Reviewer:
-- Reviewer 1: pending
-- Reviewer 2: waived: this narrow two-file lifecycle slice receives one independent adversarial diff review
+- Reviewer 1: A dedicated adversarial pass checked the failure commit point,
+  concurrent lock boundary, exact-state admission, public surface, FastAPI
+  mutation, and token/error rendering; no behavioral finding remained.
+- Reviewer 2: waived: the narrow two-file lifecycle slice has one dedicated
+  adversarial pass plus full Phase 0 and repository coverage
 
 Fixer:
-- pending
+- Applied the only mechanical finding by sorting imports; no behavioral fix or
+  scope expansion was required.
 
 Quality Governor:
-- pending
+- The diff is limited to the active card plus its two allowlisted files, stays
+  in Phase 0, and adds no OTel, ingest, storage, UI, shutdown, dependency, or
+  sidecar-primitive behavior.
 
 ## Verifier Evidence
 
-- Command: pending
-- Result: pending
-- Notes: pending
+- Command: `.venv/bin/python -m pytest -q tests/test_sdk_skeleton.py tests/sidecar/test_parent_runtime.py`; `make test-phase0`; `make check`; `make gate-phase0`; `git diff --check`
+- Result: passed
+- Notes: Targeted coverage passed 78 tests; Phase 0 passed 2,644 tests; full
+  check and the Phase 0 gate each passed 2,774 tests on CPython 3.13.5. The
+  full checks correctly retained the partial-scaffold warning rather than
+  claiming Phase 0 product acceptance.
 
 ## Failure Queue Items
 
