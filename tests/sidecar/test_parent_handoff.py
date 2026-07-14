@@ -231,13 +231,9 @@ def test_real_isolated_child_cannot_pass_the_gate_before_parent_eof_release(
 
         os.close(handoff_writer)
         handoff_writer = -1
-        assert select.select((ready_reader,), (), (), _ISOLATED_CHILD_TIMEOUT) == (
-            [ready_reader],
-            [],
-            [],
-        )
+        assert select.select((ready_reader,), (), (), 2.0) == ([ready_reader], [], [])
         assert os.read(ready_reader, 1) == b"R"
-        assert process.wait(timeout=_ISOLATED_CHILD_TIMEOUT) == 0
+        assert process.wait(timeout=2.0) == 0
     finally:
         for descriptor in (ready_writer, ready_reader, handoff_writer, handoff_reader):
             if descriptor >= 0:

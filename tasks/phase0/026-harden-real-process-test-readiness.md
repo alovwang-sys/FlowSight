@@ -132,13 +132,18 @@ Implementer:
   spike runtime code is unchanged.
 
 Adversarial Reviewer:
-- Reviewer 1: Pending.
+- Reviewer 1: Found one P1 where the initial patch also widened post-import
+  handoff and shutdown observations. After the original 2/10 second bounds
+  were restored, re-review found no remaining P0/P1/P2.
 - Reviewer 2: waived: one independent integration reviewer plus focused
   Phase 0 diagnostic reviewer will cover this test-only repair.
 
 Fixer:
 - Applied the two diagnosed failure signatures without changing negative
   assertions, product timeouts, thresholds, or runtime behavior.
+- Accepted the independent P1 finding and restored the original EOF-to-ready
+  and post-Ready exit limits; only observations that still include a cold
+  isolated import use the wider harness budget.
 
 Quality Governor:
 - The candidate changes only P0-026 allowlisted tests and failure records; no
