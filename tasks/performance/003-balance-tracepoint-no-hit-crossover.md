@@ -28,9 +28,9 @@ Phase 4
 
 ## Goal
 
-Replace the no-hit median-of-paired-ratios decision with an order-balanced
-crossover estimator that cancels multiplicative within-pair drift while still
-failing a real active-side CPU regression.
+Replace each no-hit two-leg pair with a symmetric four-leg crossover block
+whose ratio cancels multiplicative within-pair drift while still failing a real
+active-side CPU regression.
 
 ## Context
 
@@ -43,8 +43,9 @@ failing a real active-side CPU regression.
 - The existing 21-pair AB/BA crossover records 11 AB and 10 BA samples. Taking
   the median of all raw ratios can select the majority order when the two order
   cohorts separate under multiplicative CPU-frequency drift.
-- A geometric mean of the AB and BA cohort medians preserves a real common
-  active/baseline factor while cancelling reciprocal order drift.
+- Schema v4 will measure 21 same-seed ABBA/BAAB blocks. Each block computes
+  `(active_1 + active_2) / (baseline_1 + baseline_2)`, so reciprocal order drift
+  cancels inside each sample while a common active-side factor remains.
 
 ## Related Fact IDs
 
@@ -86,8 +87,8 @@ The current task card and its verifier evidence are always writable control-plan
 
 ## Acceptance Criteria
 
-- [ ] Schema v4 reports both order-cohort medians and their geometric mean for
-      the no-hit case while retaining raw ratios and nearest-rank p95.
+- [ ] Schema v4 reports 21 ABBA/BAAB no-hit blocks, their four raw legs, and the
+      block ratios used by the existing median and nearest-rank p95 checks.
 - [ ] A deterministic reciprocal-drift test proves the old raw median can fail
       while the order-balanced estimator passes at no real overhead.
 - [ ] A deterministic test proves a real common active-side factor above `1.15`
@@ -129,9 +130,9 @@ schema-v4 order balancing rejects real CPU regressions without majority-order fa
 
 ## Reviewer Focus
 
-- Does the geometric mean cancel only reciprocal AB/BA order drift?
-- Does a common active/baseline factor survive the transformation and fail at
-  the unchanged maximum?
+- Does each symmetric four-leg block cancel only reciprocal AB/BA order drift?
+- Does a common active/baseline factor survive the block ratio and fail at the
+  unchanged maximum?
 - Are schema-v3 evidence and failures clearly historical after schema v4?
 - Is the diff confined to Phase 4 benchmark evidence with no product behavior?
 
