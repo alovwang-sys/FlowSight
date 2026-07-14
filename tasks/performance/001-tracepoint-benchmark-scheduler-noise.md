@@ -150,7 +150,8 @@ Quality Governor:
 - Independent review approved the Phase 4 boundary, allowlist, unchanged safety
   and support contracts, and candidate submission without a new scope approval.
   Its evidence-label P2 was fixed by separating historical schema v2 sections
-  from schema v3 candidate evidence. Completion remains gated on a new matrix.
+  from schema v3 candidate evidence. At candidate review, completion was gated
+  on a new matrix; run `29135246585` subsequently satisfied that gate.
 
 ## Verifier Evidence
 
@@ -168,4 +169,8 @@ Quality Governor:
 
 ## Failure Queue Items
 
-- none
+- FSQ-0001 was opened after PERF-001 completed when an unchanged docs-only
+  commit produced one `active_no_hit` ratio failure. PERF-002 classified it as
+  `wontfix`: the immutable guard, digest, and thresholds remain unchanged, no
+  product regression was found, and final push/PR matrices did not reproduce
+  the shared-runner variance signature.

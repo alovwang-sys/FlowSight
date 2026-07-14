@@ -113,8 +113,9 @@ Three fresh-process serial v2 reproductions at host load 26--36/12 logical CPUs
 kept both paired no-hit ratios within budget while configured-unscoped median
 rose to 19.4--21.8 µs and captured-hit median to 271--385 µs. That isolated
 scheduler-sensitive wall time as the false-failure source without changing the
-tracepoint backend or thresholds. The schema v3 four-job immutable matrix is
-pending on the PERF-001 candidate commit.
+tracepoint backend or thresholds. At candidate submission the schema v3
+four-job immutable matrix was pending. It subsequently passed in run
+`29135246585`; see PERF-001 Schema v3 Final Evidence below.
 
 Benchmark suites and evidence runs must still execute sequentially. Any budget,
 decision-clock, workload, backend, or serializer change produces a new digest
