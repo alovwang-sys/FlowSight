@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import secrets
+from dataclasses import dataclass
+from importlib.resources import files
+from pathlib import Path
 from typing import Final, cast
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from starlette.types import Message, Receive, Scope, Send
 
 from flowsight.sidecar.state import SidecarState
@@ -21,6 +25,115 @@ _MAX_CONTENT_LENGTH_DIGITS: Final = 20
 _TOKEN_CHARACTERS: Final = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 )
+_STATIC_CACHE_CONTROL: Final = "no-store"
+
+
+@dataclass(frozen=True, slots=True)
+class _BundledFile:
+    name: str
+    body: bytes
+    media_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class _BundledUI:
+    index: _BundledFile
+    assets: tuple[_BundledFile, ...]
+
+    def find_asset(self, name: str) -> _BundledFile | None:
+        for asset in self.assets:
+            if asset.name == name:
+                return asset
+        return None
+
+
+def _regular_bundle_bytes(static_root: Path, path: Path) -> bytes:
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError("bundled UI contains a non-regular file")
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise RuntimeError("bundled UI path is invalid") from None
+    if not resolved.is_relative_to(static_root):
+        raise RuntimeError("bundled UI path escaped its package root")
+    try:
+        return path.read_bytes()
+    except OSError:
+        raise RuntimeError("bundled UI could not be read") from None
+
+
+def _bundle_media_type(path: Path) -> str:
+    media_type, _encoding = mimetypes.guess_type(path.name)
+    if media_type is None:
+        return "application/octet-stream"
+    return media_type
+
+
+def _load_bundled_ui() -> _BundledUI:
+    package_static = Path(str(files("flowsight").joinpath("static")))
+    if package_static.is_symlink() or not package_static.is_dir():
+        raise RuntimeError("bundled UI package directory is invalid")
+    try:
+        static_root = package_static.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise RuntimeError("bundled UI package directory is invalid") from None
+
+    index_path = package_static / "index.html"
+    assets_path = package_static / "assets"
+    if assets_path.is_symlink() or not assets_path.is_dir():
+        raise RuntimeError("bundled UI asset directory is invalid")
+
+    try:
+        asset_paths = sorted(assets_path.iterdir(), key=lambda item: item.name)
+    except OSError:
+        raise RuntimeError("bundled UI asset directory could not be read") from None
+    if not asset_paths:
+        raise RuntimeError("bundled UI asset directory is empty")
+
+    assets: list[_BundledFile] = []
+    for asset_path in asset_paths:
+        if asset_path.name in {".", ".."} or "/" in asset_path.name or "\\" in asset_path.name:
+            raise RuntimeError("bundled UI asset name is invalid")
+        assets.append(
+            _BundledFile(
+                name=asset_path.name,
+                body=_regular_bundle_bytes(static_root, asset_path),
+                media_type=_bundle_media_type(asset_path),
+            )
+        )
+
+    return _BundledUI(
+        index=_BundledFile(
+            name="index.html",
+            body=_regular_bundle_bytes(static_root, index_path),
+            media_type="text/html",
+        ),
+        assets=tuple(assets),
+    )
+
+
+def _bundled_response(file: _BundledFile, method: str) -> Response:
+    body = b"" if method == "HEAD" else file.body
+    return Response(
+        content=body,
+        media_type=file.media_type,
+        headers={
+            "cache-control": _STATIC_CACHE_CONTROL,
+            "content-length": str(len(file.body)),
+            "x-content-type-options": "nosniff",
+        },
+    )
+
+
+def _bundled_not_found() -> Response:
+    return Response(
+        status_code=404,
+        headers={
+            "cache-control": _STATIC_CACHE_CONTROL,
+            "content-length": "0",
+            "x-content-type-options": "nosniff",
+        },
+    )
 
 
 def _private_namespace(path: str) -> str | None:
@@ -108,6 +221,7 @@ class _PrivateSidecarFastAPI(FastAPI):
 
     def __init__(self, state: SidecarState) -> None:
         super().__init__(docs_url=None, redoc_url=None, openapi_url=None)
+        self.router.redirect_slashes = False
         if not state.token.isascii() or any(
             character not in _TOKEN_CHARACTERS for character in state.token
         ):
@@ -239,11 +353,12 @@ class _PrivateSidecarFastAPI(FastAPI):
 
 
 def create_sidecar_app(state: SidecarState) -> FastAPI:
-    """Build the inert private ASGI shell for one exact sidecar startup."""
+    """Build the private ASGI boundary and read-only bundled UI."""
 
     if type(state) is not SidecarState:
         raise TypeError("state must be an exact SidecarState")
 
+    bundled_ui = _load_bundled_ui()
     app = _PrivateSidecarFastAPI(state)
     health_payload: dict[str, object] = {
         "status": "ok",
@@ -259,5 +374,22 @@ def create_sidecar_app(state: SidecarState) -> FastAPI:
     @app.get("/internal/v1/health", include_in_schema=False)
     async def health() -> dict[str, object]:
         return dict(health_payload)
+
+    @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+    async def ui_index(request: Request) -> Response:
+        return _bundled_response(bundled_ui.index, request.method)
+
+    @app.api_route(
+        "/assets/{asset_path:path}",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    async def ui_asset(asset_path: str, request: Request) -> Response:
+        if not asset_path or asset_path in {".", ".."} or "/" in asset_path or "\\" in asset_path:
+            return _bundled_not_found()
+        asset = bundled_ui.find_asset(asset_path)
+        if asset is None:
+            return _bundled_not_found()
+        return _bundled_response(asset, request.method)
 
     return app

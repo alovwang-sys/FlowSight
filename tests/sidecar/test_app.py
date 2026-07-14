@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import queue
@@ -9,6 +10,7 @@ import sqlite3
 import subprocess
 import threading
 from dataclasses import dataclass, replace
+from importlib.resources import files
 from pathlib import Path
 from typing import NoReturn
 
@@ -199,7 +201,21 @@ def _assert_no_private_values(
         assert value.encode("utf-8") not in wire_bytes
 
 
-def test_factory_is_exact_inert_docs_disabled_and_ships_only_health(
+def _bundled_files() -> dict[str, Path]:
+    static_root = Path(str(files("flowsight").joinpath("static")))
+    index = static_root / "index.html"
+    assets = static_root / "assets"
+    return {
+        "index.html": index,
+        **{f"assets/{path.name}": path for path in sorted(assets.iterdir())},
+    }
+
+
+def _file_digests(paths: dict[str, Path]) -> dict[str, str]:
+    return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in paths.items()}
+
+
+def test_factory_is_exact_inert_docs_disabled_and_ships_health_and_bundled_ui(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -217,7 +233,11 @@ def test_factory_is_exact_inert_docs_disabled_and_ships_only_health(
         app = create_sidecar_app(state)
 
     assert isinstance(app, FastAPI)
-    assert [route.path for route in app.routes] == ["/internal/v1/health"]
+    assert [route.path for route in app.routes] == [
+        "/internal/v1/health",
+        "/",
+        "/assets/{asset_path:path}",
+    ]
     assert TOKEN not in repr(app)
     assert not Path(state.database_path).parent.exists()
     assert not Path(state.database_path).exists()
@@ -234,6 +254,136 @@ def test_factory_is_exact_inert_docs_disabled_and_ships_only_health(
         )
         assert response.status == 404
         _assert_no_cors(response)
+
+
+def test_bundled_ui_is_read_only_host_checked_and_byte_exact(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    bundle = _bundled_files()
+    before_names = set(bundle)
+    before_digests = _file_digests(bundle)
+    app = create_sidecar_app(state)
+    public_headers = [(b"host", state.authority.encode("ascii"))]
+
+    index = _request(app, state, "GET", "/", headers=public_headers)
+    index_head = _request(app, state, "HEAD", "/", headers=public_headers)
+    assert index.status == 200
+    assert index.body == bundle["index.html"].read_bytes()
+    assert index_head.status == 200
+    assert index_head.body == b""
+    assert (b"content-length", str(len(index.body)).encode("ascii")) in index_head.headers
+
+    for relative_name, path in bundle.items():
+        if relative_name == "index.html":
+            continue
+        route = f"/{relative_name}"
+        response = _request(app, state, "GET", route, headers=public_headers)
+        head = _request(app, state, "HEAD", route, headers=public_headers)
+        assert response.status == 200
+        assert response.body == path.read_bytes()
+        assert head.status == 200
+        assert head.body == b""
+        assert (b"content-length", str(len(response.body)).encode("ascii")) in head.headers
+        _assert_no_cors(response)
+        _assert_no_cors(head)
+
+    wrong_host = _request(
+        app,
+        state,
+        "GET",
+        "/",
+        headers=[(b"host", b"attacker.invalid")],
+    )
+    assert wrong_host.status == 403
+    assert _fault_code(wrong_host) == "HOST_REJECTED"
+
+    for path in (
+        "/assets",
+        "/assets/missing.js",
+        "/assets/../index.html",
+        "/assets/nested/file.js",
+        "/assets/..\\index.html",
+    ):
+        response = _request(app, state, "GET", path, headers=public_headers)
+        assert response.status == 404
+        _assert_no_cors(response)
+
+    first_asset = next(name for name in bundle if name.startswith("assets/"))
+    for method, path in (("POST", "/"), ("PUT", f"/{first_asset}")):
+        response = _request(app, state, method, path, headers=public_headers)
+        assert response.status == 405
+        _assert_no_cors(response)
+
+    health = _request(app, state, "GET", "/internal/v1/health")
+    unauthenticated_health = _request(
+        app,
+        state,
+        "GET",
+        "/internal/v1/health",
+        headers=public_headers,
+    )
+    unauthenticated_api = _request(
+        app,
+        state,
+        "GET",
+        "/api/v1/not-implemented",
+        headers=public_headers,
+    )
+    assert health.status == 200
+    assert unauthenticated_health.status == 401
+    assert unauthenticated_api.status == 401
+
+    after_bundle = _bundled_files()
+    assert set(after_bundle) == before_names
+    assert _file_digests(after_bundle) == before_digests
+    for response in (index, index_head, wrong_host, health):
+        _assert_no_cors(response)
+        _assert_no_private_values(response, state, "attacker.invalid")
+    for path in after_bundle.values():
+        assert state.token.encode("ascii") not in path.read_bytes()
+
+
+def test_bundled_ui_is_loaded_from_package_not_cwd_or_ui_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    workspace_index = _bundled_files()["index.html"].read_bytes()
+    fake_ui = tmp_path / "ui"
+    fake_ui.mkdir()
+    (fake_ui / "index.html").write_bytes(b"attacker-controlled workspace UI")
+    monkeypatch.chdir(tmp_path)
+
+    app = create_sidecar_app(state)
+    response = _request(
+        app,
+        state,
+        "GET",
+        "/",
+        headers=[(b"host", state.authority.encode("ascii"))],
+    )
+
+    assert response.status == 200
+    assert response.body == workspace_index
+    assert b"attacker-controlled" not in response.body
+
+
+def test_bundled_ui_loader_rejects_symlinked_assets(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    fake_package = tmp_path / "fake-package"
+    static = fake_package / "static"
+    assets = static / "assets"
+    assets.mkdir(parents=True)
+    (static / "index.html").write_text("<html></html>", encoding="utf-8")
+    outside = tmp_path / "outside.js"
+    outside.write_text("unsafe", encoding="utf-8")
+    (assets / "index.js").symlink_to(outside)
+    monkeypatch.setattr(sidecar_app_module, "files", lambda _package: fake_package)
+
+    with pytest.raises(RuntimeError, match="non-regular"):
+        create_sidecar_app(state)
 
 
 def test_factory_lifespan_is_plain_fastapi_passthrough(

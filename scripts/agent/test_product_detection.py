@@ -35,8 +35,11 @@ class ProductDetectionTests(unittest.TestCase):
             "MFLAGS",
             "MAKELEVEL",
             "FAIL_MODULE",
+            "FAIL_NPM",
         ):
             self.environment.pop(variable, None)
+        self.order_log = self.repo / "order.log"
+        self.environment["ORDER_LOG"] = str(self.order_log)
 
         self.run_git("init", "-q")
         (self.repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
@@ -53,6 +56,7 @@ class ProductDetectionTests(unittest.TestCase):
         self.python = self.repo / "fixture-python"
         self.python.write_text(
             """#!/bin/sh
+printf 'python:%s\n' "$*" >> "$ORDER_LOG"
 if [ -n "$FAIL_MODULE" ]; then
     case "$*" in
         *"-m $FAIL_MODULE"*) exit 23 ;;
@@ -63,6 +67,40 @@ exit 0
             encoding="utf-8",
         )
         self.python.chmod(0o755)
+
+        self.npm = self.repo / "npm"
+        self.npm.write_text(
+            """#!/bin/sh
+printf 'npm:%s\n' "$*" >> "$ORDER_LOG"
+if [ -n "$FAIL_NPM" ] && [ "$FAIL_NPM" = "$*" ]; then
+    exit 29
+fi
+exit 0
+""",
+            encoding="utf-8",
+        )
+        self.npm.chmod(0o755)
+        self.environment["PATH"] = f"{self.repo}{os.pathsep}{self.environment['PATH']}"
+
+    def create_frontend_scaffold(self) -> None:
+        (self.repo / "ui" / "src").mkdir(parents=True)
+        (self.repo / "ui" / "src" / "App.tsx").write_text(
+            "export default 1;\n",
+            encoding="utf-8",
+        )
+        (self.repo / "package.json").write_text("{}\n", encoding="utf-8")
+        (self.repo / "package-lock.json").write_text("{}\n", encoding="utf-8")
+        packaging = self.repo / "tests" / "packaging"
+        packaging.mkdir()
+        (packaging / "test_wheel_ui.py").write_text(
+            "def test_placeholder(): pass\n",
+            encoding="utf-8",
+        )
+
+    def recorded_order(self) -> list[str]:
+        if not self.order_log.exists():
+            return []
+        return self.order_log.read_text(encoding="utf-8").splitlines()
 
     def run_git(self, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -162,6 +200,46 @@ exit 0
                 output = result.stdout + result.stderr
                 self.assertNotEqual(0, result.returncode, output)
                 self.assertIn("Error 23", output)
+
+    def test_full_check_orders_frontend_then_python_then_clean_wheel_probe(self) -> None:
+        self.create_frontend_scaffold()
+
+        result = self.run_make("check-product")
+
+        output = result.stdout + result.stderr
+        self.assertEqual(0, result.returncode, output)
+        self.assertEqual(
+            [
+                "npm:run check",
+                "npm:test",
+                "npm:run build",
+                "python:-m ruff format --check flowsight examples tests "
+                "spikes/sidecar_otel spikes/tracepoint_backend",
+                "python:-m ruff check flowsight examples tests spikes/sidecar_otel "
+                "spikes/tracepoint_backend",
+                "python:-m mypy flowsight spikes/sidecar_otel spikes/tracepoint_backend",
+                "python:-m pytest --ignore=tests/packaging/test_wheel_ui.py",
+                "python:-m pytest -q tests/packaging/test_wheel_ui.py",
+            ],
+            self.recorded_order(),
+        )
+
+    def test_python_test_failure_prevents_clean_wheel_probe(self) -> None:
+        self.create_frontend_scaffold()
+
+        result = self.run_make("check-product", fail_module="pytest")
+
+        output = result.stdout + result.stderr
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("Error 23", output)
+        self.assertIn(
+            "python:-m pytest --ignore=tests/packaging/test_wheel_ui.py",
+            self.recorded_order(),
+        )
+        self.assertNotIn(
+            "python:-m pytest -q tests/packaging/test_wheel_ui.py",
+            self.recorded_order(),
+        )
 
     def test_failed_product_check_prevents_dependent_gate_recipe(self) -> None:
         with MAKEFILE.open(encoding="utf-8") as source:
