@@ -6,7 +6,7 @@
 task_id: P0-027
 release: v1
 task_type: implementation
-status: review
+status: complete
 primary_phase: phase0
 impacted_phases: []
 depends_on: [P0-024, P0-026, TRIAL-004]
@@ -142,7 +142,8 @@ Quality Governor:
 - Notes: Targeted coverage passed 78 tests; Phase 0 passed 2,644 tests; full
   check and the Phase 0 gate each passed 2,774 tests on CPython 3.13.5. The
   full checks correctly retained the partial-scaffold warning rather than
-  claiming Phase 0 product acceptance.
+  claiming Phase 0 product acceptance. The reviewed implementation is commit
+  `71cae40d36c7986e7f07ae5669d9ca61d4386ce4`.
 
 ## Failure Queue Items
 
